@@ -1,0 +1,176 @@
+# Porting notes: defects found in the reference implementation
+
+The C++23 port is not a transliteration. Seven substantive defects were found in
+`reference/aria_intel.py` while getting the simulations to behave. Each is
+recorded here with how it was found, why it was invisible before, and what
+changed — partly as a changelog, partly because several are easy traps to fall
+back into.
+
+A recurring theme: **the reference reported peak track counts but never identity
+continuity or false-track rates.** Four of the seven defects are invisible in
+peak-track-count and position-error metrics, and glaring the moment you count
+identity switches. Choose metrics that can fail.
+
+---
+
+## 1. Association was not one-to-one
+
+**Severity: critical.** The Gibbs sampler discouraged two tracks from claiming
+the same detection with a constant penalty (`0.3` per conflict) but never
+forbade it. A one-to-one matching constraint expressed as a soft nudge is not a
+constraint.
+
+Consequence: when two tracks sat on one entity, *both* were fed that entity's
+single detection every scan. Neither ever missed, so neither ever decayed, and
+duplicates accumulated without bound. In the maze simulation this produced 11
+tracks for 3 travellers and 53 identity switches in 60 scans.
+
+**Fix:** the Gibbs sweep now samples each track's assignment conditioned on the
+other tracks' current claims, excluding detections already taken — the correct
+conditional for a matching. The greedy seed is likewise one-to-one.
+
+Effect: identity switches 53 → 0; duplicate-track scans 53/60 → 0/60; latency
+2.2 ms → 0.49 ms, because the engine was no longer carrying phantom tracks.
+
+## 2. No track merging
+
+**Severity: high.** Nothing ever merged two tracks that had converged onto the
+same entity. The existence update alone cannot fix this: a duplicate that wins a
+detection every few scans keeps resetting its own existence.
+
+**Fix:** `PmbmManager::merge_duplicates`, gated on three tests — a distance
+gate, a Mahalanobis test under the summed covariances, and a discriminator that
+two genuinely distinct entities each generate their own detection in the same
+scan, whereas two tracks on one entity can only take turns. Without that third
+test a couple walking together would be collapsed into one track, which is a
+worse error than the one being fixed.
+
+## 3. Existence was updated twice per detection
+
+**Severity: high.** `PMBMManager.update` performed the clutter-aware existence
+update, then called `update_hit`, which performed *another* existence update
+using a hardcoded clutter constant of `1e-4`. Every association was counted
+twice.
+
+**Fix:** existence is now updated in exactly one place — the manager, which is
+the only component that knows the current clutter density. `Track::update_hit`
+folds in the measurement and leaves `r` alone.
+
+## 4. A newborn track was confirmed by its own birth detection
+
+**Severity: high.** A new track was created with `r = r_birth`, then immediately
+given `update_hit`, whose `c = 1e-4` drove `r` to 0.9998 — using the very
+detection that created it. The birth threshold was therefore dead code, and
+every false alarm clearing the birth weight gate became a *confirmed* track for
+at least one scan. The ghost rate tracked the sensor's false-alarm rate exactly.
+
+The reference got away with this because its synthetic clutter was low-weight
+OSINT that never cleared the birth gate. A camera's false detections arrive at
+full GEOINT weight and sail straight through.
+
+**Fix:** no existence update on birth; `r_birth < r_confirm` in most profiles,
+so a track needs corroboration from a *subsequent* scan before it is reported.
+Profiles where a lone sighting is precious (`FugitiveTracking`,
+`WildlifeTelemetry`) invert this deliberately and say so.
+
+## 5. Motion models were in "scan units" while every profile was written in SI
+
+**Severity: critical, and the most insidious.** `MouConstants` were built with a
+nominal `dt = 1.0` "scan", making sigma metres-per-scan. But every profile — in
+the reference and in the brief's proposed profiles — was written as if sigma
+were metres-per-second.
+
+At a 60-second scan the urban `vehicle` regime meant 0.30 m/s rather than 18.
+For `Maritime` at an hourly revisit the mismatch was a factor of ~2000: a vessel
+covering 21.6 km between scans was being modelled by a filter that expected 9.5
+metres. The filter simply could not follow, and the failure surfaced much later
+as unexplained identity switches rather than as anything obviously unit-shaped.
+
+**Fix:** SI throughout. `theta` is per second, velocity is m/s, and one
+`predict()` advances the profile's real scan period. Profiles now build motion
+models through a helper that takes quantities a person can check —
+
+```cpp
+motion("transiting", /*holds heading*/ 14400.0, /*typical speed*/ 6.0)  // ~12 knots
+```
+
+— because raw theta/sigma pairs are effectively unverifiable by inspection.
+
+Effect on the dark-vessel scenario: detection rate 15% → 82%.
+
+## 6. The IMM never interacted with the measurements
+
+**Severity: medium.** The motion-regime mixture `mu` was only ever advanced
+through the transition matrix. No measurement ever updated it, so it relaxed to
+the transition matrix's fixed point and stayed there. `dominant_model` — which
+`ModeTransitionDetector` depends on — reported a constant.
+
+The first fix attempt (summing particle weight by each particle's regime) also
+failed, for an interesting reason worth recording: over one scan a regime only
+controls how fast velocity *decays*. At a 1-second scan with heading-hold times
+of 4–15 seconds, every `alpha` is 0.78–0.94, so a particle labelled "standing"
+that inherited 9 m/s still travels about 7 m. Every regime explains a single
+step almost equally well; per-step particle mass carries no regime information
+at all.
+
+**Fix:** regimes are separated by *sustained speed*, which is what their
+steady-state distributions actually describe. Under an OU velocity process each
+axis is zero-mean Gaussian, so speed is Rayleigh with scale `sqrt(ss_vvar)`.
+Scoring the track's speed against each regime's Rayleigh discriminates properly.
+
+Effect: a stationary entity now reports `standing` at p = 0.85 (previously
+`walking` at 0.57, indistinguishable from a 9 m/s mover).
+
+## 7. Tracks could never time out
+
+**Severity: medium.** Retirement depended solely on existence decay. Where
+`p_detection` is low, a miss is almost uninformative — at `p_d = 0.15`,
+existence falls from 0.9990 to 0.9988 per missed scan — so nothing was ever
+retired and stale tracks accumulated indefinitely. This is correct Bayesian
+behaviour and a useless operational outcome.
+
+**Fix:** `max_coast_s`, a hard wall-clock limit on unseen coasting, independent
+of existence. Tracks that time out with a fitted pattern of life become dormant
+identities rather than being discarded, so they can still be reacquired.
+
+---
+
+## Smaller corrections
+
+- **Trajectory update was dead code.** `update_hit` decided whether two
+  detections were consecutive by comparing their gap against a fixed `_DT = 1.0`
+  second. At the default 60-second scan the test never passed, so the
+  velocity-from-two-detections update never ran. It now compares against the
+  profile's own scan period.
+- **`speed_mps` was not m/s.** It reported the filter's per-scan velocity under
+  an SI name. Now genuinely SI.
+- **Motion scoring used a fixed 30 m/s scale** for every domain, so a vessel and
+  a sprinter were measured against the same yardstick. Now scaled per profile.
+- **The SDR winding window was a fixed 12 samples.** For any loop taking longer
+  than 12 scans the winding test could not reach threshold no matter what the
+  entity did — the evader scenario proved it mathematically incapable of firing.
+  Now `sdr_window`, a profile parameter.
+- **The birth gate was derived from the fastest motion model.** A low-theta
+  regime has an enormous steady-state velocity variance that says nothing about
+  how far an entity travels in one scan; the camera profile's vehicle regime
+  produced a 79 m gate across a 120 m maze, so everything corroborated
+  everything. Now derived from the domain's own speed scale.
+
+## Known limitations carried forward
+
+Stated plainly, because the simulations make them measurable:
+
+- **Point-sensor domains need a road-network motion model.** In
+  `anpr-corridor`, readers are 400 m apart and free-space MOU has no idea a
+  vehicle is confined to a road. Tracks coast off the carriageway between
+  readers, which is most of that scenario's apparent ghost rate. A graph-
+  constrained motion model is the honest fix, and is not implemented.
+- **Dense convergence confuses the metric as well as the tracker.** In
+  `warehouse`, eight entities converge on one loading dock inside the 4 m match
+  radius, so truth-to-track assignment is genuinely ambiguous and the identity-
+  switch count overstates the engine's error.
+- **Regime identification needs the per-scan motion difference to exceed the
+  measurement noise.** Where it does not, the regime posterior correctly falls
+  back on the transition prior — correct, but not informative.
+- **Nothing here is validated against real sensor data.** Every number in this
+  repository comes from its own simulations.

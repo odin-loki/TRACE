@@ -1,0 +1,133 @@
+#include "trace/sim/sensor.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace trace::sim {
+namespace {
+
+std::string make_id(const std::string& sensor_id, long n) {
+    return sensor_id + "-" + std::to_string(n);
+}
+
+}  // namespace
+
+std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth,
+                                              Rng& rng) {
+    std::vector<Observation> out;
+    if (!cfg_.enabled) return out;
+
+    // Which entities are in this camera's footprint right now.
+    std::vector<const Entity*> in_view;
+    for (const auto& e : truth.entities) {
+        if (e.active && cfg_.footprint.contains(e.position)) in_view.push_back(&e);
+    }
+
+    // Identity confusion: with two or more entities in one field of view, a
+    // real re-ID stage sometimes attaches the wrong label. The engine gets the
+    // positions but never the labels, so what this actually models is two
+    // detections arriving in swapped order with each other's noise - enough to
+    // pull a naive nearest-neighbour associator onto the wrong track.
+    std::vector<Vec2> report_positions;
+    report_positions.reserve(in_view.size());
+    for (const auto* e : in_view) report_positions.push_back(e->position);
+
+    if (in_view.size() >= 2 && cfg_.swap_probability > 0.0) {
+        for (std::size_t i = 0; i + 1 < in_view.size(); ++i) {
+            if (rng.bernoulli(cfg_.swap_probability)) {
+                std::swap(report_positions[i], report_positions[i + 1]);
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < in_view.size(); ++i) {
+        if (!rng.bernoulli(cfg_.p_detect)) continue;
+        const Vec2 noisy{report_positions[i].x + rng.normal(0.0, cfg_.pos_noise_m),
+                         report_positions[i].y + rng.normal(0.0, cfg_.pos_noise_m)};
+        const Real conf = std::clamp(
+            rng.normal(cfg_.confidence_mean, cfg_.confidence_sigma), 0.1, 1.0);
+        out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp, noisy,
+                         cfg_.modality, conf, cfg_.id);
+    }
+
+    // False alarms land anywhere in the footprint - reflections, foliage, a
+    // discarded bag that the detector calls a person.
+    const int n_false = rng.poisson(cfg_.false_alarm_rate);
+    for (int i = 0; i < n_false; ++i) {
+        const Vec2 p{rng.uniform(cfg_.footprint.xmin, cfg_.footprint.xmax),
+                     rng.uniform(cfg_.footprint.ymin, cfg_.footprint.ymax)};
+        out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp, p,
+                         cfg_.modality, rng.uniform(0.15, 0.45), cfg_.id);
+    }
+    return out;
+}
+
+std::vector<Observation> GateReader::observe(const WorldSnapshot& truth, Rng& rng) {
+    std::vector<Observation> out;
+    if (!cfg_.enabled) return out;
+
+    for (const auto& e : truth.entities) {
+        if (!e.active) continue;
+        if (distance(e.position, cfg_.position) > cfg_.radius_m) continue;
+        if (!rng.bernoulli(cfg_.p_detect)) continue;
+
+        // A gate reports its own location, not the entity's: that is precisely
+        // what a badge reader or a turnstile knows.
+        const Vec2 noisy{cfg_.position.x + rng.normal(0.0, cfg_.pos_noise_m),
+                         cfg_.position.y + rng.normal(0.0, cfg_.pos_noise_m)};
+        out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp, noisy,
+                         cfg_.modality, cfg_.confidence, cfg_.id);
+    }
+
+    const int n_false = rng.poisson(cfg_.false_alarm_rate);
+    for (int i = 0; i < n_false; ++i) {
+        out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp,
+                         cfg_.position, cfg_.modality, rng.uniform(0.1, 0.4),
+                         cfg_.id);
+    }
+    return out;
+}
+
+std::vector<Observation> WideAreaReporter::observe(const WorldSnapshot& truth,
+                                                   Rng& rng) {
+    std::vector<Observation> out;
+    if (!cfg_.enabled) return out;
+
+    for (const auto& e : truth.entities) {
+        if (!e.active) continue;
+        if (silenced.contains(e.id)) continue;  // gone dark
+        if (!cfg_.footprint.contains(e.position)) continue;
+        if (!rng.bernoulli(cfg_.p_detect)) continue;
+
+        const Vec2 noisy{e.position.x + rng.normal(0.0, cfg_.pos_noise_m),
+                         e.position.y + rng.normal(0.0, cfg_.pos_noise_m)};
+        out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp, noisy,
+                         cfg_.modality, cfg_.confidence, cfg_.id);
+    }
+
+    const int n_false = rng.poisson(cfg_.false_alarm_rate);
+    for (int i = 0; i < n_false; ++i) {
+        const Vec2 p{rng.uniform(cfg_.footprint.xmin, cfg_.footprint.xmax),
+                     rng.uniform(cfg_.footprint.ymin, cfg_.footprint.ymax)};
+        out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp, p,
+                         cfg_.modality, rng.uniform(0.1, 0.35), cfg_.id);
+    }
+    return out;
+}
+
+std::vector<Observation> collect(const std::vector<SensorPtr>& sensors,
+                                 const WorldSnapshot& truth, Rng& rng) {
+    std::vector<Observation> out;
+    for (const auto& s : sensors) {
+        for (auto& o : s->observe(truth, rng)) out.push_back(std::move(o));
+    }
+    // Shuffle so the engine cannot infer identity from arrival order - a real
+    // fusion layer receives detections in whatever order they land.
+    for (std::size_t i = out.size(); i > 1; --i) {
+        const auto j = static_cast<std::size_t>(rng.uniform_int(0, static_cast<int>(i) - 1));
+        std::swap(out[i - 1], out[j]);
+    }
+    return out;
+}
+
+}  // namespace trace::sim

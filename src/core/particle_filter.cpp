@@ -1,0 +1,390 @@
+#include "trace/core/particle_filter.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numeric>
+
+#include "trace/backend/simd.hpp"
+
+namespace trace {
+namespace {
+
+/// Velocity-measurement noise for the trajectory update, as a multiple of the
+/// domain's own speed scale rather than a fixed metres-per-scan constant.
+constexpr Real kTrajVelNoiseScale = 3.0;
+
+constexpr Real kResampleFracPos  = 0.40;  // ESS below 40% of n -> resample
+constexpr Real kResampleFracTraj = 0.35;
+
+}  // namespace
+
+MouConstants MouConstants::from(const DomainProfile& p, Real dt) {
+    // theta is per second and sigma is the OU velocity diffusion in SI, so the
+    // step must be the real scan period. Building these against a nominal
+    // dt = 1 "scan" made every profile's motion models mean whatever the scan
+    // rate happened to be: a vessel profile written for 9.5 m/s was being
+    // asked to explain 9.5 m per hour.
+    MouConstants c;
+    if (dt <= 0.0) dt = std::max(p.scan_dt_s, 1e-6);
+    for (int k = 0; k < kNumModels; ++k) {
+        const Real theta = std::max(p.mou_models[k].theta, 1e-6);
+        const Real sigma = p.mou_models[k].sigma;
+        c.alpha[k] = std::exp(-theta * dt);
+        c.sigma_v[k] =
+            sigma * std::sqrt((1.0 - std::exp(-2.0 * theta * dt)) / (2.0 * theta));
+        c.ss_vvar[k] = sigma * sigma / (2.0 * theta);
+    }
+    return c;
+}
+
+ParticleFilter::ParticleFilter(const DomainProfile& profile,
+                               const MouConstants& mou, std::uint64_t seed)
+    : profile_(&profile),
+      mou_(mou),
+      n_(static_cast<std::size_t>(profile.n_particles)),
+      rng_(seed),
+      srng_(seed ^ 0xA5A5A5A5A5A5A5A5ULL) {
+    x_.resize(n_);
+    y_.resize(n_);
+    vx_.resize(n_);
+    vy_.resize(n_);
+    w_.resize(n_);
+    scratch_a_.resize(n_);
+    scratch_b_.resize(n_);
+    model_idx_.resize(n_);
+    mu_.fill(1.0 / kNumModels);
+}
+
+void ParticleFilter::init(Vec2 pos, Real pos_sigma) {
+    // Initial velocity spread is the mixture's steady-state standard deviation,
+    // so a track born in traffic is not forced to start slow.
+    Real mix_var = 0.0;
+    for (int k = 0; k < kNumModels; ++k) mix_var += mu_[k] * mou_.ss_vvar[k];
+    const Real v_sigma = std::sqrt(std::max(mix_var, 1e-9));
+
+    for (std::size_t i = 0; i < n_; ++i) {
+        x_[i] = pos.x + rng_.normal(0.0, pos_sigma);
+        y_[i] = pos.y + rng_.normal(0.0, pos_sigma);
+        vx_[i] = rng_.normal(0.0, v_sigma);
+        vy_[i] = rng_.normal(0.0, v_sigma);
+        w_[i] = 1.0 / static_cast<Real>(n_);
+    }
+    mu_.fill(1.0 / kNumModels);
+    initialised_ = true;
+    invalidate();
+}
+
+void ParticleFilter::predict() {
+    if (!initialised_) return;
+
+    // Advance the regime mixture through the transition matrix.
+    std::array<Real, kNumModels> new_mu{};
+    for (int j = 0; j < kNumModels; ++j) {
+        Real acc = 0.0;
+        for (int i = 0; i < kNumModels; ++i) acc += profile_->model_trans[i][j] * mu_[i];
+        new_mu[j] = acc;
+    }
+    Real mu_sum = std::accumulate(new_mu.begin(), new_mu.end(), Real{0.0});
+    if (mu_sum <= 0.0) {
+        new_mu.fill(1.0 / kNumModels);
+        mu_sum = 1.0;
+    }
+    for (auto& m : new_mu) m /= mu_sum;
+
+    // Draw each particle's regime, then expand to per-particle OU constants.
+    // The gather is scalar and cheap; the arithmetic below is the hot part.
+    for (std::size_t i = 0; i < n_; ++i) {
+        const std::size_t k = rng_.categorical(new_mu.data(), kNumModels);
+        model_idx_[i] = static_cast<int>(k);
+        scratch_a_[i] = mou_.alpha[k];
+        scratch_b_[i] = mou_.sigma_v[k];
+    }
+
+    // v' = alpha*v + sigma*eps ; x' = x + (v + v')/2 * dt + jitter (trapezoid)
+    const Real dt = std::max(profile_->scan_dt_s, 1e-6);
+    // Jitter keeps the cloud from collapsing between measurements; scaling it
+    // to the sensor's own noise keeps it meaningful across domains.
+    const Real jitter_m = std::max(profile_->pos_noise_m * 0.3, 1e-3);
+    const std::size_t lanes = simd::kLanes;
+    const std::size_t vec_end = (n_ / lanes) * lanes;
+
+    for (std::size_t i = 0; i < vec_end; i += lanes) {
+        simd::Batch ex, ey, jx, jy;
+        srng_.normal_pair(ex, ey);
+        srng_.normal_pair(jx, jy);
+
+        const simd::Batch a  = simd::load_u(&scratch_a_[i]);
+        const simd::Batch s  = simd::load_u(&scratch_b_[i]);
+        const simd::Batch vx = simd::load_u(&vx_[i]);
+        const simd::Batch vy = simd::load_u(&vy_[i]);
+
+        const simd::Batch nvx = simd::fma_(a, vx, s * ex);
+        const simd::Batch nvy = simd::fma_(a, vy, s * ey);
+
+        const simd::Batch half_dt{0.5 * dt};
+        const simd::Batch jit{jitter_m};
+        const simd::Batch nx =
+            simd::fma_(half_dt, vx + nvx, simd::load_u(&x_[i]) + jit * jx);
+        const simd::Batch ny =
+            simd::fma_(half_dt, vy + nvy, simd::load_u(&y_[i]) + jit * jy);
+
+        simd::store_u(&x_[i], nx);
+        simd::store_u(&y_[i], ny);
+        simd::store_u(&vx_[i], nvx);
+        simd::store_u(&vy_[i], nvy);
+    }
+
+    for (std::size_t i = vec_end; i < n_; ++i) {
+        const Real nvx = scratch_a_[i] * vx_[i] + scratch_b_[i] * rng_.normal();
+        const Real nvy = scratch_a_[i] * vy_[i] + scratch_b_[i] * rng_.normal();
+        x_[i] += 0.5 * (vx_[i] + nvx) * dt + jitter_m * rng_.normal();
+        y_[i] += 0.5 * (vy_[i] + nvy) * dt + jitter_m * rng_.normal();
+        vx_[i] = nvx;
+        vy_[i] = nvy;
+    }
+
+    mu_ = new_mu;
+    invalidate();
+}
+
+void ParticleFilter::update(Vec2 obs, Real r_scale) {
+    if (!initialised_) return;
+
+    const Real var = std::max(profile_->meas_noise_var * r_scale, 1e-9);
+    const Real inv_2var = 1.0 / (2.0 * var);
+
+    // Work in log space, then shift by the max before exponentiating: a track
+    // several sigma from its measurement otherwise underflows every weight to
+    // zero and the resample divides by nothing.
+    Real max_log = -std::numeric_limits<Real>::infinity();
+    for (std::size_t i = 0; i < n_; ++i) {
+        const Real dx = obs.x - x_[i];
+        const Real dy = obs.y - y_[i];
+        const Real lw = -(dx * dx + dy * dy) * inv_2var +
+                        std::log(w_[i] + 1e-300);
+        scratch_a_[i] = lw;
+        max_log = std::max(max_log, lw);
+    }
+
+    Real total = 0.0;
+    for (std::size_t i = 0; i < n_; ++i) {
+        w_[i] = std::exp(scratch_a_[i] - max_log);
+        total += w_[i];
+    }
+    if (total <= 0.0) {
+        std::fill(w_.begin(), w_.end(), 1.0 / static_cast<Real>(n_));
+    } else {
+        for (auto& w : w_) w /= total;
+    }
+
+    update_model_posterior();
+
+    if (effective_sample_size() < static_cast<Real>(n_) * kResampleFracPos) {
+        resample();
+    }
+    invalidate();
+}
+
+// Which motion regime is this entity in?
+//
+// The obvious approach - sum particle weight by the regime each particle was
+// drawn from - does not work, and it is worth saying why. Over one scan a
+// regime only controls how fast velocity DECAYS: alpha = exp(-dt/hold). At a
+// 1 s scan with hold times of 4-15 s every alpha is 0.78-0.94, so a particle
+// labelled "standing" that inherited 9 m/s still travels about 7 m. Every
+// regime explains the step almost equally well, the weights carry no
+// information about regime, and the posterior just reproduces the transition
+// matrix's fixed point.
+//
+// What actually separates the regimes is sustained speed, which is exactly
+// what their steady-state distributions describe. Under an OU velocity process
+// each axis is zero-mean Gaussian with std sqrt(ss_vvar), so speed is Rayleigh
+// with that scale. Scoring the track's current speed against each regime's
+// Rayleigh gives a likelihood that genuinely discriminates.
+void ParticleFilter::update_model_posterior() {
+    Real mvx = 0.0, mvy = 0.0;
+    for (std::size_t i = 0; i < n_; ++i) {
+        mvx += w_[i] * vx_[i];
+        mvy += w_[i] * vy_[i];
+    }
+    const Real speed = std::sqrt(mvx * mvx + mvy * mvy);
+
+    std::array<Real, kNumModels> logl{};
+    Real max_ll = -std::numeric_limits<Real>::infinity();
+    for (int k = 0; k < kNumModels; ++k) {
+        const Real var = std::max(mou_.ss_vvar[k], 1e-12);
+        // log Rayleigh(speed; sigma) = log(s) - log(var) - s^2 / (2 var)
+        logl[k] = std::log(speed + 1e-9) - std::log(var) - speed * speed / (2.0 * var);
+        max_ll = std::max(max_ll, logl[k]);
+    }
+
+    std::array<Real, kNumModels> post{};
+    Real total = 0.0;
+    for (int k = 0; k < kNumModels; ++k) {
+        post[k] = mu_[k] * std::exp(logl[k] - max_ll);
+        total += post[k];
+    }
+    if (total <= 0.0) return;
+
+    // Blend rather than replace, and keep a floor under every regime: a hard
+    // switch would let one noisy scan strand the filter in a regime it can
+    // never leave, because particles are only drawn from regimes with weight.
+    constexpr Real kBlend = 0.6;
+    constexpr Real kFloor = 0.02;
+    Real renorm = 0.0;
+    for (int k = 0; k < kNumModels; ++k) {
+        mu_[k] = (1.0 - kBlend) * mu_[k] + kBlend * (post[k] / total);
+        mu_[k] = std::max(mu_[k], kFloor);
+        renorm += mu_[k];
+    }
+    for (auto& m : mu_) m /= renorm;
+}
+
+void ParticleFilter::update_trajectory(Vec2 obs_curr, Vec2 obs_prev, Real dt) {
+    if (!initialised_) return;
+    if (dt <= 0.0) dt = std::max(profile_->scan_dt_s, 1e-6);
+
+    // Two consecutive detections imply a velocity. That is independent evidence
+    // from the position update and sharpens the heading, which matters most for
+    // the convergence predictors downstream.
+    const Vec2 v_obs = (obs_curr - obs_prev) / dt;  // metres per second
+    const Real noise =
+        std::max(profile_->courier_speed_thresh * kTrajVelNoiseScale, 1e-3);
+    const Real inv_2var = 1.0 / (2.0 * noise * noise);
+
+    Real max_log = -std::numeric_limits<Real>::infinity();
+    for (std::size_t i = 0; i < n_; ++i) {
+        const Real dvx = v_obs.x - vx_[i];
+        const Real dvy = v_obs.y - vy_[i];
+        const Real lw = -(dvx * dvx + dvy * dvy) * inv_2var +
+                        std::log(w_[i] + 1e-300);
+        scratch_a_[i] = lw;
+        max_log = std::max(max_log, lw);
+    }
+
+    Real total = 0.0;
+    for (std::size_t i = 0; i < n_; ++i) {
+        w_[i] = std::exp(scratch_a_[i] - max_log);
+        total += w_[i];
+    }
+    if (total <= 0.0) {
+        std::fill(w_.begin(), w_.end(), 1.0 / static_cast<Real>(n_));
+    } else {
+        for (auto& w : w_) w /= total;
+    }
+
+    if (effective_sample_size() < static_cast<Real>(n_) * kResampleFracTraj) {
+        resample();
+    }
+    invalidate();
+}
+
+void ParticleFilter::resample() {
+    // Systematic resampling: one uniform draw, n evenly spaced strata. Lower
+    // variance than multinomial and O(n) in a single pass.
+    scratch_b_[0] = w_[0];
+    for (std::size_t i = 1; i < n_; ++i) scratch_b_[i] = scratch_b_[i - 1] + w_[i];
+    const Real total = scratch_b_[n_ - 1];
+    if (total <= 0.0) return;
+
+    const Real u0 = rng_.uniform() / static_cast<Real>(n_);
+    std::vector<Real> nx(n_), ny(n_), nvx(n_), nvy(n_);
+    std::vector<int> nmi(n_);
+
+    std::size_t j = 0;
+    for (std::size_t i = 0; i < n_; ++i) {
+        const Real u = (u0 + static_cast<Real>(i) / static_cast<Real>(n_)) * total;
+        while (j + 1 < n_ && scratch_b_[j] < u) ++j;
+        nx[i] = x_[j];
+        ny[i] = y_[j];
+        nvx[i] = vx_[j];
+        nvy[i] = vy_[j];
+        nmi[i] = model_idx_[j];
+    }
+
+    x_.swap(nx);
+    y_.swap(ny);
+    vx_.swap(nvx);
+    vy_.swap(nvy);
+    model_idx_.swap(nmi);
+    std::fill(w_.begin(), w_.end(), 1.0 / static_cast<Real>(n_));
+}
+
+Real ParticleFilter::effective_sample_size() const {
+    Real sum_sq = 0.0;
+    for (const Real w : w_) sum_sq += w * w;
+    return 1.0 / (sum_sq + 1e-300);
+}
+
+void ParticleFilter::ensure_cache() const {
+    if (cache_valid_ || !initialised_) return;
+
+    Real mx = 0.0, my = 0.0, mvx = 0.0, mvy = 0.0;
+    for (std::size_t i = 0; i < n_; ++i) {
+        mx += w_[i] * x_[i];
+        my += w_[i] * y_[i];
+        mvx += w_[i] * vx_[i];
+        mvy += w_[i] * vy_[i];
+    }
+    pos_c_ = Vec2{mx, my};
+    vel_c_ = Vec2{mvx, mvy};
+
+    Real pxx = 0.0, pxy = 0.0, pyy = 0.0;
+    for (std::size_t i = 0; i < n_; ++i) {
+        const Real dx = x_[i] - mx;
+        const Real dy = y_[i] - my;
+        pxx += w_[i] * dx * dx;
+        pxy += w_[i] * dx * dy;
+        pyy += w_[i] * dy * dy;
+    }
+    P_c_ = Mat2{pxx, pxy, pyy};
+
+    const Real r = profile_ ? profile_->meas_noise_var : 25.0;
+    S_c_ = Mat2{pxx + r, pxy, pyy + r};
+    S_inv_c_ = S_c_.inverse();
+    cache_valid_ = true;
+}
+
+Vec2 ParticleFilter::position() const { ensure_cache(); return pos_c_; }
+Vec2 ParticleFilter::velocity() const { ensure_cache(); return vel_c_; }
+
+Vec2 ParticleFilter::velocity_mps(Real /*scan_dt*/) const {
+    ensure_cache();
+    return vel_c_;  // the filter's state velocity is already in m/s
+}
+
+Mat2 ParticleFilter::position_covariance() const { ensure_cache(); return P_c_; }
+Mat2 ParticleFilter::innovation_covariance() const { ensure_cache(); return S_c_; }
+
+Real ParticleFilter::mahalanobis_sq(Vec2 obs) const {
+    ensure_cache();
+    return S_inv_c_.quad(obs - pos_c_);
+}
+
+Real ParticleFilter::position_uncertainty() const {
+    ensure_cache();
+    return std::sqrt(std::max(P_c_.trace_(), 0.0));
+}
+
+int ParticleFilter::dominant_model() const {
+    return static_cast<int>(std::distance(
+        mu_.begin(), std::max_element(mu_.begin(), mu_.end())));
+}
+
+const std::string& ParticleFilter::dominant_model_name() const {
+    static const std::string kUnknown = "unknown";
+    if (!profile_) return kUnknown;
+    return profile_->mou_models[dominant_model()].name;
+}
+
+std::size_t ParticleFilter::sample_index(Rng& rng) const {
+    Real u = rng.uniform();
+    for (std::size_t i = 0; i < n_; ++i) {
+        u -= w_[i];
+        if (u <= 0.0) return i;
+    }
+    return n_ - 1;
+}
+
+}  // namespace trace
