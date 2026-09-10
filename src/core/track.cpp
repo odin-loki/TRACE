@@ -17,11 +17,12 @@ constexpr std::size_t kMaxThreatHistory = 20;
 }  // namespace
 
 Track::Track(std::string id, Real r, const DomainProfile& profile,
-             const MouConstants& mou, Real t0, std::uint64_t seed)
+             const MouConstants& mou, Real t0, std::uint64_t seed,
+             MotionConstraintPtr constraint)
     : id_(std::move(id)),
       r_(std::clamp(r, 0.0, 1.0)),
       pi_r_(std::clamp(r, 0.0, 1.0)),
-      pf_(profile, mou, seed),
+      pf_(profile, mou, seed, std::move(constraint)),
       pol_(profile),
       profile_(&profile),
       born_at_(t0),

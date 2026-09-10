@@ -7,7 +7,9 @@ set(TRACE_TESTS
     test_pmbm
     test_pattern_of_life
     test_engine
-    test_sim)
+    test_sim
+    test_motion_constraint
+    test_assignment)
 
 foreach(t IN LISTS TRACE_TESTS)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${t}.cpp")

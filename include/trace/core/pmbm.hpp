@@ -68,7 +68,8 @@ private:
 
 class PmbmManager {
 public:
-    PmbmManager(const DomainProfile& profile, Area area, std::uint64_t seed);
+    PmbmManager(const DomainProfile& profile, Area area, std::uint64_t seed,
+                MotionConstraintPtr constraint = nullptr);
 
     void predict();
     void update(const std::vector<Observation>& observations, Real timestamp);
@@ -100,6 +101,7 @@ private:
 
     const DomainProfile* profile_{nullptr};
     Area area_{};
+    MotionConstraintPtr constraint_;
     MouConstants mou_{};
 
     std::vector<TrackPtr> tracks_;

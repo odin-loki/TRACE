@@ -1,15 +1,24 @@
-# Porting notes: defects found in the reference implementation
+# Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Seven substantive defects were found in
-`reference/aria_intel.py` while getting the simulations to behave. Each is
+The C++23 port is not a transliteration. Twelve substantive defects were found —
+seven inherited from `reference/aria_intel.py`, five introduced or exposed by
+the port itself — while getting the simulations, and then real MOTChallenge
+data, to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
 changed — partly as a changelog, partly because several are easy traps to fall
 back into.
 
-A recurring theme: **the reference reported peak track counts but never identity
-continuity or false-track rates.** Four of the seven defects are invisible in
-peak-track-count and position-error metrics, and glaring the moment you count
-identity switches. Choose metrics that can fail.
+Two recurring themes, both about measurement:
+
+**Choose metrics that can fail.** The reference reported peak track counts but
+never identity continuity or false-track rates. Four of the seven inherited
+defects are invisible in peak-track-count and position-error metrics, and
+glaring the moment you count identity switches.
+
+**Measure the input's own ceiling.** Three scenarios were documented as
+tracking weaknesses until the sensors were asked what they had actually
+produced. `anpr-corridor` recovers 111% of the detections its readers emit; it
+was never failing. See [VALIDATION.md](VALIDATION.md).
 
 ---
 
@@ -135,6 +144,79 @@ identities rather than being discarded, so they can still be reacquired.
 
 ---
 
+## 8. Scoring used per-entity nearest-neighbour, not an assignment
+
+**Severity: high — and it was in the measuring instrument.** `score_scan`
+matched each truth entity to its own nearest track independently. That lets one
+track "cover" several entities at once and reports identity switches whenever
+the arbitrary winner changes, so the numbers judging every other fix were
+themselves unreliable.
+
+**Fix:** `sim/assignment.*` — a gated minimum-cost matching, Hungarian below 64
+rows and globally-sorted greedy above it, where an exact O(n^3) solve per frame
+across thousands of frames is not affordable.
+
+Worth recording that this *disproved* a hypothesis rather than confirming one:
+the `warehouse` scenario's high switch count had been attributed to metric
+ambiguity from eight entities converging inside the match radius. Under optimal
+assignment it moved from 871 to 868. Those switches are real.
+
+## 9. Dormancy was, in two profiles, impossible
+
+**Severity: high.** A track went dormant only while its existence sat between
+`r_dormant` and `r_prune` — a band typically 0.01 wide, which a decaying
+existence falls straight through in a single scan. Two shipped profiles had the
+two values inverted, making the band empty and dormancy unreachable. Dormancy
+additionally required a fitted pattern of life, which a short-lived track can
+never have.
+
+The consequence is quiet: reacquisition never fires, every reappearance becomes
+a new track, and the cost shows up as identity switches far from the cause.
+
+**Fix:** dormancy now depends on whether the track was *ever confirmed* — a
+question about its history, not about where a decaying number happened to stop.
+
+## 10. Reacquisition had only one cue, on the wrong timescale
+
+**Severity: medium.** The only reacquisition mechanism was pattern-of-life
+prediction, a `[hour, x, y]` model built for multi-day routine. In any short
+sequence hour-of-day is constant and carries no information, so the mechanism
+that exists to preserve identity across a gap could not operate at all on
+short-lived tracks.
+
+**Fix:** a second, complementary cue. Pattern of life answers "days later, at
+his usual place"; kinematic extrapolation answers "moments later, where he was
+heading", with the gate widening as the gap grows. Which one dominates is a
+per-domain choice, and the MOT profile deliberately keeps the kinematic window
+very short — see [VALIDATION.md](VALIDATION.md).
+
+## 11. The merge gate did not scale with motion
+
+**Severity: medium.** The duplicate-track merge gate was derived from sensor
+noise alone. Measured against how far an entity travels between scans — which
+is roughly how far from the original a duplicate is born — it was 75% of one
+scan of motion in the maze and about **2%** in the sparse domains (hourly AIS,
+four-hourly collar fixes). Merging appeared to work, because it worked in the
+one scenario anyone was watching.
+
+**Fix:** the gate scales with per-scan motion. Widening it is safe because
+distance is only a prefilter here; the test that actually decides is whether the
+two tracks were ever fed their own detection in the same scan.
+
+## 12. The motion constraint leaked, one particle at a time
+
+**Severity: medium — introduced by this port, not inherited.** The new
+graph-constrained motion model decided *per particle* whether a position was
+close enough to the network to be projected onto it. Any particle that wandered
+past the tolerance was thereafter exempt and free to keep going, so the cloud
+leaked sideways one particle at a time — exactly what the constraint exists to
+prevent.
+
+**Fix:** the on-network decision is made once, for the whole cloud, from its
+weighted mean. Whether an entity is on a road is a fact about the entity, not
+about each Monte-Carlo sample. Measured over 30 coasting scans: unconstrained
+lateral spread 2,481 m, constrained 0 m.
+
 ## Smaller corrections
 
 - **Trajectory update was dead code.** `update_hit` decided whether two
@@ -160,15 +242,12 @@ identities rather than being discarded, so they can still be reacquired.
 
 Stated plainly, because the simulations make them measurable:
 
-- **Point-sensor domains need a road-network motion model.** In
-  `anpr-corridor`, readers are 400 m apart and free-space MOU has no idea a
-  vehicle is confined to a road. Tracks coast off the carriageway between
-  readers, which is most of that scenario's apparent ghost rate. A graph-
-  constrained motion model is the honest fix, and is not implemented.
-- **Dense convergence confuses the metric as well as the tracker.** In
-  `warehouse`, eight entities converge on one loading dock inside the 4 m match
-  radius, so truth-to-track assignment is genuinely ambiguous and the identity-
-  switch count overstates the engine's error.
+- **No appearance model.** The largest available improvement for camera domains,
+  and irrelevant to every other one. See [VALIDATION.md](VALIDATION.md).
+- **Maritime sampling at 12 knots hourly.** A vessel moves 21.6 km between
+  scans against a one-scan prediction uncertainty of ~13 km. `dark-vessel`
+  recovers 70% of available detections, the only genuine shortfall among the
+  scenarios, and it is an information limit rather than a tuning problem.
 - **Regime identification needs the per-scan motion difference to exceed the
   measurement noise.** Where it does not, the regime posterior correctly falls
   back on the transition prior — correct, but not informative.

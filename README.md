@@ -64,8 +64,45 @@ they disagree.
 ```
 
 **15×9 maze, 3×3 cameras, 1 blind, 3 travellers, 60 scans:** 83% detection,
-1.6 m mean error, **0 identity switches**, 0.08 ghost tracks/scan, 0.35 ms
+1.6 m mean error, **0 identity switches**, 0.08 ghost tracks/scan, 0.29 ms
 median scan latency on one core.
+
+---
+
+## Validated on real data
+
+Replays of MOTChallenge sequences — real detections from real detectors on real
+video — are the only numbers here not produced by TRACE's own simulator.
+
+**MOT17 train, all 21 sequences, 336,891 ground-truth boxes:**
+
+| | |
+|---|---|
+| MOTA | 43.9% |
+| Recall | 65.5% |
+| **Detector ceiling, recall** | **59.9%** |
+| **TRACE recovered** | **109.3% of the recall the detections allow** |
+
+The ceiling is what a perfect tracker would get by simply echoing every
+detection it was handed. TRACE beats it by coasting through frames the detector
+missed — which is the entire job. Best single sequence: **71.3% MOTA**
+(MOT17-04-SDP).
+
+TRACE has **no appearance model**, deliberately: it is built for domains with no
+image at all — transponders, RFID readers, collar uplinks, cell-tower hits. On
+MOT, where crowds make visual re-identification the deciding factor, that costs
+it against methods that have one. [The full analysis is in
+docs/VALIDATION.md](docs/VALIDATION.md).
+
+The same question asked of the simulations — how much of what the *sensors*
+produced did the engine recover? — reframed three of them. `anpr-corridor` had
+been the weakest scenario on a 20% detection rate; its readers only ever produce
+a detection in 21.2% of truth-scans, and TRACE recovers 111% of that.
+
+```bash
+./scripts/fetch_mot.sh ./data/mot        # ~30 MB, annotations only
+./build/src/apps/trace_mot ./data/mot/train
+```
 
 ---
 
@@ -133,6 +170,18 @@ and looks for a moment when both routines agree. They fail in different
 circumstances, so all three run and the most confident wins; agreement between
 independent methods raises confidence.
 
+**Confining motion to a network.** The MOU model assumes free space, which is
+right for a person in a plaza and wrong for a vehicle between two ANPR readers.
+An optional `MotionConstraint` projects the particle cloud onto a road, rail or
+corridor network after each prediction step, leaving existence, association and
+behaviour detection untouched. Over 30 coasting scans an unconstrained cloud
+spreads 2,481 m sideways; a constrained one stays on the carriageway.
+
+```cpp
+cfg.motion_constraint = std::make_shared<RoadNetwork>(
+    RoadNetwork::from_polyline({{0, 400}, {6000, 400}}, /*tolerance*/ 60.0));
+```
+
 **Why probabilistic existence.** Every track carries `r`, the probability it
 exists at all, separate from where it is. That is what lets a track survive an
 occlusion instead of being deleted on the first missed scan. A second,
@@ -168,6 +217,7 @@ Backends:
 ```
 include/trace/{core,detectors,backend,sim}/   headers
 src/{core,detectors,sim,cuda,apps}/           implementation and applications
+scripts/fetch_mot.sh                          fetch MOTChallenge annotations
 tests/                                        dependency-free test suite
 docs/                                         see below
 reference/                                    the original Python implementation
@@ -179,7 +229,8 @@ third_party/xsimd/                            vendored
 | [docs/NAMING.md](docs/NAMING.md) | What TRACE stands for, and the event vocabulary in both intelligence and civil readings |
 | [docs/USE_CASES.md](docs/USE_CASES.md) | What this can be retrofitted to do, in three tiers by distance from shipped code |
 | [docs/SIMULATIONS.md](docs/SIMULATIONS.md) | Every simulation, what failure mode each one stresses, and further ones worth building |
-| [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Seven defects found in the reference implementation, why each was invisible, and what changed |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | MOTChallenge replay results, the detector-ceiling method, and how to read them against published work |
+| [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Twelve defects found and fixed, why each was invisible, and what changed |
 
 ---
 

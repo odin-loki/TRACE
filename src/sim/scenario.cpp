@@ -1,5 +1,7 @@
 #include "trace/sim/scenario.hpp"
 
+#include "trace/sim/assignment.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -35,57 +37,55 @@ void score_scan(Metrics& m, const std::vector<Entity>& truth,
     ++m.scans;
     m.total_tracks += static_cast<int>(tracks.size());
 
-    std::set<std::string> claimed_tracks;
-
+    // Collect the live entities, keeping their indices so results map back.
+    std::vector<Vec2> truth_pts;
+    std::vector<const Entity*> live;
     for (const auto& e : truth) {
         if (!e.active) continue;
-        ++m.total_truth;
+        live.push_back(&e);
+        truth_pts.push_back(e.position);
+    }
+    m.total_truth += static_cast<int>(live.size());
 
-        // Nearest confirmed track within the match radius, each track claimable
-        // once - otherwise one good track could "cover" a whole crowd.
-        const TargetReport* best = nullptr;
-        Real best_d = match_radius_m;
-        for (const auto& t : tracks) {
-            if (claimed_tracks.contains(t.track_id)) continue;
-            const Real d = distance(t.position, e.position);
-            if (d < best_d) {
-                best_d = d;
-                best = &t;
-            }
-        }
+    std::vector<Vec2> track_pts;
+    track_pts.reserve(tracks.size());
+    for (const auto& t : tracks) track_pts.push_back(t.position);
 
-        if (best == nullptr) continue;
+    // One globally optimal matching, rather than each entity independently
+    // grabbing its nearest track. Independent nearest-neighbour lets a single
+    // track cover a whole cluster and manufactures identity switches whenever
+    // the arbitrary winner changes.
+    const Assignment a = match_points(truth_pts, track_pts, match_radius_m);
+
+    for (std::size_t i = 0; i < live.size(); ++i) {
+        const int j = a.row_to_col[i];
+        if (j < 0) continue;
+
+        const auto& track = tracks[static_cast<std::size_t>(j)];
+        const Real d = distance(track.position, live[i]->position);
 
         ++m.total_detected;
-        claimed_tracks.insert(best->track_id);
-        m.position_error_sum += best_d;
+        m.position_error_sum += d;
         ++m.position_error_n;
-        m.max_position_error = std::max(m.max_position_error, best_d);
+        m.max_position_error = std::max(m.max_position_error, d);
 
         // Identity continuity: the same entity should keep the same track id.
         // Switches are counted rather than averaged away because one switch can
         // invalidate an entire chain of downstream reasoning.
-        const auto it = m.current_assignment.find(e.id);
+        const auto it = m.current_assignment.find(live[i]->id);
         if (it == m.current_assignment.end()) {
-            m.current_assignment[e.id] = best->track_id;
-        } else if (it->second != best->track_id) {
+            m.current_assignment[live[i]->id] = track.track_id;
+        } else if (it->second != track.track_id) {
             ++m.id_switches;
-            ++m.assignment_changes[e.id];
-            it->second = best->track_id;
+            ++m.assignment_changes[live[i]->id];
+            it->second = track.track_id;
         }
     }
 
-    // Tracks nowhere near any truth entity are ghosts: clutter promoted to a
-    // confirmed track, or a track that has drifted off its target.
-    for (const auto& t : tracks) {
-        bool matched = false;
-        for (const auto& e : truth) {
-            if (e.active && distance(t.position, e.position) < match_radius_m) {
-                matched = true;
-                break;
-            }
-        }
-        if (!matched) ++m.ghost_tracks;
+    // A track matched to nothing is a ghost: clutter promoted to a confirmed
+    // track, or a track that has drifted off its target.
+    for (std::size_t j = 0; j < tracks.size(); ++j) {
+        if (a.col_to_row[j] < 0) ++m.ghost_tracks;
     }
 }
 
@@ -94,12 +94,16 @@ std::string Metrics::summary() const {
     std::snprintf(
         buf, sizeof(buf),
         "  scans              %d\n"
+        "  sensor detections  %.1f%%   (%d of %d truth-scans produced a detection)\n"
         "  detection rate     %.1f%%   (%d of %d truth-scans had a track)\n"
+        "  recovery           %.1f%%   of what the sensors made possible\n"
         "  mean position err  %.2f m   (max %.2f m)\n"
         "  identity switches  %d       across %zu entities\n"
         "  ghost tracks       %d       (%.2f per scan)\n"
         "  latency            median %.3f ms  mean %.3f ms  p95 %.3f ms\n",
-        scans, 100.0 * detection_rate(), total_detected, total_truth,
+        scans, 100.0 * sensor_coverage(), covered_truth, total_truth,
+        100.0 * detection_rate(), total_detected, total_truth,
+        100.0 * recovery_of_ceiling(),
         mean_position_error(), max_position_error, id_switches,
         current_assignment.size(), ghost_tracks,
         scans > 0 ? static_cast<Real>(ghost_tracks) / scans : 0.0,
@@ -116,10 +120,17 @@ Metrics run(Scenario& scenario, Engine& engine) {
 
         scenario.world.step(dt);
         const WorldSnapshot truth = scenario.world.snapshot();
+        DetectionLedger ledger;
         const std::vector<Observation> obs =
-            collect(scenario.sensors, truth, scenario.rng);
+            collect(scenario.sensors, truth, scenario.rng, &ledger);
 
         const ScanReport report = engine.ingest(obs, truth.timestamp);
+
+        // What the sensors actually reported, before scoring what the engine
+        // made of it.
+        for (const auto& e : truth.entities) {
+            if (e.active && ledger.contains(e.id)) ++m.covered_truth;
+        }
 
         score_scan(m, truth.entities, report.targets, scenario.match_radius_m);
         m.latencies_ms.push_back(report.latency_ms);

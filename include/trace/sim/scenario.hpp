@@ -35,7 +35,23 @@ struct Metrics {
     std::map<std::string, std::string> current_assignment;
     std::map<std::string, int> assignment_changes;
 
+    /// Truth-scans in which at least one sensor actually covered the entity.
+    /// No tracker can report an entity nothing can see, so this is the honest
+    /// denominator: detection_rate alone conflates tracker failure with sensor
+    /// coverage, and in sparse-sensor domains the second dominates entirely.
+    int covered_truth{0};
+
     std::vector<Real> latencies_ms;
+
+    [[nodiscard]] Real sensor_coverage() const {
+        return total_truth > 0 ? static_cast<Real>(covered_truth) / total_truth : 0.0;
+    }
+    /// Detection rate as a fraction of what the sensors made possible.
+    [[nodiscard]] Real recovery_of_ceiling() const {
+        return covered_truth > 0
+                   ? static_cast<Real>(total_detected) / static_cast<Real>(covered_truth)
+                   : 0.0;
+    }
 
     [[nodiscard]] Real detection_rate() const {
         return total_truth > 0 ? static_cast<Real>(total_detected) / total_truth : 0.0;

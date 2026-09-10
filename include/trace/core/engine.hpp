@@ -30,6 +30,9 @@ struct EngineConfig {
     std::vector<Vec2> high_value_locations;
     std::uint64_t seed{0x5EED};
     int forecast_horizon{6};
+    /// Optional: confine entities to a road, rail or corridor network. Free
+    /// space is the default and is right for most domains.
+    MotionConstraintPtr motion_constraint;
 };
 
 class Engine {

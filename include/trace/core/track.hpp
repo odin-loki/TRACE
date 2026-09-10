@@ -37,7 +37,8 @@ struct TrackSample {
 class Track {
 public:
     Track(std::string id, Real r, const DomainProfile& profile,
-          const MouConstants& mou, Real t0, std::uint64_t seed);
+          const MouConstants& mou, Real t0, std::uint64_t seed,
+          MotionConstraintPtr constraint = nullptr);
 
     // -- Lifecycle ----------------------------------------------------------
     void predict();
@@ -71,6 +72,12 @@ public:
     [[nodiscard]] Real possibility() const { return pi_r_; }
     [[nodiscard]] Real possibility_mismatch() const { return poss_mismatch_; }
     void set_existence(Real r) { r_ = std::clamp(r, 0.0, 1.0); }
+
+    /// True once this track has been confident enough to report. A track that
+    /// reaches this is an identity worth remembering even after its existence
+    /// collapses; one that never does is discarded outright.
+    [[nodiscard]] bool ever_confirmed() const { return ever_confirmed_; }
+    void mark_confirmed() { ever_confirmed_ = true; }
 
     // -- State --------------------------------------------------------------
     [[nodiscard]] Vec2 position() const { return pf_.position(); }
@@ -135,6 +142,7 @@ private:
     Real r_{0.65};
     Real pi_r_{0.65};
     Real poss_mismatch_{0.0};
+    bool ever_confirmed_{false};
 
     ParticleFilter pf_;
     PatternOfLife pol_;

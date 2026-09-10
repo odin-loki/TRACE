@@ -12,8 +12,8 @@ std::string make_id(const std::string& sensor_id, long n) {
 
 }  // namespace
 
-std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth,
-                                              Rng& rng) {
+std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth, Rng& rng,
+                                              DetectionLedger* ledger) {
     std::vector<Observation> out;
     if (!cfg_.enabled) return out;
 
@@ -42,6 +42,7 @@ std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth,
 
     for (std::size_t i = 0; i < in_view.size(); ++i) {
         if (!rng.bernoulli(cfg_.p_detect)) continue;
+        if (ledger != nullptr) ledger->insert(in_view[i]->id);
         const Vec2 noisy{report_positions[i].x + rng.normal(0.0, cfg_.pos_noise_m),
                          report_positions[i].y + rng.normal(0.0, cfg_.pos_noise_m)};
         const Real conf = std::clamp(
@@ -62,7 +63,8 @@ std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth,
     return out;
 }
 
-std::vector<Observation> GateReader::observe(const WorldSnapshot& truth, Rng& rng) {
+std::vector<Observation> GateReader::observe(const WorldSnapshot& truth, Rng& rng,
+                                             DetectionLedger* ledger) {
     std::vector<Observation> out;
     if (!cfg_.enabled) return out;
 
@@ -70,6 +72,7 @@ std::vector<Observation> GateReader::observe(const WorldSnapshot& truth, Rng& rn
         if (!e.active) continue;
         if (distance(e.position, cfg_.position) > cfg_.radius_m) continue;
         if (!rng.bernoulli(cfg_.p_detect)) continue;
+        if (ledger != nullptr) ledger->insert(e.id);
 
         // A gate reports its own location, not the entity's: that is precisely
         // what a badge reader or a turnstile knows.
@@ -89,7 +92,8 @@ std::vector<Observation> GateReader::observe(const WorldSnapshot& truth, Rng& rn
 }
 
 std::vector<Observation> WideAreaReporter::observe(const WorldSnapshot& truth,
-                                                   Rng& rng) {
+                                                   Rng& rng,
+                                                   DetectionLedger* ledger) {
     std::vector<Observation> out;
     if (!cfg_.enabled) return out;
 
@@ -98,6 +102,7 @@ std::vector<Observation> WideAreaReporter::observe(const WorldSnapshot& truth,
         if (silenced.contains(e.id)) continue;  // gone dark
         if (!cfg_.footprint.contains(e.position)) continue;
         if (!rng.bernoulli(cfg_.p_detect)) continue;
+        if (ledger != nullptr) ledger->insert(e.id);
 
         const Vec2 noisy{e.position.x + rng.normal(0.0, cfg_.pos_noise_m),
                          e.position.y + rng.normal(0.0, cfg_.pos_noise_m)};
@@ -116,10 +121,11 @@ std::vector<Observation> WideAreaReporter::observe(const WorldSnapshot& truth,
 }
 
 std::vector<Observation> collect(const std::vector<SensorPtr>& sensors,
-                                 const WorldSnapshot& truth, Rng& rng) {
+                                 const WorldSnapshot& truth, Rng& rng,
+                                 DetectionLedger* ledger) {
     std::vector<Observation> out;
     for (const auto& s : sensors) {
-        for (auto& o : s->observe(truth, rng)) out.push_back(std::move(o));
+        for (auto& o : s->observe(truth, rng, ledger)) out.push_back(std::move(o));
     }
     // Shuffle so the engine cannot infer identity from arrival order - a real
     // fusion layer receives detections in whatever order they land.

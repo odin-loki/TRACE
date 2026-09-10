@@ -77,6 +77,12 @@ struct DomainProfile {
     /// evidence alone never retires anything and stale tracks pile up.
     /// Negative derives it from dormant_timeout x scan_dt_s.
     Real max_coast_s{-1.0};
+    /// How long a dormant track can still be reacquired by extrapolating its
+    /// last known motion. Pattern-of-life reacquisition answers "days later, at
+    /// his usual place"; this answers "moments later, where he was heading",
+    /// which is the only cue available to a track too short-lived to have a
+    /// baseline. Negative derives it from the scan period.
+    Real reacquire_kinematic_s{-1.0};
     Real gate_chi2{13.816};    ///< chi2(0.999, df=2)
     /// Two tracks closer than this, and statistically indistinguishable, are
     /// treated as one entity. Negative means "derive from pos_noise_m".

@@ -39,8 +39,10 @@ MouConstants MouConstants::from(const DomainProfile& p, Real dt) {
 }
 
 ParticleFilter::ParticleFilter(const DomainProfile& profile,
-                               const MouConstants& mou, std::uint64_t seed)
+                               const MouConstants& mou, std::uint64_t seed,
+                               MotionConstraintPtr constraint)
     : profile_(&profile),
+      constraint_(std::move(constraint)),
       mou_(mou),
       n_(static_cast<std::size_t>(profile.n_particles)),
       rng_(seed),
@@ -142,6 +144,37 @@ void ParticleFilter::predict() {
         y_[i] += 0.5 * (vy_[i] + nvy) * dt + jitter_m * rng_.normal();
         vx_[i] = nvx;
         vy_[i] = nvy;
+    }
+
+    // Confine the cloud to whatever the entity is allowed to move along.
+    // Applied after the free-space step rather than instead of it, so the
+    // motion model still sets the scale and only the geometry is restricted.
+    //
+    // The on-network decision is made once, for the whole cloud, from its mean.
+    // Deciding per particle instead meant that any particle which wandered past
+    // the tolerance was thereafter exempt from the constraint and free to keep
+    // going - so the cloud leaked sideways one particle at a time, which is
+    // precisely what the constraint exists to prevent. Whether an entity is on
+    // the road is a fact about the entity, not about each Monte-Carlo sample.
+    if (constraint_) {
+        Real mx = 0.0, my = 0.0;
+        for (std::size_t i = 0; i < n_; ++i) {
+            mx += w_[i] * x_[i];
+            my += w_[i] * y_[i];
+        }
+        if (constraint_->on_network(Vec2{mx, my})) {
+            // The mean is on-network, so the entity is; project every particle
+            // unconditionally.
+            for (std::size_t i = 0; i < n_; ++i) {
+                const Vec2 projected = constraint_->project_unconditional(Vec2{x_[i], y_[i]});
+                x_[i] = projected.x;
+                y_[i] = projected.y;
+                const Vec2 aligned =
+                    constraint_->align_unconditional(projected, Vec2{vx_[i], vy_[i]});
+                vx_[i] = aligned.x;
+                vy_[i] = aligned.y;
+            }
+        }
     }
 
     mu_ = new_mu;

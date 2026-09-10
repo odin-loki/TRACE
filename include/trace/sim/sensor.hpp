@@ -19,14 +19,25 @@
 
 namespace trace::sim {
 
+/// Which ground-truth entities actually produced a detection this scan.
+///
+/// Used only for scoring, never passed to the engine. Without it a low
+/// detection rate cannot be attributed: a tracker that reports nothing when the
+/// sensors reported nothing has not failed at anything.
+using DetectionLedger = std::set<std::string>;
+
 class Sensor {
 public:
     virtual ~Sensor() = default;
     [[nodiscard]] virtual const std::string& id() const = 0;
 
     /// Produce this scan's detections from the true world state.
-    virtual std::vector<Observation> observe(const WorldSnapshot& truth,
-                                             Rng& rng) = 0;
+    ///
+    /// If `ledger` is non-null, record the ground-truth id behind each genuine
+    /// detection (false alarms contribute nothing, having no entity behind
+    /// them).
+    virtual std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng,
+                                             DetectionLedger* ledger = nullptr) = 0;
 
     /// True if this sensor could see the point at all — used for coverage maps
     /// and for rendering, never by the engine.
@@ -67,7 +78,8 @@ public:
     [[nodiscard]] const Config& config() const { return cfg_; }
     [[nodiscard]] Config& config() { return cfg_; }
 
-    std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng) override;
+    std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng,
+                                     DetectionLedger* ledger = nullptr) override;
 
 private:
     Config cfg_;
@@ -99,7 +111,8 @@ public:
     }
     [[nodiscard]] const Config& config() const { return cfg_; }
 
-    std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng) override;
+    std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng,
+                                     DetectionLedger* ledger = nullptr) override;
 
 private:
     Config cfg_;
@@ -130,7 +143,8 @@ public:
     }
     [[nodiscard]] Config& config() { return cfg_; }
 
-    std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng) override;
+    std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng,
+                                     DetectionLedger* ledger = nullptr) override;
 
     /// Entities that this reporter will not report, by ground-truth id.
     std::set<std::string> silenced;
@@ -142,6 +156,7 @@ private:
 
 /// Collect one scan from every sensor.
 std::vector<Observation> collect(const std::vector<SensorPtr>& sensors,
-                                 const WorldSnapshot& truth, Rng& rng);
+                                 const WorldSnapshot& truth, Rng& rng,
+                                 DetectionLedger* ledger = nullptr);
 
 }  // namespace trace::sim

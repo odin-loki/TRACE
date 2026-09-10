@@ -93,9 +93,10 @@ The state is still `[x, y, vx, vy]`; the work is turning domain data into
   a contact network from call records alone.
 - **Transit smartcard and turnstile data.** `GateReader` already models this:
   sparse, accurate, identity-anchored point observations.
-- **ANPR and toll gantries.** Implemented as `anpr-corridor`. See the honest
-  limitation in [PORTING_NOTES.md](PORTING_NOTES.md): point sensors on a road
-  network want a graph-constrained motion model, which is not implemented.
+- **ANPR and toll gantries.** Implemented as `anpr-corridor`, with a
+  `RoadNetwork` motion constraint confining tracks to the carriageway between
+  readers — without it, free-space motion coasts the estimate into the verge.
+  The same constraint serves rail, shipping lanes, corridors and street grids.
 - **Ship AIS and aircraft ADS-B.** Direct feeds; `Maritime` and `Airspace`.
 - **Drone and robot fleets.** `VehicleConvoy` with tighter thresholds.
 - **Contact tracing.** Co-location clustering *is* contact tracing. The
@@ -129,6 +130,11 @@ whole behavioural layer comes along.
 - **Content and account abuse.** Accounts in a behavioural embedding;
   coordinated inauthentic behaviour looks like `PARALLEL_ROUTE` — many entities
   moving in lockstep at a fixed offset.
+
+Several Tier 3 domains have a natural network structure — a service graph, a
+transaction graph, a rail network — and `MotionConstraint` is the hook for it.
+`RoadNetwork` handles straight segments; a general graph constraint is the same
+interface with a different projection.
 
 **The caveat for Tier 3, stated plainly.** The MOU motion model assumes
 continuous movement with inertia. That is a good model for things that move

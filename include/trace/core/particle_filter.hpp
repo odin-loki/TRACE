@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "trace/core/motion_constraint.hpp"
 #include "trace/core/profile.hpp"
 #include "trace/core/rng.hpp"
 #include "trace/core/types.hpp"
@@ -39,7 +40,7 @@ class ParticleFilter {
 public:
     ParticleFilter() = default;
     ParticleFilter(const DomainProfile& profile, const MouConstants& mou,
-                   std::uint64_t seed);
+                   std::uint64_t seed, MotionConstraintPtr constraint = nullptr);
 
     /// Scatter particles about a first detection.
     void init(Vec2 pos, Real pos_sigma = 35.0);
@@ -94,6 +95,7 @@ private:
     void ensure_cache() const;
 
     const DomainProfile* profile_{nullptr};
+    MotionConstraintPtr constraint_;
     MouConstants mou_{};
     std::size_t n_{320};
 

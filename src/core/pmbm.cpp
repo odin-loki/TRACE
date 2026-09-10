@@ -195,9 +195,10 @@ std::unordered_map<int, int> GibbsAssigner::assign(
 // ---------------------------------------------------------------------------
 
 PmbmManager::PmbmManager(const DomainProfile& profile, Area area,
-                         std::uint64_t seed)
+                         std::uint64_t seed, MotionConstraintPtr constraint)
     : profile_(&profile),
       area_(area),
+      constraint_(std::move(constraint)),
       mou_(MouConstants::from(profile)),
       gibbs_(profile.gibbs_sweeps),
       rng_(seed),
@@ -222,16 +223,52 @@ TrackPtr PmbmManager::try_reacquire(const Observation& obs, Real timestamp) {
     // Score each dormant track by how well its learned pattern of life
     // explains a sighting here, now. This is what turns "we lost him three
     // days ago" into "that is him, at his usual place, at his usual hour".
+    // Two complementary cues, for two very different timescales.
+    //
+    //   pattern of life - "this is where he is at this hour, most days";
+    //   kinematics      - "he went that way two seconds ago".
+    //
+    // Only the first was implemented originally, and it is gated on having a
+    // fitted baseline. A track that went dormant before accumulating one could
+    // therefore never be reacquired, so every reappearance became a new track
+    // and a guaranteed identity switch. That is most tracks in any short
+    // sequence, where hour-of-day carries no information at all.
+    const Real kinematic_window =
+        profile_->reacquire_kinematic_s > 0.0
+            ? profile_->reacquire_kinematic_s
+            : std::max(profile_->scan_dt_s * 10.0, 1e-6);
+
     Real best_score = -std::numeric_limits<Real>::infinity();
     long best_idx = -1;
 
     for (std::size_t i = 0; i < dormant_.size(); ++i) {
         const auto& entry = dormant_[i];
-        if (!entry.track->pol().fitted()) continue;
-        const auto pred = entry.track->pol().predict_location(timestamp, rng_);
-        const Real dist = distance(pos, pred.position);
-        if (dist > std::max(pred.uncertainty_m * 3.0, 200.0)) continue;
-        const Real score = -dist / std::max(pred.uncertainty_m, 1.0);
+        Vec2 predicted{};
+        Real uncertainty = 0.0;
+        bool usable = false;
+
+        if (entry.track->pol().fitted()) {
+            const auto pred = entry.track->pol().predict_location(timestamp, rng_);
+            predicted = pred.position;
+            uncertainty = pred.uncertainty_m;
+            usable = true;
+        } else {
+            const Real elapsed = timestamp - entry.track->last_seen();
+            if (elapsed >= 0.0 && elapsed <= kinematic_window) {
+                // Carry the last velocity forward, and let the gate widen with
+                // the gap: after a second of not looking, we know much less.
+                predicted = entry.track->position() + entry.track->velocity() * elapsed;
+                uncertainty = entry.track->position_uncertainty() +
+                              profile_->courier_speed_thresh * 2.0 * elapsed +
+                              profile_->pos_noise_m;
+                usable = true;
+            }
+        }
+        if (!usable) continue;
+
+        const Real dist = distance(pos, predicted);
+        if (dist > std::max(uncertainty * 3.0, 2.0 * profile_->pos_noise_m)) continue;
+        const Real score = -dist / std::max(uncertainty, 1.0);
         if (score > best_score) {
             best_score = score;
             best_idx = static_cast<long>(i);
@@ -382,7 +419,8 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         if (weight > kMinBirthWeight) {
             auto fresh = std::make_shared<Track>(
                 next_id(), profile_->r_birth, *profile_, mou_, timestamp,
-                seed_ + static_cast<std::uint64_t>(track_counter_) * 7919ULL);
+                seed_ + static_cast<std::uint64_t>(track_counter_) * 7919ULL,
+                constraint_);
             fresh->filter().init(*obs.position);
             // No existence update on birth: this detection is already the
             // reason the track exists, and counting it again would confirm
@@ -408,10 +446,23 @@ void PmbmManager::update(const std::vector<Observation>& observations,
 void PmbmManager::merge_duplicates() {
     if (tracks_.size() < 2) return;
 
-    const Real merge_dist = profile_->merge_distance_m > 0.0
-                                ? profile_->merge_distance_m
-                                : std::max(3.0 * profile_->pos_noise_m,
-                                           0.5 * profile_->brush_pass_m);
+    // The gate has to scale with how far an entity travels between scans,
+    // because that is roughly how far from the original a duplicate is born.
+    // A gate fixed to sensor noise alone was ~2% of one scan of motion in the
+    // sparse domains (hourly AIS, four-hourly collar fixes) and duplicates
+    // simply never came within it, while being ~75% of it in the maze - which
+    // is why merging appeared to work there and nowhere else.
+    //
+    // Widening it is safe because distance is only a cheap prefilter here. The
+    // test that actually decides is whether the two tracks were ever fed their
+    // own detection in the same scan: two real entities are, two tracks on one
+    // entity cannot be.
+    const Real merge_dist =
+        profile_->merge_distance_m > 0.0
+            ? profile_->merge_distance_m
+            : std::max({3.0 * profile_->pos_noise_m, 0.5 * profile_->brush_pass_m,
+                        0.3 * profile_->courier_speed_thresh * 4.0 *
+                            profile_->scan_dt_s});
 
     // Better-established tracks first, so survivors are the ones with history.
     std::sort(tracks_.begin(), tracks_.end(),
@@ -469,24 +520,36 @@ void PmbmManager::prune(Real timestamp) {
             ? profile_->max_coast_s
             : profile_->dormant_timeout * profile_->scan_dt_s;
 
+    // Note who has ever been reportable before deciding what to discard.
+    for (auto& t : tracks_) {
+        if (t->existence() >= profile_->r_confirm) t->mark_confirmed();
+    }
+
     for (auto& t : tracks_) {
         const Real coasted = timestamp - t->last_seen();
         if (coasted > max_coast) {
-            // Out of time rather than out of evidence. Keep it as a dormant
-            // identity if it has a pattern of life worth reacquiring against.
-            if (t->pol().fitted()) {
-                dormant_.push_back(DormantEntry{std::move(t), scan_});
-            }
+            // Out of time rather than out of evidence, but still a recognisable
+            // identity for as long as one of the reacquisition cues holds.
+            dormant_.push_back(DormantEntry{std::move(t), scan_});
             continue;
         }
         if (t->existence() > profile_->r_prune) {
             keep.push_back(std::move(t));
-        } else if (t->existence() > profile_->r_dormant && t->pol().fitted()) {
-            // Not confident enough to report, but it has a learned baseline —
-            // worth keeping so it can be recognised if it reappears.
+        } else if (t->ever_confirmed()) {
+            // Retire it from the live set but keep the identity: it was a real
+            // entity, and it may well come back.
+            //
+            // Dormancy used to require existence to land inside the band
+            // between r_dormant and r_prune - typically 0.01 wide, which a
+            // decaying existence falls straight through in a single scan, and
+            // which two shipped profiles had inverted so the band was empty and
+            // dormancy impossible. It also demanded a fitted pattern of life,
+            // which a short-lived track can never have. Whether an identity is
+            // worth remembering is a question about the track's history, not
+            // about where a decaying number happened to stop.
             dormant_.push_back(DormantEntry{std::move(t), scan_});
         }
-        // Otherwise the track is dropped entirely.
+        // A track that was never confirmed was probably clutter; drop it.
     }
     tracks_ = std::move(keep);
 

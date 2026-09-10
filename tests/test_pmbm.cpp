@@ -3,6 +3,8 @@
 #include "trace/core/pmbm.hpp"
 
 #include <cstdio>
+#include <numbers>
+#include <string>
 #include <vector>
 
 #include "test_harness.hpp"
@@ -174,10 +176,52 @@ void test_ids_are_stable() {
     CHECK(long_lived >= 2);
 }
 
+void test_identity_survives_a_blackout() {
+    // The capability the whole dormancy machinery exists for: an entity that
+    // disappears entirely and comes back should keep its identity, not be
+    // reported as somebody new.
+    const DomainProfile profile = Maritime();
+    PmbmManager pmbm(profile, Area{0, 200000, 0, 200000}, 7);
+    const Real dt = profile.scan_dt_s;
+
+    std::string before, after;
+    bool went_dormant = false;
+
+    for (int i = 0; i < 90; ++i) {
+        const Real t = i * dt;
+        // A patrol box, so the entity is near where it was when it returns.
+        const Real ph = 2.0 * std::numbers::pi * (i % 20) / 20.0;
+        const Vec2 p{100000.0 + 20000.0 * std::cos(ph),
+                     100000.0 + 20000.0 * std::sin(ph)};
+
+        std::vector<Observation> obs;
+        const bool dark = (i >= 40 && i < 52);
+        if (!dark) {
+            obs.emplace_back("o" + std::to_string(i), t, p, Modality::SIGINT, 0.85,
+                             "AIS");
+        }
+        pmbm.predict();
+        pmbm.update(obs, t);
+
+        if (pmbm.dormant_count() > 0) went_dormant = true;
+        const auto conf = pmbm.confirmed();
+        if (i == 39 && !conf.empty()) before = conf.front()->id();
+        if (i == 60 && !conf.empty()) after = conf.front()->id();
+    }
+
+    std::printf("  blackout: identity %s -> %s (dormant engaged: %s)\n",
+                before.c_str(), after.c_str(), went_dormant ? "yes" : "no");
+    CHECK(!before.empty());
+    CHECK(!after.empty());
+    CHECK(went_dormant);
+    CHECK(before == after);
+}
+
 }  // namespace
 
 int main() {
     test_tracks_clean_targets();
+    test_identity_survives_a_blackout();
     test_survives_detection_gap();
     test_clutter_estimate_adapts();
     test_ids_are_stable();

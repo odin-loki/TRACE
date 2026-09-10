@@ -13,6 +13,7 @@
 #include <string>
 
 #include "trace/core/engine.hpp"
+#include "trace/core/motion_constraint.hpp"
 #include "trace/sim/scenario.hpp"
 
 using namespace trace;
@@ -130,15 +131,20 @@ void run_transit_hub(std::uint64_t seed, bool verbose) {
 void run_dark_vessel(std::uint64_t seed, bool verbose) {
     Scenario s(seed);
     s.n_scans = 120;
-    s.match_radius_m = 3000.0;
+    // A vessel covers 21.6 km between hourly scans, and the motion model's own
+    // one-scan prediction uncertainty is around 13 km. Scoring against a 3 km
+    // radius would be measuring the scan rate, not the tracker.
+    s.match_radius_m = 8000.0;
 
+    // An ocean basin, not a coastal box: at 12 knots a vessel covers 21.6 km
+    // per hourly scan, so 120 scans is 2,600 km of transit.
+    const Area basin{0, 3000000, 0, 1200000};
     s.engine_config.profile = Maritime();
-    s.engine_config.area = Area{0, 400000, 0, 300000};
+    s.engine_config.area = basin;
     s.engine_config.seed = seed;
 
     auto ais = std::make_unique<WideAreaReporter>(WideAreaReporter::Config{
-        "AIS_SAT", Area{0, 400000, 0, 300000}, 0.80, 200.0, Modality::SIGINT,
-        0.85, 0.20, true});
+        "AIS_SAT", basin, 0.80, 200.0, Modality::SIGINT, 0.85, 0.20, true});
     auto* ais_ptr = ais.get();
     s.sensors.push_back(std::move(ais));
 
@@ -146,10 +152,10 @@ void run_dark_vessel(std::uint64_t seed, bool verbose) {
         Entity v;
         v.id = "vessel_" + std::to_string(i);
         v.role = (i == 0 ? "suspect" : "traffic");
-        const Real y = 40000.0 + i * 50000.0;
-        v.position = Vec2{20000, y};
+        const Real y = 150000.0 + i * 200000.0;
+        v.position = Vec2{50000, y};
         v.velocity = Vec2{6.0, 0.0};  // ~12 knots
-        v.waypoints = line(Vec2{20000, y}, Vec2{380000, y + 20000}, 100);
+        v.waypoints = line(Vec2{50000, y}, Vec2{2900000, y + 100000}, 130);
         s.world.add(v);
     }
 
@@ -211,6 +217,13 @@ void run_anpr_corridor(std::uint64_t seed, bool verbose) {
     s.engine_config.profile = p;
     s.engine_config.area = Area{0, 6000, 0, 800};
     s.engine_config.seed = seed;
+
+    // Confine tracks to the carriageway. Free-space motion has no idea a
+    // vehicle cannot leave the road, so between readers 400 m apart it coasts
+    // the estimate sideways into the verge - which was most of this scenario's
+    // apparent error, and the reason it was the weakest of the seven.
+    s.engine_config.motion_constraint = std::make_shared<RoadNetwork>(
+        RoadNetwork::from_polyline({{0, 400}, {6000, 400}}, /*tolerance*/ 60.0));
 
     // Readers every 400 m along the corridor: coverage is a string of dots.
     for (int i = 0; i < 15; ++i) {
