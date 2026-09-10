@@ -81,8 +81,46 @@ std::string read_ini_value(const fs::path& file, const std::string& key) {
 
 }  // namespace
 
+Descriptor MotBox::geometry_descriptor() const {
+    if (w <= 0.0 || h <= 0.0) return Descriptor{};
+    // Log scale: a 20-pixel difference means something quite different on a
+    // 40-pixel box than on a 400-pixel one.
+    const Real log_h = std::log(std::max(h, 1.0));
+    const Real log_aspect = std::log(std::max(w, 1.0) / std::max(h, 1.0));
+    return SoftBinner::encode({
+        {log_h,      std::log(20.0),  std::log(600.0), 20, 1.2},
+        {log_aspect, std::log(0.15),  std::log(1.5),   12, 1.2},
+    });
+}
+
+Descriptor MotSequence::identity_descriptor(int gt_id) {
+    // Spread identities around a circle in a two-feature soft-binned space, so
+    // distinct ids give near-orthogonal descriptors and the same id always
+    // gives the same one.
+    const Real a = static_cast<Real>((gt_id * 2654435761u) % 10000) / 10000.0;
+    const Real b = static_cast<Real>((gt_id * 40503u) % 10000) / 10000.0;
+    return SoftBinner::encode({{a, 0.0, 1.0, 16, 0.6}, {b, 0.0, 1.0, 16, 0.6}});
+}
+
+const MotBox* MotSequence::nearest_truth(int frame, Vec2 foot,
+                                         Real max_distance) const {
+    const auto it = truth.find(frame);
+    if (it == truth.end()) return nullptr;
+    const MotBox* best = nullptr;
+    Real best_d = max_distance;
+    for (const auto& b : it->second) {
+        const Real d = distance(b.foot(), foot);
+        if (d < best_d) {
+            best_d = d;
+            best = &b;
+        }
+    }
+    return best;
+}
+
 std::vector<Observation> MotSequence::observations_for(int frame, Real timestamp,
-                                                       Real min_score) const {
+                                                       Real min_score,
+                                                       Appearance appearance) const {
     std::vector<Observation> out;
     const auto it = detections.find(frame);
     if (it == detections.end()) return out;
@@ -102,8 +140,25 @@ std::vector<Observation> MotSequence::observations_for(int frame, Real timestamp
         // still worth something, and zero-confidence observations are ignored
         // by the birth gate entirely.
         const Real conf = std::clamp(0.3 + 0.65 * norm, 0.1, 0.99);
-        out.emplace_back("d" + std::to_string(frame) + "_" + std::to_string(n++),
-                         timestamp, b.foot(), Modality::GEOINT, conf, "MOT_DET");
+        Observation obs("d" + std::to_string(frame) + "_" + std::to_string(n++),
+                        timestamp, b.foot(), Modality::GEOINT, conf, "MOT_DET");
+        switch (appearance) {
+            case Appearance::Geometry:
+                obs.with_descriptor(b.geometry_descriptor());
+                break;
+            case Appearance::Oracle: {
+                // A false positive belongs to nobody, so it gets no descriptor
+                // rather than a fabricated one - otherwise the study would be
+                // measuring clutter suppression as well as re-identification.
+                if (const MotBox* gt = nearest_truth(frame, b.foot(), 50.0)) {
+                    obs.with_descriptor(identity_descriptor(gt->id));
+                }
+                break;
+            }
+            case Appearance::None:
+                break;
+        }
+        out.push_back(std::move(obs));
     }
     return out;
 }
@@ -196,14 +251,15 @@ DomainProfile MotPedestrianPixels(int frame_rate, Real typical_px_per_s) {
     p.p_detection = 0.55;
     p.r_birth = 0.40;
     p.r_confirm = 0.55;
-    p.dormant_timeout = static_cast<int>(frame_rate * 2);
-    // Deliberately short. In a crowd a dormant track has dozens of plausible
-    // reappearances within any generous window, and reacquiring the wrong
-    // person costs both a false positive and an identity switch. Without an
-    // appearance model there is nothing to break the tie, so the honest
-    // setting is to reacquire only across the briefest occlusions.
-    p.reacquire_kinematic_s = 0.4;
-    p.max_coast_s = 2.0;              // two seconds of occlusion, then retire
+    p.dormant_timeout = static_cast<int>(frame_rate * 4);
+    // How long a window is safe depends entirely on whether there is anything
+    // to break the tie. Without a descriptor, a crowd offers dozens of
+    // plausible reappearances and the honest setting is to reacquire only
+    // across the briefest occlusions. With one, a longer window becomes an
+    // asset rather than a liability - see docs/VALIDATION.md.
+    p.reacquire_kinematic_s = 1.0;
+    p.reacquire_min_similarity = 0.35;
+    p.max_coast_s = 1.0;               // one second of occlusion, then retire
 
     p.gibbs_sweeps = 10;
     p.n_particles = 192;              // crowds mean many filters at once
@@ -235,6 +291,30 @@ DomainProfile MotPedestrianPixels(int frame_rate, Real typical_px_per_s) {
     // Merge gate scaled to how far apart two people can genuinely be while
     // their boxes still overlap in a crowd.
     p.merge_distance_m = 25.0;
+
+    // Appearance is switched OFF here, and the reason is a measurement rather
+    // than an assumption.
+    //
+    // Box geometry was tried as a descriptor and gave nothing (MOTA 39.7% ->
+    // 39.5%). More tellingly, so did a perfect *oracle* descriptor built from
+    // ground-truth identity: identity switches moved 1039 -> 1012, and no
+    // combination of weight, reacquisition window or dormancy changed that.
+    //
+    // The arithmetic says why. On MOT17-02-FRCNN the MOTA penalty is 89%
+    // missed detections, 9% identity switches, 1.5% false positives. Missed
+    // detections are capped by the detector - which TRACE already exceeds by
+    // coasting - so appearance can only address a ninth of the penalty, and
+    // eliminating every switch would be worth 5.6 MOTA points. The switches
+    // that remain are fragmentation: a person undetected for seconds, whose
+    // coasted track has drifted too far to be recognised as theirs.
+    //
+    // The mechanism is implemented, tested and available; on this benchmark it
+    // is not what is limiting. A domain where descriptors are genuinely
+    // discriminative should turn it on. See docs/VALIDATION.md.
+    p.appearance_weight = 0.0;
+    p.appearance_sigma = 0.30;
+    p.appearance_momentum = 0.85;
+    p.reacquire_min_similarity = -1.0;
     return p;
 }
 

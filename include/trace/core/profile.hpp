@@ -97,6 +97,24 @@ struct DomainProfile {
     /// it from the fastest motion model's steady-state speed.
     Real birth_gate_m{-1.0};
     int  gibbs_sweeps{14};
+    /// How much weight association gives to appearance relative to position.
+    /// Zero ignores descriptors entirely, which is the right default: most
+    /// domains have no appearance evidence, and inventing a term for absent
+    /// evidence would only add noise.
+    Real appearance_weight{0.0};
+    /// Appearance distance, as (1 - cosine similarity), treated as Gaussian
+    /// with this standard deviation. Smaller makes appearance more decisive.
+    Real appearance_sigma{0.35};
+    /// Momentum of a track's running appearance model. Near 1 remembers a long
+    /// way back, which is what carries identity across an occlusion.
+    Real appearance_momentum{0.9};
+    /// How strongly appearance similarity counts when deciding whether a new
+    /// detection is a dormant identity resurfacing.
+    Real reacquire_appearance_gain{4.0};
+    /// Below this cosine similarity a reacquisition is refused outright.
+    /// Negative disables the check, which is correct where descriptors are
+    /// weak or absent - refusing on weak evidence loses identities needlessly.
+    Real reacquire_min_similarity{-1.0};
     int  n_particles{320};
 
     // -- Motion models ------------------------------------------------------

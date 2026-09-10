@@ -2,13 +2,18 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <numeric>
 
 namespace trace {
 namespace {
 
 /// Existence update constants, ported from the reference implementation.
-constexpr Real kPossAlpha = 0.25;      ///< possibilistic decay floor
+/// How much of its possibility a track retains between updates. Slightly below
+/// one, so a track fed steadily weaker evidence sags towards that weaker level
+/// rather than holding its best-ever moment forever.
+constexpr Real kPossRetain = 0.97;
+constexpr Real kPossAlpha = 0.25;      ///< possibilistic decay on a miss
 constexpr Real kThreatEmaAlpha = 0.3;
 constexpr Real kThreatPersistThresh = 0.62;
 constexpr std::size_t kMaxHistory = 50;
@@ -63,13 +68,35 @@ void Track::update_hit(const Observation& obs, Real scan_dt) {
     // very detection that created it - which made the birth threshold dead
     // code. See PmbmManager::update.
 
-    // Possibilistic existence: a necessity-style update that refuses to fall
-    // faster than kPossAlpha. It reacts differently to weak evidence than the
-    // Bayesian track, and that difference is the diagnostic.
-    const Real pi_L = std::min(1.0, weight * profile_->p_detection);
-    pi_r_ = std::clamp(std::max(pi_r_ * pi_L, kPossAlpha * pi_r_), 0.0, 1.0);
+    // Possibilistic existence: the degree to which the evidence *permits* this
+    // track to exist, as opposed to the Bayesian r, which measures how much
+    // evidence has accumulated. The two answer different questions, and their
+    // divergence is the diagnostic.
+    //
+    // The reference computed this as a running product of factors that are
+    // always <= 1, so it could only ever fall, while r rose to ~1. Every
+    // long-lived track therefore converged to a mismatch of 1.0 no matter what
+    // evidence it was built from, and the diagnostic was pure noise - it fired
+    // on 119 of 119 scans for a fabricated track and equally for every real
+    // one. A possibility measure must be able to rise: good evidence makes a
+    // hypothesis *more* permissible, not less.
+    //
+    // Normalising by the best weight any source could supply puts quality on a
+    // 0..1 scale, so pi_r converges to the typical quality of this track's
+    // evidence while r converges to 1 on sheer count. A wide gap means many
+    // weak detections have been laundered into false certainty.
+    const Real best_weight = profile_->modality_weight(Modality::GEOINT);
+    const Real quality = std::clamp(weight / std::max(best_weight, 1e-6), 0.0, 1.0);
+    pi_r_ = std::clamp(std::max(pi_r_ * kPossRetain, quality), 0.0, 1.0);
 
     poss_mismatch_ = std::abs(r_ - pi_r_) / (std::max(r_, pi_r_) + 1e-6);
+
+    // Fold this detection's appearance into the running model. Done on every
+    // hit, so the model reflects the entity across viewpoints rather than
+    // whichever frame happened to be first.
+    if (obs.has_descriptor()) {
+        appearance_.blend(obs.descriptor, profile_->appearance_momentum);
+    }
 
     last_seen_ = obs.timestamp;
     ++n_hit_;
@@ -105,17 +132,29 @@ void Track::update_threat(Real score) {
     }
 }
 
-void Track::note_hit_scan(int scan) {
-    hit_scans_.push_back(scan);
-    if (hit_scans_.size() > 12) hit_scans_.pop_front();
+void Track::note_hit_scan(int scan, const std::string& source) {
+    hit_scans_.push_back(HitRecord{scan, std::hash<std::string>{}(source)});
+    if (hit_scans_.size() > 24) hit_scans_.pop_front();
 }
 
 bool Track::shares_hit_scan_with(const Track& other) const {
-    // Any single scan in which both were fed their own detection proves the
-    // two entities are distinct, however close together they are walking.
-    for (const int s : hit_scans_) {
-        for (const int o : other.hit_scans_) {
-            if (s == o) return true;
+    // A scan in which one sensor fed both tracks proves they are distinct
+    // entities, however close together they are moving: a sensor reports a
+    // given entity once per scan. The same scan via two different sensors
+    // proves nothing of the kind - that is one entity under overlapping
+    // coverage, which is the case that must still be allowed to merge.
+    for (const HitRecord& a : hit_scans_) {
+        for (const HitRecord& b : other.hit_scans_) {
+            if (a == b) return true;
+        }
+    }
+    return false;
+}
+
+bool Track::shares_source_with(const Track& other) const {
+    for (const HitRecord& a : hit_scans_) {
+        for (const HitRecord& b : other.hit_scans_) {
+            if (a.source == b.source) return true;
         }
     }
     return false;
@@ -127,6 +166,9 @@ void Track::absorb(const Track& other) {
     // because both were evidence about one entity all along.
     if (!pol_.fitted() && other.pol_.fitted()) {
         pol_.clone_from(other.pol_);
+    }
+    if (!appearance_.valid() && other.appearance_.valid()) {
+        appearance_ = other.appearance_;
     }
     n_hit_ += other.n_hit_;
     born_at_ = std::min(born_at_, other.born_at_);

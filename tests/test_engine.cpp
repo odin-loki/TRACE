@@ -168,10 +168,45 @@ void test_convergence_is_predicted_before_contact() {
     CHECK(first_warning_sep > cfg.profile.rv_threshold_m * 3.0);
 }
 
+void test_possibility_mismatch_discriminates() {
+    // The dual-existence diagnostic must separate a track built on strong
+    // evidence from one built on weak evidence repeated often. Before the
+    // possibility update was fixed it could only fall, so every long-lived
+    // track saturated at a mismatch of 1.0 and the diagnostic was noise.
+    const auto mismatch_after = [](Modality m, Real conf) {
+        EngineConfig cfg;
+        cfg.profile = CityCameraSurveillance();
+        cfg.profile.scan_dt_s = 1.0;
+        cfg.area = Area{0, 400, 0, 400};
+        cfg.seed = 4;
+        Engine eng(cfg);
+        ScanReport last;
+        for (int i = 0; i < 40; ++i) {
+            const Real t = i * 1.0;
+            std::vector<Observation> obs{
+                {"o" + std::to_string(i), t, Vec2{50.0 + i * 1.5, 200.0}, m, conf, "S"}};
+            last = eng.ingest(obs, t);
+        }
+        return last.targets.empty() ? -1.0 : last.targets[0].possibility_mismatch;
+    };
+
+    const Real strong = mismatch_after(Modality::GEOINT, 0.95);
+    const Real marginal = mismatch_after(Modality::OSINT, 0.60);
+    std::printf("  possibility mismatch: strong evidence %.2f, marginal %.2f\n",
+                strong, marginal);
+
+    CHECK(strong >= 0.0);
+    CHECK(marginal >= 0.0);
+    CHECK(strong < 0.40);      // strong evidence is not flagged
+    CHECK(marginal > 0.50);    // weak evidence promoted to certainty is
+    CHECK(marginal > strong * 1.5);
+}
+
 }  // namespace
 
 int main() {
     test_empty_scan_is_safe();
+    test_possibility_mismatch_discriminates();
     test_track_forms_and_reports();
     test_detector_registry();
     test_determinism();

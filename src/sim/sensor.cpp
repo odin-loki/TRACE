@@ -120,6 +120,27 @@ std::vector<Observation> WideAreaReporter::observe(const WorldSnapshot& truth,
     return out;
 }
 
+std::vector<Observation> SpoofInjector::observe(const WorldSnapshot& truth,
+                                                Rng& rng,
+                                                DetectionLedger* ledger) {
+    std::vector<Observation> out;
+    if (!cfg_.enabled) return out;
+    if (truth.timestamp < cfg_.start_time_s || truth.timestamp > cfg_.end_time_s) {
+        return out;
+    }
+    if (!rng.bernoulli(cfg_.p_report)) return out;
+
+    // Deliberately NOT recorded in the ledger: no real entity is behind this,
+    // so counting it would corrupt the sensor-ceiling measurement that every
+    // scenario reports.
+    const Vec2 p = phantom_position(truth.timestamp);
+    out.emplace_back(cfg_.id + "-" + std::to_string(counter_++), truth.timestamp,
+                     Vec2{p.x + rng.normal(0.0, cfg_.pos_noise_m),
+                          p.y + rng.normal(0.0, cfg_.pos_noise_m)},
+                     cfg_.modality, cfg_.confidence, cfg_.id);
+    return out;
+}
+
 std::vector<Observation> collect(const std::vector<SensorPtr>& sensors,
                                  const WorldSnapshot& truth, Rng& rng,
                                  DetectionLedger* ledger) {

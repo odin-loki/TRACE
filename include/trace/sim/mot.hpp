@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "trace/core/descriptor.hpp"
 #include "trace/core/observation.hpp"
 #include "trace/core/profile.hpp"
 #include "trace/core/types.hpp"
@@ -39,6 +40,17 @@ struct MotBox {
 
     /// Bottom-centre: the conventional ground-contact proxy.
     [[nodiscard]] Vec2 foot() const { return Vec2{x + w * 0.5, y + h}; }
+
+    /// A descriptor built from the box's own geometry.
+    ///
+    /// TRACE has no access to pixels here, but a detection box is not nothing:
+    /// height is a strong depth cue and is stable per person over short
+    /// intervals, and aspect ratio separates a standing adult from a crouching
+    /// one or a pushchair. It is far weaker than a learned re-identification
+    /// embedding - it cannot tell two similarly-sized strangers apart - but it
+    /// is honest evidence obtainable from public detections alone, and it
+    /// exercises exactly the code path a real embedding would use.
+    [[nodiscard]] Descriptor geometry_descriptor() const;
 };
 
 /// A loaded MOTChallenge sequence.
@@ -66,8 +78,29 @@ struct MotSequence {
     /// `min_score` rejects the weakest detections. MOT's three public detectors
     /// (DPM, FRCNN, SDP) use wildly different score ranges, so the threshold is
     /// applied after normalising each sequence's own score distribution.
+    /// How detections should be tagged with appearance evidence.
+    enum class Appearance {
+        None,      ///< no descriptor at all
+        Geometry,  ///< from the detection box's own width and height
+        Oracle,    ///< from the ground-truth identity the box belongs to
+    };
+
+    /// `Appearance::Oracle` is a deliberate upper-bound study, not a result. It
+    /// hands the tracker a perfect, noiseless identity descriptor by looking up
+    /// which real person each detection belongs to. No real system can do this.
+    /// Its purpose is to measure precisely how much a learned re-identification
+    /// embedding would be worth, without having to train one - the gap between
+    /// Geometry and Oracle is the headroom.
     [[nodiscard]] std::vector<Observation> observations_for(
-        int frame, Real timestamp, Real min_score = 0.0) const;
+        int frame, Real timestamp, Real min_score = 0.0,
+        Appearance appearance = Appearance::Geometry) const;
+
+    /// Descriptor encoding a ground-truth identity, for the oracle study.
+    [[nodiscard]] static Descriptor identity_descriptor(int gt_id);
+
+    /// The ground-truth box nearest to a detection, or nullptr.
+    [[nodiscard]] const MotBox* nearest_truth(int frame, Vec2 foot,
+                                              Real max_distance) const;
 
     /// Ground-truth entities for one frame, filtered to real pedestrians.
     [[nodiscard]] std::vector<Entity> truth_for(int frame) const;

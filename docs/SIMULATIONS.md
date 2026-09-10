@@ -19,6 +19,9 @@ below is built around a specific way tracking fails in the field:
 | Dense co-location | Association is genuinely ambiguous | transit-hub, warehouse |
 | Constrained topology | Straight-line prediction is wrong by construction | maze |
 | Deliberate evasion | Behaviour designed to defeat naive tracking | evader |
+| Overlapping sensors | Two sensors report one entity; the second looks like a new one | transit-hub, mule-network |
+| Fabricated evidence | A feed reports something that is not there | spoofing |
+| Non-physical space | "Position" is behavioural, not geographic | mule-network |
 
 ---
 
@@ -134,20 +137,16 @@ pieces are in place; each is roughly one file.
   bias — the case `SourceCredibility` exists for and which nothing currently
   tests.
 
-**Adversarial**
-- **Spoofing and injection.** Fabricated detections designed to create a
-  plausible false track. The direct test of the possibility/probability mismatch
-  diagnostic, which currently fires constantly without being validated against a
-  scenario where it *should*.
+**Adversarial** — spoofing is now implemented; see scenario 8.
 - **Decoy and split.** A subject who hands off to a lookalike mid-route.
 - **Coordinated evasion.** A team deliberately breaking co-location so the
   network analyser cannot connect them.
 
-**Non-geographic** — the Tier 3 cases in [USE_CASES.md](USE_CASES.md)
+**Non-geographic** — the transaction-space case is now implemented; see
+scenario 9, including its negative finding about role inference.
 - **Lateral movement on a network graph**, with "position" as a service
-  embedding.
-- **Transaction-space mule network**, to see whether the role classifier finds
-  couriers without being told what a mule is.
+  embedding. The `MotionConstraint` hook is the natural place to express the
+  graph.
 
 **Validation** — MOTChallenge replay is now implemented; see
 [VALIDATION.md](VALIDATION.md) and `trace_mot`.

@@ -1,7 +1,7 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Twelve substantive defects were found —
-seven inherited from `reference/aria_intel.py`, five introduced or exposed by
+The C++23 port is not a transliteration. Sixteen substantive defects were found
+— eight inherited from `reference/aria_intel.py`, eight introduced or exposed by
 the port itself — while getting the simulations, and then real MOTChallenge
 data, to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
@@ -217,6 +217,105 @@ weighted mean. Whether an entity is on a road is a fact about the entity, not
 about each Monte-Carlo sample. Measured over 30 coasting scans: unconstrained
 lateral spread 2,481 m, constrained 0 m.
 
+## 13. Association exclusivity was global, not per sensor
+
+**Severity: high.** A detection already claimed by another track was excluded
+from every other track's candidate list. That is right within one sensor — a
+camera reports a given entity once per scan — and wrong across sensors, where
+two overlapping cameras both report the same entity and the second report is
+*corroboration*, not a second entity.
+
+The corroborating report was left unassigned, where it promptly founded a
+duplicate track. Multi-source fusion is the entire purpose of the observation
+model, so this was the case that most needed to work.
+
+**Fix:** association runs once per source. A track may hold at most one
+detection from each sensor, and existence is updated once per scan however many
+sensors reported it — counting each separately would make an entity watched by
+four cameras four times as certain as the same entity watched by one.
+
+Effect: transit-hub (overlapping ceiling cameras) ghost tracks fell from 2.08
+to **0.12** per scan; the behaviour-space scenario from 10.95 to 4.10; evader
+identity switches from 8 to **0**.
+
+## 14. The possibility/probability mismatch could only ever fire
+
+**Severity: medium, and it had been reported as a feature.** The possibilistic
+existence `pi_r` was a running product of factors that are always ≤ 1, so it
+could only fall, while the Bayesian `r` rose to ~1. Every long-lived track
+therefore converged to a mismatch of 1.0 regardless of the evidence behind it.
+
+Measured in the spoofing scenario built for it: the diagnostic flagged a
+fabricated track on 119 of 119 scans — and flagged real tracks just as hard,
+both peaking at 1.000. It was noise being read as a signal.
+
+**Fix:** a possibility measure has to be able to rise — good evidence makes a
+hypothesis *more* permissible, not less. `pi_r` now tracks the normalised
+quality of a track's evidence, so it converges to that quality while `r`
+converges to 1 on sheer count, and the gap means "weak evidence has been
+laundered into certainty".
+
+| | flagged | peak mismatch |
+|---|---|---|
+| real entities | 0/484 | 0.27 |
+| high-confidence phantom | 0/119 | 0.21 |
+| marginal-quality rumour | **119/119** | 0.71 |
+
+Note the middle row. The fixed diagnostic does **not** catch a convincing lie,
+and cannot: a high-confidence fabrication looks exactly like high-confidence
+truth on evidence quality alone. The reference's claim that it "flags sensor
+deception" holds only for *low-quality* deception, and the scenario now says so.
+
+## 15. The hub test used an absolute threshold in a relative classifier
+
+**Severity: low.** Role inference compares speed against the population's own
+median — deliberately, so it travels between domains — but tested betweenness
+against a fixed 0.2. A normalised betweenness above 0.2 requires a near-perfect
+star topology, which real contact graphs are not, so the HANDLER branch
+effectively never fired and hubs fell through to the catch-all role.
+
+**Fix:** betweenness is compared against the population's upper quartile, like
+speed.
+
+## 16. The merge discriminator mistook two sensors for two entities
+
+**Severity: medium — a direct consequence of fixing #13.** Duplicate-track
+merging is blocked when two tracks were each fed a detection in the same scan,
+on the reasoning that one entity cannot produce two simultaneous detections.
+Once association became per-sensor, that reasoning broke: one entity under two
+overlapping cameras produces exactly that pattern every scan, so the two tracks
+founded at birth could never be merged. Measured across nine seeds, only five
+collapsed to a single track.
+
+**Fix:** the discriminator became per (scan, sensor) rather than per scan. A
+sensor reports a given entity once per scan, so one sensor feeding both tracks
+in one scan settles it; the same scan via two *different* sensors proves
+nothing.
+
+That alone over-corrected, merging genuinely distinct entities whenever source
+identifiers carried no spatial meaning, so a second guard was added: two tracks
+both fed steadily by the *same set* of sensors, just never in the same scan, are
+two entities whose detections alternate. Nine of nine seeds now collapse to one
+track, and two entities under one sensor still stay separate.
+
+A test-scenario defect surfaced alongside it: the synthetic generator assigned
+each detection a source id at random from a pool, which no real sensor estate
+does — a camera covers a region. Fixed to assign by region.
+
+## A note on test thresholds
+
+Three tests failed on the scalar backend while passing under AVX-512, which
+looked like a backend defect and was not. The two paths consume the random
+stream at different rates, and the outcome of this kind of tracking is strongly
+seed-dependent: across 40 seeds the mean position error in the urban scenario
+spans 13–209 m on both backends, with near-identical medians (63 m vectorised,
+60 m scalar). The thresholds had been tuned to whichever seed was in front of
+them.
+
+Those tests now assert on a median across seeds, or on how many of N seeds
+satisfy a structural property. A threshold fitted to one draw of a
+high-variance process tests the draw.
+
 ## Smaller corrections
 
 - **Trajectory update was dead code.** `update_hit` decided whether two
@@ -242,8 +341,17 @@ lateral spread 2,481 m, constrained 0 m.
 
 Stated plainly, because the simulations make them measurable:
 
-- **No appearance model.** The largest available improvement for camera domains,
-  and irrelevant to every other one. See [VALIDATION.md](VALIDATION.md).
+- **Appearance is implemented but does not help on MOT.** The mechanism works
+  where descriptors are discriminative — six entities huddling then dispersing
+  lose 6/6 identities without it and 3/6 with it. On MOT it delivers nothing,
+  and a perfect *oracle* descriptor delivers nothing either, because 89% of the
+  MOTA penalty there is missed detections. The earlier claim in this file that
+  an appearance cue was "the obvious next step" was wrong, and the measurement
+  that disproved it is in [VALIDATION.md](VALIDATION.md).
+- **Role inference does not transfer to a new domain without calibration.** The
+  behaviour-space scenario tracks well (104% of available detections) and its
+  behavioural detectors fire, but the classifier does not recover ground-truth
+  roles. Its thresholds are calibrated against a physical contact network.
 - **Maritime sampling at 12 knots hourly.** A vessel moves 21.6 km between
   scans against a one-scan prediction uncertainty of ~13 km. `dark-vessel`
   recovers 70% of available detections, the only genuine shortfall among the

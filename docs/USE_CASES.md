@@ -136,12 +136,23 @@ transaction graph, a rail network — and `MotionConstraint` is the hook for it.
 `RoadNetwork` handles straight segments; a general graph constraint is the same
 interface with a different projection.
 
-**The caveat for Tier 3, stated plainly.** The MOU motion model assumes
-continuous movement with inertia. That is a good model for things that move
-through space and a questionable one for things that jump discontinuously
-through an abstract space. Expect to replace `MotionModel` before expecting
-good results — the tracking, association and behavioural layers carry over, the
-motion prior does not.
+**The caveat for Tier 3, now measured rather than guessed.** The
+`mule-network` scenario implements the transaction-space case, and the result
+is mixed in a specific way:
+
+- **Tracking transfers.** The engine recovers 104% of available detections in a
+  purely behavioural space, with no notion of what the axes mean.
+- **The behavioural detectors transfer.** `BRUSH_PASS` fires on direct
+  transfers between accounts.
+- **Role inference does not transfer.** The classifier's thresholds are
+  calibrated against a physical contact network; in behaviour space it does not
+  recover the ground-truth roles without recalibration.
+
+The MOU motion model also assumes continuous movement with inertia — good for
+things that move through space, questionable for things that jump
+discontinuously through an abstract one. Expect to recalibrate the role
+thresholds and possibly replace `MotionModel`; the tracking and association
+layers carry over as they stand.
 
 ---
 

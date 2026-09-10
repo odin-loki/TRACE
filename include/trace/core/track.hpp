@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "trace/core/descriptor.hpp"
 #include "trace/core/observation.hpp"
 #include "trace/core/particle_filter.hpp"
 #include "trace/core/pattern_of_life.hpp"
@@ -45,15 +46,28 @@ public:
     void update_hit(const Observation& obs, Real scan_dt);
     void update_miss();
 
-    /// Record that this track was assigned a detection in `scan`. Two tracks
-    /// that are never hit in the same scan are competing for one entity's
-    /// detections; two that often are belong to different entities.
-    void note_hit_scan(int scan);
+    /// Record that `source` gave this track a detection in `scan`.
+    ///
+    /// The pair matters, not the scan alone. Two tracks fed in the same scan by
+    /// the *same* sensor must be two entities, because one sensor reports an
+    /// entity once per scan. Two tracks fed in the same scan by *different*
+    /// sensors are exactly what one entity under overlapping coverage looks
+    /// like - and treating that as proof of distinctness was blocking the merge
+    /// that should have collapsed them.
+    void note_hit_scan(int scan, const std::string& source);
     [[nodiscard]] bool shares_hit_scan_with(const Track& other) const;
-    [[nodiscard]] const std::deque<int>& hit_scans() const { return hit_scans_; }
+
+    /// Do the two tracks draw on any of the same sensors? Disjoint sensor sets
+    /// are what one entity under overlapping coverage looks like.
+    [[nodiscard]] bool shares_source_with(const Track& other) const;
+    [[nodiscard]] std::size_t hit_record_count() const { return hit_scans_.size(); }
 
     /// Absorb another track that has been judged to be the same entity.
     void absorb(const Track& other);
+
+    /// This track's running appearance model, blended from the descriptors of
+    /// every detection assigned to it.
+    [[nodiscard]] const Descriptor& appearance() const { return appearance_; }
 
     /// Fold this scan's threat score into the running estimate. Persistence is
     /// tracked separately: a single high score is noise, a sustained one is a
@@ -163,7 +177,15 @@ private:
 
     std::optional<Vec2> last_obs_pos_;
     Real last_obs_ts_{-1e18};
-    std::deque<int> hit_scans_;
+    struct HitRecord {
+        int scan{0};
+        std::size_t source{0};   ///< hashed source id
+        friend bool operator==(const HitRecord& a, const HitRecord& b) {
+            return a.scan == b.scan && a.source == b.source;
+        }
+    };
+    std::deque<HitRecord> hit_scans_;
+    Descriptor appearance_{};
 };
 
 using TrackPtr = std::shared_ptr<Track>;

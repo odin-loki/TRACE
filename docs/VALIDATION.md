@@ -25,14 +25,14 @@ offline processing. One pass, causal, 336,891 ground-truth boxes.
 
 | | |
 |---|---|
-| **MOTA** | **43.9%** |
+| **MOTA** | **42.9%** |
 | MOTP | 27.3 px |
-| Recall | 65.5% |
-| Precision | 81.8% |
-| Mostly tracked | 21.2% |
+| Recall | 66.2% |
+| Precision | 80.5% |
+| Mostly tracked | 24.7% |
 | Mostly lost | 2.4% |
-| Identity switches | 23,456 |
-| Throughput | 12.5 ms/frame, one core |
+| Identity switches | 24,248 |
+| Throughput | 15.8 ms/frame, one core |
 
 ### The number that matters more than MOTA
 
@@ -43,8 +43,8 @@ detection it was handed — gives:
 | | |
 |---|---|
 | Detector ceiling, recall | **59.9%** |
-| TRACE, recall | **65.5%** |
-| **TRACE recovered** | **109.3% of the recall the detections allow** |
+| TRACE, recall | **66.2%** |
+| **TRACE recovered** | **110.5% of the recall the detections allow** |
 
 No tracker consuming these detections can exceed 59.9% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
@@ -72,6 +72,73 @@ Raising the detection threshold to suppress DPM's false positives makes MOTA
 for precision is a losing exchange. DPM is simply a weak detector and there is
 no tuning that rescues it.
 
+## Scalability: MOT20, dense crowds
+
+MOT20 is the crowd split — tens to hundreds of people per frame, where
+association is hardest and the O(n^2) parts of the engine start to matter.
+
+| Sequence | People/frame | MOTA | Precision | Recall | Recovery of ceiling | ms/frame |
+|---|---|---|---|---|---|---|
+| MOT20-01 | ~46 | **53.1%** | 98.9% | 67.3% | 106.9% | 33.4 |
+| MOT20-02 | ~56 | **49.2%** | 96.0% | 59.9% | 107.1% | 50.9 |
+
+Both score *higher* than the MOT17 average, because MOT20's detections are
+cleaner (98–99% precision at the ceiling). MOT20-01 loses no identity for more
+than 80% of its life at all: **mostly-lost 0.0%**.
+
+Latency scales close to linearly with crowd density over this range — roughly
+0.7 ms per tracked entity per frame — rather than quadratically, because the
+chi-square gate keeps the association matrix sparse. It has not been measured
+above ~60 simultaneous entities.
+
+---
+
+## What an appearance model is actually worth
+
+TRACE gained a descriptor field, a per-track appearance model, and an appearance
+term in both the association likelihood and the reacquisition score. The
+question was how much it buys. The answer on MOT is: **nothing**, and the
+measurements are worth recording because the conclusion is counter-intuitive.
+
+| Descriptor on MOT17-02-FRCNN | MOTA | Identity switches |
+|---|---|---|
+| none | 39.7% | 1039 |
+| detection-box geometry | 39.5% | 1055 |
+| **oracle — perfect ground-truth identity** | **39.7%** | **1012** |
+
+A *perfect* descriptor, handed the true identity of every detection, moves
+identity switches by 2.6% and MOTA not at all. No weight, reacquisition window
+or dormancy setting changed that.
+
+The arithmetic explains it. On MOT17-02-FRCNN the MOTA penalty decomposes as:
+
+| Component | Count | Share of penalty |
+|---|---|---|
+| Missed detections | 9,997 | **89.2%** |
+| Identity switches | 1,039 | 9.3% |
+| False positives | 166 | 1.5% |
+
+Missed detections are capped by the detector — which TRACE already exceeds by
+coasting — so appearance can only address a ninth of the penalty. Eliminating
+*every* identity switch would be worth 5.6 MOTA points. And the switches that
+remain are not the kind appearance fixes: they are fragmentation, where a person
+goes undetected for seconds and their coasted track has drifted too far to be
+recognised as theirs.
+
+**The mechanism does work where descriptors are discriminative.** Six entities
+converging on one point, milling within measurement noise of each other, then
+dispersing along swapped paths:
+
+| | identities lost |
+|---|---|
+| without appearance | 6 of 6 |
+| with appearance | **3 of 6** |
+
+So appearance is implemented, tested and available, and is switched **off** in
+the MOT profile — because it was measured there rather than assumed. An earlier
+version of this document called an appearance cue "the obvious next step". That
+was wrong for this benchmark, and the measurement above is what disproved it.
+
 ---
 
 ## How to read this against published work
@@ -93,11 +160,10 @@ recovering entity trajectories from a stream of noisy point detections — it
 exceeds the input's own ceiling. On the metric that rewards visual
 re-identification, it is beaten by methods that do visual re-identification.
 
-The 23,456 identity switches are the same story. Without appearance there is
-nothing to break the tie when two people cross, and adding an appearance cue is
-the obvious next step for anyone wanting to use TRACE on camera data
-specifically. The `Observation` type would need a descriptor field and the
-association likelihood a term for it; nothing structural stands in the way.
+The identity switches were the same story — or so it appeared until they were
+measured. See "What an appearance model is actually worth" above: on this
+benchmark they are dominated by fragmentation rather than by association error,
+and even perfect appearance evidence barely moves them.
 
 A related finding, recorded because it was counter-intuitive: making dormant
 tracks *easier* to reacquire raised recall to 110.5% of ceiling but **lowered**

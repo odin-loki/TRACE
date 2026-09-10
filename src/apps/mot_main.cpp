@@ -174,7 +174,8 @@ DetectorCeiling detector_ceiling(const MotSequence& seq, Real min_score,
 }
 
 ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
-                      bool verbose) {
+                      bool verbose, MotSequence::Appearance appearance,
+                      Real appearance_weight) {
     ClearMot m;
     const MotSequence seq = load_mot_sequence(dir);
     if (!seq.valid()) {
@@ -185,6 +186,7 @@ ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
 
     EngineConfig cfg;
     cfg.profile = MotPedestrianPixels(seq.frame_rate);
+    cfg.profile.appearance_weight = appearance_weight;
     cfg.area = seq.area();
     cfg.seed = 20260910;
     Engine engine(cfg);
@@ -192,7 +194,7 @@ ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
     const Real dt = 1.0 / std::max(seq.frame_rate, 1);
     for (int frame = 1; frame <= seq.length; ++frame) {
         const Real t = static_cast<Real>(frame - 1) * dt;
-        const auto obs = seq.observations_for(frame, t, min_score);
+        const auto obs = seq.observations_for(frame, t, min_score, appearance);
         const ScanReport r = engine.ingest(obs, t);
 
         m.latency_sum += r.latency_ms;
@@ -222,6 +224,12 @@ int main(int argc, char** argv) {
             "  --min-score F   drop detections below this normalised score (default 0.15)\n"
             "  --radius PX     match radius in pixels                      (default 100)\n"
             "  --verbose       per-frame progress\n"
+            "  --appearance M  none | geometry | oracle   (default geometry)\n"
+            "                  oracle is an upper-bound study: it hands the\n"
+            "                  tracker perfect identity evidence, which no real\n"
+            "                  system has. The gap to geometry is the headroom a\n"
+            "                  learned re-identification embedding would unlock.\n"
+            "  --appearance-weight F   override the profile's weight\n"
             "\n"
             "Fetch the label archives with scripts/fetch_mot.sh - only the\n"
             "annotations are needed, not the images.");
@@ -232,6 +240,8 @@ int main(int argc, char** argv) {
     Real min_score = 0.15;
     Real radius = 100.0;
     bool verbose = false;
+    auto appearance = MotSequence::Appearance::Geometry;
+    Real appearance_weight = -1.0;  // negative: use the profile's own default
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--min-score") == 0 && i + 1 < argc) {
             min_score = std::atof(argv[++i]);
@@ -239,6 +249,13 @@ int main(int argc, char** argv) {
             radius = std::atof(argv[++i]);
         } else if (std::strcmp(argv[i], "--verbose") == 0) {
             verbose = true;
+        } else if (std::strcmp(argv[i], "--appearance") == 0 && i + 1 < argc) {
+            const std::string mode = argv[++i];
+            if (mode == "none") appearance = MotSequence::Appearance::None;
+            else if (mode == "oracle") appearance = MotSequence::Appearance::Oracle;
+            else appearance = MotSequence::Appearance::Geometry;
+        } else if (std::strcmp(argv[i], "--appearance-weight") == 0 && i + 1 < argc) {
+            appearance_weight = std::atof(argv[++i]);
         }
     }
 
@@ -251,7 +268,13 @@ int main(int argc, char** argv) {
     ClearMot overall;
     DetectorCeiling ceiling_all;
     for (const auto& dir : sequences) {
-        const ClearMot m = run_sequence(dir, min_score, radius, verbose);
+        const Real w = appearance_weight >= 0.0
+                           ? appearance_weight
+                           : MotPedestrianPixels(30).appearance_weight;
+        const ClearMot m = run_sequence(
+            dir, min_score, radius, verbose,
+            appearance == MotSequence::Appearance::None ? appearance : appearance,
+            appearance == MotSequence::Appearance::None ? 0.0 : w);
         if (m.frames == 0) continue;
         print_result(dir.substr(dir.find_last_of('/') + 1), m);
 

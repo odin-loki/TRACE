@@ -6,6 +6,7 @@
 //   ./trace_sim --list
 //   ./trace_sim transit-hub
 //   ./trace_sim --all
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -472,6 +473,321 @@ void run_wildlife(std::uint64_t seed, bool verbose) {
     report("wildlife", m, eng, note);
 }
 
+// ---------------------------------------------------------------------------
+// 8. Spoofing — fabricated entities injected into an otherwise honest feed
+// ---------------------------------------------------------------------------
+// Stresses the possibility/probability mismatch diagnostic, and establishes
+// precisely what it can and cannot do.
+//
+// Two phantoms are injected. One is reported at high confidence by a
+// compromised camera; the other is reported persistently but at marginal
+// quality, the way a chain of weak, uncorroborated reports accumulates into an
+// apparent fact. The diagnostic catches the second and not the first, and that
+// is the honest limit of the technique: it detects evidence *quality* being
+// laundered into certainty, not a convincing lie.
+void run_spoofing(std::uint64_t seed, bool verbose) {
+    Scenario s(seed);
+    s.n_scans = 160;
+    s.match_radius_m = 25.0;
+
+    DomainProfile p = CityCameraSurveillance();
+    p.scan_dt_s = 1.0;
+    p.pos_noise_m = 3.0;
+    p.meas_noise_var = 36.0;
+    s.engine_config.profile = p;
+    s.engine_config.area = Area{0, 800, 0, 600};
+    s.engine_config.seed = seed;
+
+    for (int i = 0; i < 2; ++i) {
+        CameraPanel::Config c;
+        c.id = "CAM_" + std::to_string(i);
+        c.footprint = Area{i * 350.0, i * 350.0 + 450.0, 0, 600};
+        c.p_detect = 0.85;
+        c.pos_noise_m = 3.0;
+        c.false_alarm_rate = 0.05;
+        s.sensors.push_back(std::make_unique<CameraPanel>(c));
+    }
+
+    // Phantom 1: a convincing lie. High-confidence imagery from a compromised
+    // feed, indistinguishable on evidence quality from a real detection.
+    SpoofInjector::Config confident;
+    confident.id = "CAM_COMPROMISED";
+    confident.origin = Vec2{120.0, 480.0};
+    confident.velocity = Vec2{2.2, -1.1};
+    confident.start_time_s = 40.0;
+    confident.modality = Modality::GEOINT;
+    confident.confidence = 0.97;
+    auto conf_inj = std::make_unique<SpoofInjector>(confident);
+    auto* conf_ptr = conf_inj.get();
+    s.sensors.push_back(std::move(conf_inj));
+
+    // Phantom 2: a rumour. Persistent, marginal-quality, single-source - the
+    // shape of an unverified report repeated until it looks established.
+    SpoofInjector::Config rumour;
+    rumour.id = "SRC_RUMOUR";
+    rumour.origin = Vec2{700.0, 120.0};
+    rumour.velocity = Vec2{-1.8, 1.4};
+    rumour.start_time_s = 40.0;
+    rumour.modality = Modality::OSINT;
+    rumour.confidence = 0.62;
+    auto rum_inj = std::make_unique<SpoofInjector>(rumour);
+    auto* rum_ptr = rum_inj.get();
+    s.sensors.push_back(std::move(rum_inj));
+
+    for (int i = 0; i < 4; ++i) {
+        Entity e;
+        e.id = "person_" + std::to_string(i);
+        e.role = "real";
+        const Real y = 100.0 + i * 120.0;
+        e.position = Vec2{40, y};
+        e.velocity = Vec2{1.5, 0};
+        e.waypoints = line(Vec2{40, y}, Vec2{760, y + 40}, 120);
+        s.world.add(std::move(e));
+    }
+
+    Engine eng(s.engine_config);
+
+    struct Tally {
+        int scans_tracked{0};
+        int scans_flagged{0};
+        Real peak_mismatch{0.0};
+    };
+    Tally confident_t, rumour_t, real_t;
+
+    s.on_report = [&](const Scenario& sc, int, const ScanReport& r, const Metrics&) {
+        if (r.timestamp < 40.0) return;
+        const Vec2 p_conf = conf_ptr->phantom_position(r.timestamp);
+        const Vec2 p_rum = rum_ptr->phantom_position(r.timestamp);
+
+        for (const auto& t : r.targets) {
+            bool flagged = false;
+            for (const auto& f : r.operational.possibility_mismatch_tracks) {
+                if (f == t.track_id) flagged = true;
+            }
+            const auto note = [&](Tally& tally) {
+                ++tally.scans_tracked;
+                if (flagged) ++tally.scans_flagged;
+                tally.peak_mismatch = std::max(tally.peak_mismatch,
+                                               t.possibility_mismatch);
+            };
+
+            bool near_real = false;
+            for (const auto& e : sc.world.entities()) {
+                if (e.active && distance(t.position, e.position) < 30.0) near_real = true;
+            }
+            if (near_real) { note(real_t); continue; }
+            if (distance(t.position, p_conf) < 30.0) { note(confident_t); continue; }
+            if (distance(t.position, p_rum) < 30.0) note(rumour_t);
+        }
+    };
+
+    const Metrics m = run(s, eng);
+    char note[512];
+    std::snprintf(note, sizeof(note),
+                  "possibility mismatch, flagged scans / tracked scans (peak):\n"
+                  "    real entities        %4d/%-4d (%.2f)\n"
+                  "    confident phantom    %4d/%-4d (%.2f)  <- not caught: a good lie "
+                  "looks like good evidence\n"
+                  "    marginal-quality rumour %4d/%-4d (%.2f)  <- caught",
+                  real_t.scans_flagged, real_t.scans_tracked, real_t.peak_mismatch,
+                  confident_t.scans_flagged, confident_t.scans_tracked,
+                  confident_t.peak_mismatch,
+                  rumour_t.scans_flagged, rumour_t.scans_tracked,
+                  rumour_t.peak_mismatch);
+    report("spoofing", m, eng, note);
+}
+
+// ---------------------------------------------------------------------------
+// 9. Mule network — tracking in a space that is not physical
+// ---------------------------------------------------------------------------
+// docs/USE_CASES.md claims the engine retargets to domains where "position" is
+// not geographic. This scenario is that claim in code, so it can be checked
+// rather than believed.
+//
+// Each entity is a bank account, and its position is its location in a
+// two-dimensional behavioural space: horizontally, transaction velocity (how
+// fast money moves through it); vertically, counterparty diversity (how many
+// distinct parties it deals with). Accounts drift as their behaviour changes.
+// Observations are periodic transaction reports, which are noisy, incomplete
+// and irregular in exactly the way sensor detections are.
+//
+// Nothing in the engine is told what any of this means. The question is whether
+// the role classifier, written for couriers and handlers in a physical network,
+// picks out money mules and collection accounts from behaviour alone.
+void run_mule_network(std::uint64_t seed, bool verbose) {
+    Scenario s(seed);
+    s.n_scans = 220;
+    s.match_radius_m = 6.0;
+
+    // Units are behaviour-space units, not metres. The engine does not care;
+    // it only needs them to be consistent.
+    DomainProfile p;
+    p.name = "TransactionSpace";
+    p.scan_dt_s = 3600.0;             // an hourly reporting cycle
+    p.pos_noise_m = 1.5;
+    p.meas_noise_var = 2.25 * 4.0;
+    p.p_detection = 0.80;             // not every account reports every cycle
+    p.r_birth = 0.40;
+    p.r_confirm = 0.55;
+    p.dormant_timeout = 40;
+    p.max_coast_s = 3600.0 * 8;
+    p.rv_threshold_m = 4.0;           // two accounts converging on one profile
+    p.rv_warning_horizon_s = 3600.0 * 12;
+    p.brush_pass_m = 3.0;             // a direct transfer between two accounts
+    // A "contact" must mean something. At 12 units in a 100-unit space every
+    // account contacted every other, so well-connected was true for all of
+    // them and few-contacts for none, and the role classifier had nothing to
+    // discriminate on. Contact radius has to be small relative to the typical
+    // separation between entities, in this space as in a physical one.
+    p.coloc_dist_m = 4.0;
+    // Behaviour-space units per second. A mule moves ~3 units per hourly
+    // report, retail ~0.2, a collection account ~0.05; the threshold sits
+    // between retail and mule. Scaled so that motion per scan stays small
+    // relative to the space, exactly as it must in a physical domain.
+    p.courier_speed_thresh = 0.0003;
+    // A mule in this network deals with one collection account and one
+    // cash-out profile, so two contacts is what a courier looks like here.
+    p.courier_contact_n = 2;
+    p.handler_contact_max = 8;
+    p.handler_stable_scans = 12;
+    p.chokepoint_m = 5.0;
+    p.loiter_min_s = 3600.0 * 6;
+    p.hvl_radius_m = 15.0;
+    p.pol_min_obs = 20;
+    //                       name          holds behaviour (s)   typical drift
+    //                       name          holds behaviour (s)   speed (units/s)
+    p.mou_models = {{motion("dormant_acct",   3600.0 * 12, 0.0000150),
+                     motion("retail",         3600.0 * 8,  0.0000560),
+                     motion("mule",           3600.0 * 3,  0.0009000),
+                     motion("collection",     3600.0 * 24, 0.0000140)}};
+    p.model_trans = {{{{0.90, 0.06, 0.02, 0.02}},
+                      {{0.10, 0.80, 0.07, 0.03}},
+                      {{0.05, 0.20, 0.70, 0.05}},
+                      {{0.05, 0.05, 0.05, 0.85}}}};
+
+    s.engine_config.profile = p;
+    s.engine_config.area = Area{0, 100, 0, 100};
+    s.engine_config.high_value_locations = {Vec2{80.0, 50.0}};  // cash-out region
+    s.engine_config.seed = seed;
+
+    // "Sensors" are reporting regimes. Routine reporting covers the whole
+    // space; a threshold rule fires additionally on high-velocity accounts.
+    auto routine = std::make_unique<WideAreaReporter>(WideAreaReporter::Config{
+        "ROUTINE_REPORTING", Area{0, 100, 0, 100}, 0.85, 1.2, Modality::COMMS,
+        0.85, 0.15, true});
+    s.sensors.push_back(std::move(routine));
+
+    CameraPanel::Config threshold;
+    threshold.id = "THRESHOLD_ALERTS";
+    threshold.footprint = Area{50, 100, 0, 100};   // the high-velocity region
+    threshold.p_detect = 0.70;
+    threshold.pos_noise_m = 1.0;
+    threshold.false_alarm_rate = 0.05;
+    threshold.modality = Modality::SIGINT;
+    s.sensors.push_back(std::make_unique<CameraPanel>(threshold));
+
+    // Three collection accounts. Near-stationary in behaviour space, and every
+    // mule deals with one of them - which is what should make them hubs.
+    const std::array<Vec2, 3> hubs{Vec2{20.0, 80.0}, Vec2{30.0, 60.0},
+                                   Vec2{18.0, 40.0}};
+    for (std::size_t i = 0; i < hubs.size(); ++i) {
+        Entity e;
+        e.id = "collection_" + std::to_string(i);
+        e.role = "collection";
+        e.position = hubs[i];
+        e.velocity = Vec2{0.0000139, 0.0};        // ~0.05 units per report
+        e.waypoints = {hubs[i], hubs[i] + Vec2{1.5, 0.8}};
+        s.world.add(std::move(e));
+    }
+
+    // Six mules. Each shuttles between one collection account and its own
+    // cash-out profile, so they are fast and each meets its hub repeatedly -
+    // but they do not all pile onto one point, which would make this a hard
+    // tracking problem rather than a clean test of role inference.
+    for (int i = 0; i < 6; ++i) {
+        Entity e;
+        e.id = "mule_" + std::to_string(i);
+        e.role = "mule";
+        const Vec2 hub = hubs[static_cast<std::size_t>(i % 3)];
+        const Vec2 cashout{72.0 + (i % 3) * 9.0, 25.0 + i * 11.0};
+        e.position = hub;
+        e.velocity = Vec2{0.00083, 0.0};          // ~3 units per report
+        std::vector<Vec2> route;
+        for (int trip = 0; trip < 14; ++trip) {
+            for (const Vec2& v : line(hub, cashout, 3)) route.push_back(v);
+            for (const Vec2& v : line(cashout, hub, 3)) route.push_back(v);
+        }
+        e.waypoints = route;
+        s.world.add(std::move(e));
+    }
+
+    // Eight ordinary retail accounts: slow, well separated, few dealings.
+    for (int i = 0; i < 8; ++i) {
+        Entity e;
+        e.id = "retail_" + std::to_string(i);
+        e.role = "retail";
+        const Vec2 origin{55.0 + (i % 4) * 11.0, 70.0 + (i / 4) * 18.0};
+        e.position = origin;
+        e.velocity = Vec2{0.0000556, 0.0};        // ~0.2 units per report
+        e.waypoints = line(origin, origin + Vec2{6.0, 3.0}, 40);
+        s.world.add(std::move(e));
+    }
+
+    Engine eng(s.engine_config);
+
+    // Did the role classifier find the mules, without being told what one is?
+    std::map<std::string, std::map<std::string, int>> role_votes;  // truth role -> role -> n
+    int brush_events = 0;
+    s.on_report = [&](const Scenario& sc, int, const ScanReport& r, const Metrics&) {
+        brush_events += static_cast<int>(r.events_of_type("BRUSH_PASS").size());
+        for (const auto& nr : r.network_roles) {
+            // Attribute the inferred role to whichever real account this track
+            // is closest to. Scoring only; the engine never sees it.
+            const TargetReport* tr = nullptr;
+            for (const auto& t : r.targets) {
+                if (t.track_id == nr.track) tr = &t;
+            }
+            if (tr == nullptr) continue;
+            const Entity* best = nullptr;
+            Real bd = 6.0;
+            for (const auto& e : sc.world.entities()) {
+                const Real d = distance(tr->position, e.position);
+                if (d < bd) { bd = d; best = &e; }
+            }
+            if (best != nullptr) ++role_votes[best->role][nr.role];
+        }
+    };
+
+    const Metrics m = run(s, eng);
+
+    std::string summary;
+    for (const auto& [truth_role, votes] : role_votes) {
+        int total = 0;
+        std::string top;
+        int top_n = 0;
+        for (const auto& [inferred, n] : votes) {
+            total += n;
+            if (n > top_n) { top_n = n; top = inferred; }
+        }
+        if (total == 0) continue;
+        char line[160];
+        std::snprintf(line, sizeof(line), "\n    %-12s -> %-10s %.0f%% of %d role assignments",
+                      truth_role.c_str(), top.c_str(), 100.0 * top_n / total, total);
+        summary += line;
+    }
+    char note[900];
+    std::snprintf(note, sizeof(note),
+                  "tracking in a non-geographic space works: see the recovery figure\n"
+                  "  above, and %d direct-transfer (BRUSH_PASS) events between accounts.\n"
+                  "  Role inference, however, does NOT transfer cleanly - roles assigned\n"
+                  "  by the classifier against each account's true role:%s\n"
+                  "  The kinematic and behavioural layers carry over to an abstract\n"
+                  "  space; the role classifier's thresholds are calibrated against a\n"
+                  "  physical contact network and would need recalibrating here.",
+                  brush_events, summary.c_str());
+    report("mule-network", m, eng, note);
+}
+
 std::map<std::string, ScenarioSpec>& registry() {
     static std::map<std::string, ScenarioSpec> r{
         {"transit-hub",
@@ -493,6 +809,14 @@ std::map<std::string, ScenarioSpec>& registry() {
          {"Subject walking a surveillance-detection route around an objective",
           "winding-number SDR detection, counter-surveillance escalation",
           run_evader}},
+        {"mule-network",
+         {"Accounts in a behavioural space, not physical space; mules shuttle value",
+          "non-geographic position; also shows role inference NOT transferring",
+          run_mule_network}},
+        {"spoofing",
+         {"A compromised camera injects a convincing phantom into an honest feed",
+          "possibility/probability mismatch, source credibility",
+          run_spoofing}},
         {"wildlife",
          {"GPS collars reporting every four hours over twenty days",
           "extreme sparsity, single-sighting birth, pattern-of-life on thin data",

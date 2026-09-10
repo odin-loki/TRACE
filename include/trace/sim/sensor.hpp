@@ -154,6 +154,48 @@ private:
     long counter_{0};
 };
 
+/// A sensor that fabricates detections: a spoofed feed, an injected track, a
+/// decoy. It reports a plausible entity that does not exist, at high confidence,
+/// which is what makes it dangerous - a low-confidence lie is filtered by the
+/// birth gate and never becomes a track.
+///
+/// This exists to test the possibility/probability mismatch diagnostic, which
+/// until now fired constantly in the scenarios without ever being exercised
+/// against a case where it *should* fire.
+class SpoofInjector final : public Sensor {
+public:
+    struct Config {
+        std::string id{"SPOOF"};
+        Vec2 origin{};
+        Vec2 velocity{};        ///< the phantom's apparent motion, m/s
+        Real start_time_s{0.0};
+        Real end_time_s{1e18};
+        Real p_report{0.95};    ///< a fabricated feed is conveniently reliable
+        Real pos_noise_m{1.0};
+        Modality modality{Modality::GEOINT};
+        Real confidence{0.95};
+        bool enabled{true};
+    };
+
+    explicit SpoofInjector(Config cfg) : cfg_(std::move(cfg)) {}
+
+    [[nodiscard]] const std::string& id() const override { return cfg_.id; }
+    [[nodiscard]] bool covers(Vec2) const override { return cfg_.enabled; }
+    [[nodiscard]] const Config& config() const { return cfg_; }
+
+    /// Where the phantom would appear at `t`, whether or not it is reported.
+    [[nodiscard]] Vec2 phantom_position(Real t) const {
+        return cfg_.origin + cfg_.velocity * std::max(t - cfg_.start_time_s, 0.0);
+    }
+
+    std::vector<Observation> observe(const WorldSnapshot& truth, Rng& rng,
+                                     DetectionLedger* ledger = nullptr) override;
+
+private:
+    Config cfg_;
+    long counter_{0};
+};
+
 /// Collect one scan from every sensor.
 std::vector<Observation> collect(const std::vector<SensorPtr>& sensors,
                                  const WorldSnapshot& truth, Rng& rng,

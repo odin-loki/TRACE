@@ -24,7 +24,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
 ./build/src/apps/trace_maze          # watch it track through a maze
-./build/src/apps/trace_sim --all     # six more scenarios
+./build/src/apps/trace_sim --all     # eight more scenarios
 ctest --test-dir build               # the test suite
 ```
 
@@ -74,24 +74,24 @@ median scan latency on one core.
 Replays of MOTChallenge sequences — real detections from real detectors on real
 video — are the only numbers here not produced by TRACE's own simulator.
 
-**MOT17 train, all 21 sequences, 336,891 ground-truth boxes:**
-
-| | |
-|---|---|
-| MOTA | 43.9% |
-| Recall | 65.5% |
-| **Detector ceiling, recall** | **59.9%** |
-| **TRACE recovered** | **109.3% of the recall the detections allow** |
+| Benchmark | Boxes | MOTA | Recovery of detector ceiling |
+|---|---|---|---|
+| MOT17 train, 21 sequences | 336,891 | 42.9% | **110.5%** |
+| MOT20-01, ~46 people/frame | 19,870 | **53.1%** | 106.9% |
+| MOT20-02, ~56 people/frame | 154,742 | 49.2% | 107.1% |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
 missed — which is the entire job. Best single sequence: **71.3% MOTA**
-(MOT17-04-SDP).
+(MOT17-04-SDP). Latency scales roughly linearly with crowd density: 0.6 ms/frame
+in the maze, 51 ms/frame with 56 people in view.
 
-TRACE has **no appearance model**, deliberately: it is built for domains with no
-image at all — transponders, RFID readers, collar uplinks, cell-tower hits. On
-MOT, where crowds make visual re-identification the deciding factor, that costs
-it against methods that have one. [The full analysis is in
+TRACE supports appearance descriptors but they are **switched off** on MOT, and
+that is a measurement rather than an omission: a *perfect* oracle descriptor
+moves identity switches by 2.6% and MOTA not at all, because 89% of the MOTA
+penalty there is missed detections, capped by the detector. The mechanism does
+work where descriptors are discriminative — six entities huddling then
+dispersing lose 6/6 identities without it, 3/6 with it. [The full analysis is in
 docs/VALIDATION.md](docs/VALIDATION.md).
 
 The same question asked of the simulations — how much of what the *sensors*
@@ -185,9 +185,19 @@ cfg.motion_constraint = std::make_shared<RoadNetwork>(
 **Why probabilistic existence.** Every track carries `r`, the probability it
 exists at all, separate from where it is. That is what lets a track survive an
 occlusion instead of being deleted on the first missed scan. A second,
-possibilistic existence is propagated under different assumptions; when the two
-diverge sharply the evidence is internally inconsistent, which is the signature
-of a spoofed or failing sensor rather than a moving entity.
+possibilistic existence tracks the *quality* of the evidence rather than its
+quantity; when the two diverge, many weak detections have been laundered into
+false certainty. In the `spoofing` scenario that separates a persistent
+low-quality fabrication (flagged on 119 of 119 scans) from real entities
+(0 of 484) — though not a high-confidence lie, which by construction looks like
+high-confidence truth.
+
+**Why association runs per sensor.** Exclusivity is a fact about a sensor, not
+about the world: one camera reports an entity once per scan, but two overlapping
+cameras both report it, and that second report is corroboration rather than a
+second entity. Enforcing exclusivity globally left every corroborating report to
+found a duplicate track — 2.08 ghost tracks per scan in the overlapping-camera
+scenario, now 0.12.
 
 ---
 

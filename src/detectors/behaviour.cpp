@@ -337,6 +337,19 @@ std::vector<NetworkRole> NetworkRoleDetector::roles(
     std::sort(sorted_speeds.begin(), sorted_speeds.end());
     const Real median_speed = sorted_speeds[sorted_speeds.size() / 2];
 
+    // Betweenness is compared against this population too, not against a fixed
+    // number. A normalised betweenness above 0.2 requires a near-perfect star,
+    // which real contact graphs are not; against an absolute threshold the
+    // hub test simply never fired, and every hub fell through to the catch-all
+    // role. The speed test was already relative - this makes the two
+    // consistent.
+    std::vector<Real> bc_values;
+    bc_values.reserve(tracks.size());
+    for (const auto& t : tracks) bc_values.push_back(ctx.betweenness_of(t->id()));
+    std::sort(bc_values.begin(), bc_values.end());
+    const Real bc_high = bc_values[(bc_values.size() * 3) / 4];   // upper quartile
+    const Real bc_threshold = std::max(bc_high, 1e-9);
+
     for (std::size_t i = 0; i < tracks.size(); ++i) {
         const Track& t = *tracks[i];
         const int n_contacts = static_cast<int>(contacts_[t.id()].size());
@@ -355,10 +368,10 @@ std::vector<NetworkRole> NetworkRoleDetector::roles(
             // Moves a lot, meets many: carries things between fixed points.
             role = "COURIER";
             confidence = 0.55 + 0.1 * std::min(n_contacts, 4);
-        } else if (bc > 0.2 && stable && speed < median_speed) {
+        } else if (bc >= bc_threshold && bc > 0.0 && stable && speed < median_speed) {
             // Sits still, but everything routes through them.
             role = "HANDLER";
-            confidence = 0.5 + std::min(bc, 0.4);
+            confidence = 0.5 + std::min(bc * 2.0, 0.4);
         } else if (few_contacts && stable && speed < median_speed) {
             role = "ASSET";
             confidence = 0.45;

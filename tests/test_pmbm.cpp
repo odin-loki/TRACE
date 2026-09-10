@@ -3,6 +3,7 @@
 #include "trace/core/pmbm.hpp"
 
 #include <cstdio>
+#include <algorithm>
 #include <numbers>
 #include <string>
 #include <vector>
@@ -60,7 +61,11 @@ Scenario make_scenario(int n_scans, int n_targets, Real area, Real p_detect,
                     Vec2{tgt.pos.x + rng.normal(0.0, 5.0),
                          tgt.pos.y + rng.normal(0.0, 5.0)},
                     Modality::GEOINT, std::clamp(rng.normal(0.88, 0.08), 0.2, 1.0),
-                    "CAM_" + std::to_string(rng.uniform_int(0, 3)));
+                    // A camera covers a region. Assigning a random source per
+                    // detection would make source identity meaningless, which
+                    // is not how any real sensor estate behaves.
+                    "CAM_" + std::to_string((tgt.pos.x > 0 ? 2 : 0) +
+                                            (tgt.pos.y > 0 ? 1 : 0)));
             }
         }
 
@@ -92,29 +97,47 @@ Real mean_nearest_error(const std::vector<TrackPtr>& tracks,
 }
 
 void test_tracks_clean_targets() {
+    // Tracking outcome varies substantially with the random stream: across
+    // seeds the mean position error in this scenario spans roughly 15-200 m,
+    // because a 1.4 m/s pedestrian sampled every 60 s is genuinely hard to
+    // localise between detections. Asserting on a single seed tests the seed.
     const DomainProfile profile = UrbanHUMINT();
-    PmbmManager pmbm(profile, Area{-5000, 5000, -5000, 5000}, 42);
-    const auto sc = make_scenario(40, 5, 3000.0, 0.90, 2.0, 7);
+    std::vector<Real> errors;
+    std::vector<std::size_t> peaks;
 
-    Real err_sum = 0.0;
-    int err_n = 0;
-    std::size_t peak = 0;
-    for (std::size_t i = 0; i < sc.scans.size(); ++i) {
-        pmbm.predict();
-        pmbm.update(sc.scans[i], static_cast<Real>(i) * 60.0);
-        const auto conf = pmbm.confirmed();
-        peak = std::max(peak, conf.size());
-        if (i >= 10) {  // allow the filter to settle
-            err_sum += mean_nearest_error(conf, sc.truth[i]);
-            ++err_n;
+    for (int seed = 0; seed < 9; ++seed) {
+        PmbmManager pmbm(profile, Area{-5000, 5000, -5000, 5000},
+                         static_cast<std::uint64_t>(seed));
+        const auto sc = make_scenario(40, 5, 3000.0, 0.90, 2.0,
+                                      static_cast<std::uint64_t>(seed) * 31 + 7);
+        Real err_sum = 0.0;
+        int err_n = 0;
+        std::size_t peak = 0;
+        for (std::size_t i = 0; i < sc.scans.size(); ++i) {
+            pmbm.predict();
+            pmbm.update(sc.scans[i], static_cast<Real>(i) * 60.0);
+            const auto conf = pmbm.confirmed();
+            peak = std::max(peak, conf.size());
+            if (i >= 10) {
+                err_sum += mean_nearest_error(conf, sc.truth[i]);
+                ++err_n;
+            }
         }
+        errors.push_back(err_sum / std::max(err_n, 1));
+        peaks.push_back(peak);
     }
-    const Real mean_err = err_sum / std::max(err_n, 1);
-    std::printf("  clean: peak tracks=%zu (truth 5), mean err=%.1f m\n", peak, mean_err);
 
-    CHECK(peak >= 4);          // found essentially all of them
-    CHECK(peak <= 12);         // without spawning a swarm of ghosts
-    CHECK(mean_err < 120.0);   // and localised them
+    std::sort(errors.begin(), errors.end());
+    std::sort(peaks.begin(), peaks.end());
+    const Real median_err = errors[errors.size() / 2];
+    const std::size_t median_peak = peaks[peaks.size() / 2];
+    std::printf("  clean: median peak tracks=%zu (truth 5), median err=%.1f m "
+                "(range %.0f-%.0f)\n",
+                median_peak, median_err, errors.front(), errors.back());
+
+    CHECK(median_peak >= 5);          // found essentially all of them
+    CHECK(median_peak <= 8);          // without spawning a swarm of ghosts
+    CHECK(median_err < 120.0);        // and localised them
 }
 
 void test_survives_detection_gap() {
@@ -217,9 +240,79 @@ void test_identity_survives_a_blackout() {
     CHECK(before == after);
 }
 
+void test_overlapping_sensors_do_not_spawn_duplicates() {
+    // Two sensors covering the same ground both report the same entity in the
+    // same scan. That second report is corroboration, not a second entity.
+    //
+    // With exclusivity enforced globally rather than per sensor, it was left
+    // unassigned and founded a duplicate track on every scan - which is what
+    // multi-source fusion does for a living, so it is the case that has to
+    // work.
+    const DomainProfile profile = UrbanHUMINT();
+    int clean_runs = 0;
+    std::size_t worst = 0;
+
+    for (int seed = 0; seed < 9; ++seed) {
+        PmbmManager pmbm(profile, Area{-2000, 2000, -2000, 2000},
+                         static_cast<std::uint64_t>(seed));
+        Rng rng(static_cast<std::uint64_t>(seed) * 17 + 3);
+        std::size_t peak = 0;
+        for (int i = 0; i < 40; ++i) {
+            const Real t = i * profile.scan_dt_s;
+            const Vec2 truth{-500.0 + i * 40.0, 100.0};
+            std::vector<Observation> obs;
+            obs.emplace_back("a" + std::to_string(i), t,
+                             Vec2{truth.x + rng.normal(0, 5), truth.y + rng.normal(0, 5)},
+                             Modality::GEOINT, 0.9, "SENSOR_A");
+            obs.emplace_back("b" + std::to_string(i), t,
+                             Vec2{truth.x + rng.normal(0, 5), truth.y + rng.normal(0, 5)},
+                             Modality::GEOINT, 0.9, "SENSOR_B");
+            pmbm.predict();
+            pmbm.update(obs, t);
+            if (i > 5) peak = std::max(peak, pmbm.confirmed().size());
+        }
+        if (peak == 1) ++clean_runs;
+        worst = std::max(worst, peak);
+    }
+    std::printf("  one entity, two overlapping sensors: exactly one track in "
+                "%d of 9 seeds (worst %zu)\n", clean_runs, worst);
+
+    // Before the per-source fix this was one duplicate per scan, every seed.
+    CHECK(clean_runs >= 7);
+    CHECK(worst <= 2);
+}
+
+void test_two_entities_one_sensor_stay_separate() {
+    // The converse guard: per-sensor exclusivity must not let one sensor's two
+    // detections collapse onto a single track.
+    const DomainProfile profile = UrbanHUMINT();
+    PmbmManager pmbm(profile, Area{-2000, 2000, -2000, 2000}, 9);
+
+    std::size_t peak = 0;
+    Rng rng(4);
+    for (int i = 0; i < 40; ++i) {
+        const Real t = i * profile.scan_dt_s;
+        std::vector<Observation> obs;
+        for (int k = 0; k < 2; ++k) {
+            const Vec2 p{-500.0 + i * 40.0, 100.0 + k * 600.0};
+            obs.emplace_back("o" + std::to_string(i) + "_" + std::to_string(k), t,
+                             Vec2{p.x + rng.normal(0, 5), p.y + rng.normal(0, 5)},
+                             Modality::GEOINT, 0.9, "SENSOR_A");
+        }
+        pmbm.predict();
+        pmbm.update(obs, t);
+        if (i > 5) peak = std::max(peak, pmbm.confirmed().size());
+    }
+    std::printf("  two entities, one sensor: peak confirmed tracks %zu "
+                "(should be 2)\n", peak);
+    CHECK(peak == 2);
+}
+
 }  // namespace
 
 int main() {
+    test_overlapping_sensors_do_not_spawn_duplicates();
+    test_two_entities_one_sensor_stay_separate();
     test_tracks_clean_targets();
     test_identity_survives_a_blackout();
     test_survives_detection_gap();

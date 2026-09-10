@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 
+#include "trace/core/descriptor.hpp"
 #include "trace/core/types.hpp"
 
 namespace trace {
@@ -22,6 +23,12 @@ struct Observation {
     Real                 confidence{1.0};  // 0..1, sensor's own confidence
     std::string          source_id;        // e.g. "CAM_NORTH_01"
 
+    /// Optional non-kinematic evidence about *which* entity this is. Absent by
+    /// default: most sensors supply position and nothing else, and the engine
+    /// works without it. Where it exists it is the only thing that can separate
+    /// two entities whose paths have just crossed.
+    Descriptor           descriptor{};
+
     Observation() = default;
 
     Observation(std::string id, Real ts, Vec2 pos, Modality mod,
@@ -36,6 +43,14 @@ struct Observation {
           modality(mod), confidence(conf), source_id(std::move(src)) {}
 
     [[nodiscard]] bool has_position() const { return position.has_value(); }
+    [[nodiscard]] bool has_descriptor() const { return descriptor.valid(); }
+
+    /// Attach an appearance descriptor, normalising it on the way in.
+    Observation& with_descriptor(Descriptor d) {
+        d.normalise();
+        descriptor = d;
+        return *this;
+    }
     [[nodiscard]] Vec2 pos_or_zero() const { return position.value_or(Vec2{}); }
 };
 

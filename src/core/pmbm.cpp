@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <limits>
 #include <numeric>
+#include <map>
 #include <tuple>
 #include <unordered_set>
 
@@ -96,11 +97,27 @@ std::unordered_map<int, int> GibbsAssigner::assign(
             const Observation& o = *observations[j];
             if (!o.has_position()) continue;
             const Real m2 = tracks[i]->filter().mahalanobis_sq(*o.position);
-            if (m2 < profile.gate_chi2) {
-                const Real w = profile.modality_weight(o.modality) * o.confidence;
-                loglik[static_cast<std::size_t>(i) * n_o + j] =
-                    -0.5 * m2 + std::log(w + 1e-300);
+            if (m2 >= profile.gate_chi2) continue;
+
+            const Real w = profile.modality_weight(o.modality) * o.confidence;
+            Real ll = -0.5 * m2 + std::log(w + 1e-300);
+
+            // Appearance, where the sensor supplies it. This is the only term
+            // that can separate two entities at the moment their paths cross,
+            // which is precisely when position tells you nothing and identity
+            // is lost. Treated as a Gaussian on (1 - cosine similarity), so it
+            // enters the log-likelihood on the same footing as the Mahalanobis
+            // term rather than as an ad-hoc bonus.
+            if (profile.appearance_weight > 0.0 && o.has_descriptor()) {
+                const Descriptor& track_app = tracks[i]->appearance();
+                if (track_app.valid()) {
+                    const Real d = 1.0 - track_app.similarity(o.descriptor);
+                    const Real sigma = std::max(profile.appearance_sigma, 1e-6);
+                    ll -= profile.appearance_weight * 0.5 * (d / sigma) * (d / sigma);
+                }
             }
+
+            loglik[static_cast<std::size_t>(i) * n_o + j] = ll;
         }
     }
 
@@ -268,7 +285,27 @@ TrackPtr PmbmManager::try_reacquire(const Observation& obs, Real timestamp) {
 
         const Real dist = distance(pos, predicted);
         if (dist > std::max(uncertainty * 3.0, 2.0 * profile_->pos_noise_m)) continue;
-        const Real score = -dist / std::max(uncertainty, 1.0);
+        Real score = -dist / std::max(uncertainty, 1.0);
+
+        // Appearance is worth more here than anywhere else in the engine.
+        // Association only has to choose between candidates competing in the
+        // same scan, where position usually settles it; reacquisition has to
+        // decide whether somebody appearing now is somebody who vanished
+        // earlier, and across a gap position has decayed to a guess. This is
+        // the re-identification problem proper, and a descriptor is the only
+        // evidence that survives the gap intact.
+        if (profile_->appearance_weight > 0.0 && obs.has_descriptor()) {
+            const Descriptor& remembered = entry.track->appearance();
+            if (remembered.valid()) {
+                const Real sim = remembered.similarity(obs.descriptor);
+                score += profile_->appearance_weight * profile_->reacquire_appearance_gain * sim;
+                // A confident mismatch is grounds for refusal, not merely a
+                // lower score: resurrecting the wrong identity is worse than
+                // starting a new track.
+                if (sim < profile_->reacquire_min_similarity) continue;
+            }
+        }
+
         if (score > best_score) {
             best_score = score;
             best_idx = static_cast<long>(i);
@@ -337,40 +374,67 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         return;
     }
 
-    const auto asgn = gibbs_.assign(tracks_, valid, *profile_, rng_);
+    // Association runs once per source, not once over all detections.
+    //
+    // Exclusivity is a fact about a sensor, not about the world: one camera
+    // reports a given entity at most once per scan, but two overlapping cameras
+    // both report it, and that second report is corroboration rather than a
+    // second entity. Enforcing one-detection-per-track globally left every
+    // such corroborating report unassigned, where it promptly founded a
+    // duplicate track - 11 ghost tracks per scan in a two-sensor scenario, and
+    // a steady drizzle of them in every overlapping-camera setup.
+    //
+    // Multi-source fusion is the whole point of the observation model, so this
+    // is the case that has to work.
+    std::map<std::string, std::vector<const Observation*>> by_source;
+    for (const auto* o : valid) by_source[o->source_id].push_back(o);
 
-    std::unordered_set<int> assigned_obs;
-    assigned_obs.reserve(asgn.size());
-    for (const auto& [ti, oj] : asgn) assigned_obs.insert(oj);
+    // track index -> the detections assigned to it this scan, at most one per
+    // source.
+    std::unordered_map<int, std::vector<const Observation*>> track_hits;
+    std::unordered_set<const Observation*> assigned;
+
+    for (const auto& [source, group] : by_source) {
+        const auto group_asgn = gibbs_.assign(tracks_, group, *profile_, rng_);
+        for (const auto& [track_idx, obs_idx] : group_asgn) {
+            const Observation* o = group[static_cast<std::size_t>(obs_idx)];
+            track_hits[track_idx].push_back(o);
+            assigned.insert(o);
+        }
+    }
 
     clutter_.update(static_cast<int>(valid.size()) -
-                    static_cast<int>(assigned_obs.size()));
+                    static_cast<int>(assigned.size()));
     const Real cd = clutter_.density(area_.volume());
 
     for (std::size_t i = 0; i < tracks_.size(); ++i) {
-        const auto it = asgn.find(static_cast<int>(i));
-        if (it == asgn.end()) {
+        const auto it = track_hits.find(static_cast<int>(i));
+        if (it == track_hits.end()) {
             tracks_[i]->update_miss();
             continue;
         }
 
-        const Observation& obs = *valid[static_cast<std::size_t>(it->second)];
-        const Real obs_ll = -0.5 * tracks_[i]->filter().mahalanobis_sq(*obs.position);
-        cred_.update(obs.source_id, obs_ll, kCredLoglikThreshold);
-        const Real trust = cred_.get(obs.source_id);
-
-        // The single point where Bayesian existence is updated. A detection in
-        // a noisy scan is weaker evidence than the same detection in a clean
-        // one, which is exactly what the adaptive clutter density expresses.
+        // Existence is updated once per scan however many sources reported the
+        // entity: the detections are corroborating evidence about one scan, not
+        // independent scans. Counting each one separately would let a track
+        // watched by four cameras become four times as certain as the same
+        // track watched by one.
+        const Observation& primary = *it->second.front();
+        const Real obs_ll = -0.5 * tracks_[i]->filter().mahalanobis_sq(*primary.position);
         const Real L = profile_->p_detection;
         const Real r = tracks_[i]->existence();
         tracks_[i]->set_existence(
             std::clamp(r * L / (r * L + (1.0 - r) * cd + 1e-300), 0.0, 0.9999));
 
-        Observation adjusted = obs;
-        adjusted.confidence = obs.confidence * trust;
-        tracks_[i]->update_hit(adjusted, profile_->scan_dt_s);
-        tracks_[i]->note_hit_scan(scan_);
+        for (const Observation* o : it->second) {
+            cred_.update(o->source_id, obs_ll, kCredLoglikThreshold);
+            Observation adjusted = *o;
+            adjusted.confidence = o->confidence * cred_.get(o->source_id);
+            tracks_[i]->update_hit(adjusted, profile_->scan_dt_s);
+        }
+        for (const Observation* o : it->second) {
+            tracks_[i]->note_hit_scan(scan_, o->source_id);
+        }
     }
 
     // How far could a real entity have moved since the previous scan? Anything
@@ -389,8 +453,8 @@ void PmbmManager::update(const std::vector<Observation>& observations,
 
     // Leftover detections: either a dormant entity resurfacing, or a birth.
     for (std::size_t j = 0; j < valid.size(); ++j) {
-        if (assigned_obs.contains(static_cast<int>(j))) continue;
         const Observation& obs = *valid[j];
+        if (assigned.contains(&obs)) continue;
         unassigned_now.push_back(*obs.position);
 
         const Real weight = profile_->modality_weight(obs.modality) * obs.confidence;
@@ -398,7 +462,7 @@ void PmbmManager::update(const std::vector<Observation>& observations,
 
         if (TrackPtr revived = try_reacquire(obs, timestamp)) {
             revived->update_hit(obs, profile_->scan_dt_s);
-            revived->note_hit_scan(scan_);
+            revived->note_hit_scan(scan_, obs.source_id);
             tracks_.push_back(std::move(revived));
             continue;
         }
@@ -427,7 +491,7 @@ void PmbmManager::update(const std::vector<Observation>& observations,
             // every false alarm on the spot. Corroboration must come from a
             // *subsequent* scan, which is what r_birth < r_confirm encodes.
             fresh->update_hit(obs, profile_->scan_dt_s);
-            fresh->note_hit_scan(scan_);
+            fresh->note_hit_scan(scan_, obs.source_id);
             try_group_spawn(*fresh);
             tracks_.push_back(std::move(fresh));
         }
@@ -491,12 +555,24 @@ void PmbmManager::merge_duplicates() {
             const Vec2 delta = tracks_[i]->position() - tracks_[j]->position();
             if (S.inverse().quad(delta) > profile_->merge_chi2) continue;
 
-            // The discriminator. Two people walking side by side each generate
-            // their own detection in the same scan; two tracks on one person
-            // can only take turns. Without this test a genuine pair would be
-            // collapsed into one track, which is a worse error than the one
-            // being fixed.
+            // Two discriminators, because one entity seen twice and two
+            // entities seen once look alike from a distance.
+            //
+            // First: did any single sensor feed both tracks in one scan? A
+            // sensor reports a given entity once per scan, so that settles it.
             if (tracks_[i]->shares_hit_scan_with(*tracks_[j])) continue;
+
+            // Second: are both tracks being fed steadily by the same set of
+            // sensors, just never in the same scan? One entity cannot produce
+            // two independent streams of detections from one sensor, so this is
+            // two entities whose detections happen to alternate. Without this,
+            // two genuinely distinct entities merge whenever source identifiers
+            // carry no spatial meaning - and collapsing a real pair is a worse
+            // error than the duplicate it was meant to prevent.
+            const bool both_well_fed = tracks_[i]->measurement_rate() > 0.55 &&
+                                       tracks_[j]->measurement_rate() > 0.55 &&
+                                       tracks_[i]->age() > 8 && tracks_[j]->age() > 8;
+            if (both_well_fed && tracks_[i]->shares_source_with(*tracks_[j])) continue;
 
             tracks_[i]->absorb(*tracks_[j]);
             absorbed[j] = true;
