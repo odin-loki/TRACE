@@ -255,6 +255,103 @@ void test_bias_is_not_mistaken_for_noise() {
     CHECK(noisy > sound * 1.5);
 }
 
+/// A coverage map: a wide-area sensor that sees everything, and a gate that
+/// sees only a disc.
+class DiscCoverage final : public SensorCoverage {
+public:
+    DiscCoverage(Vec2 centre, Real radius) : centre_(centre), radius_(radius) {}
+    [[nodiscard]] bool covers(const std::string& source_id,
+                              Vec2 point) const override {
+        if (source_id == "WIDE") return true;
+        return source_id == "GATE" && distance(point, centre_) <= radius_;
+    }
+    [[nodiscard]] std::vector<std::string> live_sources() const override {
+        return {"WIDE", "GATE"};
+    }
+
+private:
+    Vec2 centre_;
+    Real radius_;
+};
+
+void test_coverage_map_recovers_a_point_sensors_detection_rate() {
+    // A gate reader watching a few metres reports a track for the moment it is
+    // in range and never again. Without a coverage map the engine charges it
+    // with a miss on every subsequent scan, so every point sensor estimates out
+    // at the floor and the number is worthless. Told what the sensor can see,
+    // the same evidence gives the right answer.
+    //
+    // The target crosses the disc repeatedly and is detected 60% of the time
+    // while inside it.
+    const Vec2 centre{200.0, 200.0};
+    const Real radius = 40.0;
+    const Real true_pd = 0.6;
+
+    const auto run = [&](bool with_coverage) {
+        EngineConfig cfg;
+        cfg.profile = CityCameraSurveillance();
+        cfg.profile.scan_dt_s = 1.0;
+        cfg.profile.pos_noise_m = 2.0;
+        cfg.profile.meas_noise_var = 4.0;
+        cfg.profile.p_detection = 0.9;          // deliberately wrong
+        cfg.profile.adaptive_p_detection = true;
+        cfg.profile.mou_models = {{motion("walking", 45.0, 1.5),
+                                   motion("standing", 8.0, 0.10)}};
+        cfg.profile.model_trans = {{{{0.92, 0.08}}, {{0.20, 0.80}}}};
+        cfg.area = Area{0, 400, 0, 400};
+        cfg.seed = 6;
+        if (with_coverage) {
+            cfg.coverage = std::make_shared<DiscCoverage>(centre, radius);
+        }
+        Engine eng(cfg);
+
+        Rng rng(1234);
+        Vec2 truth{20.0, 200.0};
+        Real vx = 1.8;
+        for (int scan = 0; scan < 900; ++scan) {
+            truth.x += vx;
+            if (truth.x > 380.0 || truth.x < 20.0) vx = -vx;
+            std::vector<Observation> obs;
+            // A wide-area sensor keeps the track alive wherever it goes. This
+            // is what makes the question meaningful at all: with only the gate,
+            // a missed track simply dies, no further misses are recorded
+            // against the gate, and the estimate is conditioned on survival.
+            obs.emplace_back("w" + std::to_string(scan), static_cast<Real>(scan),
+                             Vec2{truth.x + rng.normal() * 2.0,
+                                  truth.y + rng.normal() * 2.0},
+                             Modality::GEOINT, 0.9, "WIDE");
+            const bool in_range = distance(truth, centre) <= radius;
+            if (in_range && rng.bernoulli(true_pd)) {
+                obs.emplace_back("g" + std::to_string(scan), static_cast<Real>(scan),
+                                 Vec2{truth.x + rng.normal() * 2.0,
+                                      truth.y + rng.normal() * 2.0},
+                                 Modality::GEOINT, 0.9, "GATE");
+            }
+            eng.ingest(obs, static_cast<Real>(scan));
+        }
+        for (const auto& [id, r] : eng.detection_rates()) {
+            if (id == "GATE") return r;
+        }
+        return -1.0;
+    };
+
+    const Real blind = run(false);
+    const Real informed = run(true);
+    std::printf("  point sensor at true p_d %.2f: learned %.2f without a coverage "
+                "map, %.2f with one\n", true_pd, blind, informed);
+
+    CHECK(informed > 0.0);
+    // Told what the sensor sees, the estimate lands on the truth.
+    CHECK(std::abs(informed - true_pd) < 0.12);
+    // Without it the estimate is dragged down: every scan the target spends
+    // out of the gate's range, while the wide sensor keeps its track alive, is
+    // charged to the gate as a miss. The gap is not enormous because the
+    // feeder window already stops charging a sensor ten scans after its last
+    // hit - which is the same mitigation, done blind and approximately.
+    CHECK(blind >= 0.0);
+    CHECK(informed > blind + 0.04);
+}
+
 }  // namespace
 
 int main() {
@@ -265,5 +362,6 @@ int main() {
     test_a_lone_source_is_not_discounted();
     test_birth_survives_a_long_single_source_run();
     test_bias_is_not_mistaken_for_noise();
+    test_coverage_map_recovers_a_point_sensors_detection_rate();
     return trace::test::summary("test_credibility");
 }

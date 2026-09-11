@@ -74,6 +74,36 @@ void score_scan(Metrics& m, const std::vector<Entity>& truth,
                 const std::vector<TargetReport>& tracks, Real match_radius_m);
 
 /// A complete runnable scenario.
+/// Reports what the scenario's own sensors can see, so the engine can be given
+/// the coverage map a real deployment would have. `Sensor::covers` already
+/// answers exactly this question and was previously used only for rendering.
+///
+/// Holds a pointer to the scenario's sensor list, so a scenario that switches
+/// a camera off part-way through is reflected without any further plumbing -
+/// which is the case the whole thing exists for.
+class ScenarioCoverage final : public SensorCoverage {
+public:
+    explicit ScenarioCoverage(const std::vector<SensorPtr>* sensors)
+        : sensors_(sensors) {}
+
+    [[nodiscard]] bool covers(const std::string& source_id,
+                              Vec2 point) const override {
+        for (const auto& s : *sensors_) {
+            if (s->id() == source_id) return s->covers(point);
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::vector<std::string> live_sources() const override {
+        std::vector<std::string> out;
+        for (const auto& s : *sensors_) out.push_back(s->id());
+        return out;
+    }
+
+private:
+    const std::vector<SensorPtr>* sensors_;
+};
+
 struct Scenario {
     std::string name;
     std::string description;

@@ -34,6 +34,9 @@ struct ScenarioSpec {
 /// happened to read it.
 bool g_adaptive_noise = false;
 bool g_adaptive_pd = false;
+/// Set by --no-coverage, to measure what telling the engine what its sensors
+/// can see is worth.
+bool g_no_coverage = false;
 
 std::vector<Vec2> line(Vec2 a, Vec2 b, int steps) {
     std::vector<Vec2> out;
@@ -128,6 +131,9 @@ void run_transit_hub(std::uint64_t seed, bool verbose) {
         s.world.add(c);
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
     int rv_hits = 0;
     Real earliest_warning_s = -1.0;
@@ -192,6 +198,9 @@ void run_dark_vessel(std::uint64_t seed, bool verbose) {
         if (scan == 65) ais_ptr->silenced.erase("vessel_0");
     };
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
     int dormant_peak = 0;
     bool reacquired = false;
@@ -285,6 +294,9 @@ void run_anpr_corridor(std::uint64_t seed, bool verbose) {
         s.world.add(c);
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
     int parallel_events = 0;
     s.on_report = [&](const Scenario&, int, const ScanReport& r, const Metrics&) {
@@ -362,6 +374,9 @@ void run_warehouse(std::uint64_t seed, bool verbose) {
         s.world.add(pal);
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
     int chokepoint = 0, mode_trans = 0, loiter = 0;
     s.on_report = [&](const Scenario&, int, const ScanReport& r, const Metrics&) {
@@ -437,6 +452,9 @@ void run_evader(std::uint64_t seed, bool verbose) {
         s.world.add(c);
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
     int sdr = 0, chokepoint = 0, counter_surv = 0, mismatch = 0;
     s.on_report = [&](const Scenario&, int, const ScanReport& r, const Metrics&) {
@@ -496,6 +514,9 @@ void run_wildlife(std::uint64_t seed, bool verbose) {
         s.world.add(a);
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
     int pol_fitted = 0, rv = 0;
     s.on_report = [&](const Scenario&, int, const ScanReport& r, const Metrics&) {
@@ -583,6 +604,9 @@ void run_spoofing(std::uint64_t seed, bool verbose) {
         s.world.add(std::move(e));
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
 
     struct Tally {
@@ -784,6 +808,9 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
         s.world.add(std::move(e));
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
 
     // Did the role classifier find the mules, without being told what one is?
@@ -1023,6 +1050,9 @@ void run_decoy_split(std::uint64_t seed, bool verbose) {
         if (together >= 6) dec->dwell_remaining_s = 0.0;
     };
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
 
     std::string id_before;        // the subject's track id before the meeting
@@ -1224,6 +1254,9 @@ void run_coordinated_evasion(std::uint64_t seed, bool verbose) {
         }
     };
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
 
     // Distinct places flagged, not events: the detector re-raises while the
@@ -1382,6 +1415,9 @@ void run_weather(std::uint64_t seed, bool verbose) {
         }
     };
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
 
     struct Phase { int truth_scans{0}; int sensor_scans{0}; int track_scans{0};
@@ -1542,6 +1578,9 @@ void run_sensor_drift(std::uint64_t seed, bool verbose) {
         s.world.add(std::move(e));
     }
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
 
     Real cred_drifting_start = 0.0, cred_drifting_end = 0.0;
@@ -1720,6 +1759,9 @@ void run_blackout(std::uint64_t seed, bool verbose) {
         for (CameraPanel* c : cams) c->config().enabled = !dark;
     };
 
+    if (!g_no_coverage) {
+        s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    }
     Engine eng(s.engine_config);
 
     // Which track id was carrying each walker immediately before each outage,
@@ -1883,6 +1925,8 @@ int main(int argc, char** argv) {
             g_adaptive_noise = true;
         } else if (a == "--adaptive-pd") {
             g_adaptive_pd = true;
+        } else if (a == "--no-coverage") {
+            g_no_coverage = true;
         } else if (a == "--appearance" && i + 1 < argc) {
             g_blackout_appearance = std::atof(argv[++i]);
             g_decoy_appearance = g_blackout_appearance;

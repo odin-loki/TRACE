@@ -450,10 +450,12 @@ std::unordered_map<int, int> GibbsAssigner::assign(
 // ---------------------------------------------------------------------------
 
 PmbmManager::PmbmManager(const DomainProfile& profile, Area area,
-                         std::uint64_t seed, MotionConstraintPtr constraint)
+                         std::uint64_t seed, MotionConstraintPtr constraint,
+                         SensorCoveragePtr coverage)
     : profile_(&profile),
       area_(area),
       constraint_(std::move(constraint)),
+      coverage_(std::move(coverage)),
       mou_(MouConstants::from(profile)),
       gibbs_(profile.gibbs_sweeps),
       rng_(seed),
@@ -770,18 +772,38 @@ void PmbmManager::update(const std::vector<Observation>& observations,
                 for (const Observation* o : it->second) hit_by.insert(o->source_id);
             }
             auto& fed = feeders_[tid];
+            const Vec2 where = tracks_[i]->position();
             for (auto f = fed.begin(); f != fed.end();) {
                 if (scan_ - f->second > kFeederWindow) {
                     f = fed.erase(f);
                     continue;
                 }
-                detect_rate_.record(f->first, hit_by.count(f->first) != 0);
+                // Only a sensor that was looking at this track can be said to
+                // have missed it. Without a coverage map the engine assumes a
+                // recent feeder still covers it, which holds for a wide-area
+                // sensor and not at all for a gate reader watching a few
+                // metres - every point sensor then estimates out at the floor,
+                // having been charged with a miss every time an entity walked
+                // away from it.
+                const bool looking =
+                    coverage_ == nullptr || coverage_->covers(f->first, where);
+                if (looking) {
+                    detect_rate_.record(f->first, hit_by.count(f->first) != 0);
+                }
                 ++f;
             }
             for (const std::string& src : hit_by) fed[src] = scan_;
         }
 
         if (it == track_hits.end()) {
+            // A miss is evidence of absence only where somebody was looking.
+            // With a coverage map that is a fact rather than an inference, and
+            // it is the per-track version of the whole-scan guess made above:
+            // one track can walk out of the estate while the rest stay in it.
+            if (coverage_ != nullptr &&
+                !coverage_->anyone_covers(tracks_[i]->position())) {
+                continue;
+            }
             tracks_[i]->update_miss(effective_pd(tid));
             continue;
         }

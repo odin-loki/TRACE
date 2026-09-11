@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "trace/core/coverage.hpp"
 #include "trace/core/observation.hpp"
 #include "trace/core/track.hpp"
 #include "trace/core/types.hpp"
@@ -276,7 +277,8 @@ private:
 class PmbmManager {
 public:
     PmbmManager(const DomainProfile& profile, Area area, std::uint64_t seed,
-                MotionConstraintPtr constraint = nullptr);
+                MotionConstraintPtr constraint = nullptr,
+                SensorCoveragePtr coverage = nullptr);
 
     void predict();
     void update(const std::vector<Observation>& observations, Real timestamp);
@@ -353,6 +355,7 @@ private:
     const DomainProfile* profile_{nullptr};
     Area area_{};
     MotionConstraintPtr constraint_;
+    SensorCoveragePtr coverage_;
     MouConstants mou_{};
 
     std::vector<TrackPtr> tracks_;

@@ -16,6 +16,7 @@
 
 #include "trace/core/network.hpp"
 #include "trace/core/observation.hpp"
+#include "trace/core/coverage.hpp"
 #include "trace/core/pmbm.hpp"
 #include "trace/core/profile.hpp"
 #include "trace/core/report.hpp"
@@ -33,6 +34,12 @@ struct EngineConfig {
     /// Optional: confine entities to a road, rail or corridor network. Free
     /// space is the default and is right for most domains.
     MotionConstraintPtr motion_constraint;
+
+    /// Optional: what each sensor can see. Supplying it lets the engine stop
+    /// guessing at two things it currently infers - whether a miss happened
+    /// inside anybody's coverage, and whether a silent scan means an empty
+    /// scene or a dead estate. See coverage.hpp.
+    SensorCoveragePtr coverage;
 };
 
 class Engine {
