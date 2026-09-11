@@ -63,13 +63,50 @@ Real RoadNetwork::distance_to(Vec2 position) const {
     return distance(position, nearest(position).first);
 }
 
+void RoadNetwork::find_junctions() {
+    junctions_.clear();
+    if (segments_.size() < 2) return;
+    // Endpoints that three or more segment ends meet at. Two ends meeting is
+    // just a corner - the network still has one answer for which way to go.
+    std::vector<Vec2> ends;
+    ends.reserve(segments_.size() * 2);
+    for (const Segment& s : segments_) {
+        ends.push_back(s.a);
+        ends.push_back(s.b);
+    }
+    constexpr Real kSame = 1e-6;
+    for (std::size_t i = 0; i < ends.size(); ++i) {
+        int n = 0;
+        for (const Vec2& e : ends) {
+            if (distance(ends[i], e) <= kSame) ++n;
+        }
+        if (n < 3) continue;
+        bool already = false;
+        for (const Vec2& j : junctions_) {
+            if (distance(j, ends[i]) <= kSame) already = true;
+        }
+        if (!already) junctions_.push_back(ends[i]);
+    }
+}
+
 Vec2 RoadNetwork::project_unconditional(Vec2 position) const {
     if (segments_.empty()) return position;
+    // At a junction the network has nothing to say about which way an entity
+    // is going, and projecting to the nearest branch says it anyway - which
+    // collapses a belief that ought to span both. Left alone here, the cloud
+    // keeps whatever spread it has; once past the junction each particle is
+    // pulled onto whichever branch it actually drifted towards, so the
+    // multi-modality survives the one place it matters.
+    if (junction_radius_ > 0.0 && at_junction(position)) return position;
     return nearest(position).first;
 }
 
 Vec2 RoadNetwork::align_unconditional(Vec2 position, Vec2 velocity) const {
     if (segments_.empty()) return velocity;
+    // Same reasoning as the projection: at a junction there is no single local
+    // direction of travel to align to, and picking one discards the very
+    // information the next few scans will supply.
+    if (junction_radius_ > 0.0 && at_junction(position)) return velocity;
     const auto [pt, dir] = nearest(position);
     // Keep the along-road component and discard the across-road one, preserving
     // direction of travel. A vehicle's speed is its own; only its heading is

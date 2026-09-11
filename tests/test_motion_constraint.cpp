@@ -98,10 +98,55 @@ void test_constrained_filter_keeps_particles_on_the_road() {
 
 }  // namespace
 
+void test_junctions_are_found_and_left_unprojected() {
+    // Away from a junction the network has one answer for "which way is it
+    // going here", and projecting to it beats free space. At a junction every
+    // branch is admissible and projecting to the *nearest* collapses a belief
+    // that ought to span both - which is how a coasting track ends up on the
+    // wrong branch and is lost. Measured on the metro scenario, constraining
+    // costs 4.5 points of recovery on a network with no junctions and 14.8 on
+    // the same network with them.
+    //
+    // A Y: one segment coming in from the west, two leaving east.
+    const Vec2 hub{100.0, 0.0};
+    RoadNetwork y({{Vec2{0.0, 0.0}, hub},
+                   {hub, Vec2{200.0, 100.0}},
+                   {hub, Vec2{200.0, -100.0}}},
+                  20.0);
+
+    std::printf("  Y network: %zu junction(s) found, radius %.0f m\n",
+                y.junctions().size(), y.junction_radius());
+    CHECK(y.junctions().size() == 1);
+    CHECK(distance(y.junctions().front(), hub) < 1e-6);
+
+    // A point off the network but away from the junction is pulled onto it.
+    const Vec2 off_axis{50.0, 8.0};
+    CHECK(!y.at_junction(off_axis));
+    CHECK(distance(y.project_unconditional(off_axis), off_axis) > 1.0);
+
+    // The same offset near the hub is left exactly where it is, so a cloud
+    // straddling the fork keeps straddling it.
+    const Vec2 near_hub{100.0, 8.0};
+    CHECK(y.at_junction(near_hub));
+    CHECK(distance(y.project_unconditional(near_hub), near_hub) < 1e-9);
+    // And its heading is not forced onto either branch.
+    const Vec2 v{10.0, 4.0};
+    CHECK(distance(y.align_unconditional(near_hub, v), v) < 1e-9);
+
+    // A plain corner - two segment ends meeting - is not a junction: the
+    // network still has a single answer there.
+    const RoadNetwork corner =
+        RoadNetwork::from_polyline({{0, 0}, {100, 0}, {100, 100}}, 20.0);
+    std::printf("  polyline corner: %zu junction(s) found\n",
+                corner.junctions().size());
+    CHECK(corner.junctions().empty());
+}
+
 int main() {
     test_projection_onto_a_line();
     test_velocity_alignment_preserves_direction();
     test_grid_construction();
     test_constrained_filter_keeps_particles_on_the_road();
+    test_junctions_are_found_and_left_unprojected();
     return trace::test::summary("test_motion_constraint");
 }

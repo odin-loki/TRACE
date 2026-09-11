@@ -37,6 +37,8 @@ bool g_adaptive_pd = false;
 /// Set by --no-coverage, to measure what telling the engine what its sensors
 /// can see is worth.
 bool g_no_coverage = false;
+/// Set by --no-constraint, to measure what expressing the track topology buys.
+bool g_no_constraint = false;
 
 std::vector<Vec2> line(Vec2 a, Vec2 b, int steps) {
     std::vector<Vec2> out;
@@ -1503,6 +1505,203 @@ void run_weather(std::uint64_t seed, bool verbose) {
 }
 
 // ---------------------------------------------------------------------------
+// 15. Metro — position observed only at stations
+// ---------------------------------------------------------------------------
+// Every other scenario observes entities wherever they are, with noise. A metro
+// observes them nowhere except at turnstiles, and there with almost no noise at
+// all. That inverts the usual problem in two ways worth testing.
+//
+// Between stations there is no observation of any kind, for scans at a time,
+// and the coverage map is what stops the engine reading that as evidence of
+// absence - a traveller in a tunnel is not missing, nobody is looking. This is
+// the purest case for it: travellers are outside every sensor's coverage most
+// of the time.
+//
+// And at a station two travellers tap at the *same coordinate*. Position, which
+// settles almost every association elsewhere in this suite, carries no
+// information at the only moments anything is observed. What is left is timing
+// and which way each of them goes next - which is topology, not geometry.
+void run_metro(std::uint64_t seed, bool verbose) {
+    Scenario s(seed);
+    s.n_scans = 260;
+    s.match_radius_m = 120.0;          // a train's length, not a person's
+
+    // Nine stations on a rough grid, in metres.
+    const std::array<Vec2, 9> st{
+        Vec2{  0.0,    0.0}, Vec2{ 900.0,    0.0}, Vec2{1800.0,    0.0},
+        Vec2{  0.0,  900.0}, Vec2{ 900.0,  900.0}, Vec2{1800.0,  900.0},
+        Vec2{  0.0, 1800.0}, Vec2{ 900.0, 1800.0}, Vec2{1800.0, 1800.0}};
+    // Three lines, each a chain of stations.
+    const std::vector<std::vector<int>> lines{
+        {0, 1, 2, 5, 8},        // south then east
+        {0, 3, 6, 7, 8},        // west then north
+        {3, 4, 5}};             // the cross-town link
+
+    DomainProfile p = CityCameraSurveillance();
+    p.scan_dt_s = 10.0;
+    p.pos_noise_m = 6.0;
+    p.meas_noise_var = 36.0;
+    p.p_detection = 0.95;              // a turnstile rarely misses a tap
+    // A train holds its heading for the length of a leg, which is the whole
+    // point of a railway. See the observability note in VALIDATION.md.
+    p.mou_models = {{motion("running_line", 180.0, 12.0),
+                     motion("dwelling",      40.0,  0.4)}};
+    p.model_trans = {{{{0.88, 0.12}}, {{0.35, 0.65}}}};
+    // The domain's speed scale, which several things derive from and which is
+    // inherited as 1.2 m/s - a pedestrian - from the camera profile this one
+    // starts from. Two-point initiation gates a birth on a second detection
+    // within roughly `courier_speed_thresh * 4 * scan_dt`, which at the
+    // inherited value is 66 m; consecutive turnstile taps are 770 m apart, so
+    // no birth could ever be corroborated and the engine held five tracks for
+    // six travellers. The same trap as the heading-hold constant: a field
+    // carried over from a domain where it meant something else.
+    p.courier_speed_thresh = 12.0;
+    // And corroboration is the wrong test here regardless. A tap is an isolated,
+    // accurate, topologically anchored statement; there is no second one nearby
+    // to confirm it, by construction. The sparse profiles in profile.cpp turn
+    // this off for the same reason.
+    p.two_point_initiation = false;
+    p.max_coast_s = 10.0 * 30;
+    p.dormant_timeout = 40;
+    p.reacquire_kinematic_s = 10.0 * 25;
+    p.coloc_dist_m = 150.0;
+    s.engine_config.profile = p;
+    s.engine_config.area = Area{-300, 2100, -300, 2100};
+    s.engine_config.seed = seed;
+
+    // The track network, as segments between adjacent stations on each line.
+    // This is the topology expressed in the one language the engine speaks.
+    std::vector<RoadNetwork::Segment> rails;
+    for (const auto& route : lines) {
+        for (std::size_t i = 0; i + 1 < route.size(); ++i) {
+            rails.push_back(RoadNetwork::Segment{st[route[i]], st[route[i + 1]]});
+        }
+    }
+    if (!g_no_constraint) {
+        // Junction handling is on by default at the network's own tolerance,
+        // which is both the principled choice and, measured across seeds, the
+        // best one: 85.9% recovery against 81.7% either with the junctions
+        // projected like any other point or with no constraint at all.
+        s.engine_config.motion_constraint =
+            std::make_shared<RoadNetwork>(rails, 60.0);
+    }
+
+    // A turnstile at every station. Tight radius, low noise: a tap is an
+    // almost exact statement of position, and says nothing between taps.
+    for (std::size_t i = 0; i < st.size(); ++i) {
+        GateReader::Config g;
+        g.id = "TURNSTILE_" + std::to_string(i);
+        g.position = st[i];
+        g.radius_m = 70.0;
+        g.p_detect = 0.95;
+        g.pos_noise_m = 4.0;
+        g.modality = Modality::COMMS;
+        g.false_alarm_rate = 0.004;
+        s.sensors.push_back(std::make_unique<GateReader>(g));
+    }
+
+    // Six travellers, each riding one line end to end and back. Staggered so
+    // that several are at the same station at the same time - which is the
+    // case position cannot resolve.
+    const std::array<int, 6> which{0, 0, 1, 1, 2, 2};
+    for (int i = 0; i < 6; ++i) {
+        Entity e;
+        e.id = "traveller_" + std::to_string(i);
+        e.role = "traveller";
+        const auto& route = lines[static_cast<std::size_t>(which[i])];
+        const bool reverse = (i % 2) == 1;
+        std::vector<int> stops(route.begin(), route.end());
+        if (reverse) std::reverse(stops.begin(), stops.end());
+        e.position = st[stops.front()];
+        e.velocity = Vec2{11.0 + 0.6 * i, 0.0};   // ~40 km/h, slightly apart
+        // Enough laps that nobody runs out of journey and stands at a terminus
+        // tapping the same turnstile every scan for the rest of the run - which
+        // is what the first version did, and it made the scenario measure
+        // queueing rather than travelling.
+        for (int lap = 0; lap < 10; ++lap) {
+            for (std::size_t k = 0; k + 1 < stops.size(); ++k) {
+                for (const Vec2& v : line(st[stops[k]], st[stops[k + 1]], 4)) {
+                    e.waypoints.push_back(v);
+                }
+            }
+            std::reverse(stops.begin(), stops.end());
+        }
+        s.world.add(std::move(e));
+    }
+
+    s.engine_config.coverage = std::make_shared<ScenarioCoverage>(&s.sensors);
+    Engine eng(s.engine_config);
+
+    int taps = 0;
+    int scans_with_any_observation = 0;
+    std::map<std::string, std::string> first_id;
+    std::map<std::string, int> id_changes;
+    std::map<std::string, std::string> current_id;
+    int shared_station_scans = 0;
+
+    s.on_report = [&](const Scenario& sc, int, const ScanReport& r,
+                      const Metrics&) {
+        if (r.n_observations > 0) ++scans_with_any_observation;
+        taps += r.n_observations;
+
+        // How often are two travellers at one station at the same time? That
+        // is the case the scenario exists to pose.
+        for (const auto& a : sc.world.entities()) {
+            for (const auto& b : sc.world.entities()) {
+                if (b.id <= a.id) continue;
+                if (distance(a.position, b.position) < 80.0) ++shared_station_scans;
+            }
+        }
+
+        for (const auto& e : sc.world.entities()) {
+            const TargetReport* best = nullptr;
+            Real bd = s.match_radius_m;
+            for (const auto& t : r.targets) {
+                const Real d = distance(t.position, e.position);
+                if (d < bd) { bd = d; best = &t; }
+            }
+            if (best == nullptr) continue;
+            if (first_id.count(e.id) == 0) {
+                first_id[e.id] = best->track_id;
+                current_id[e.id] = best->track_id;
+            } else if (current_id[e.id] != best->track_id) {
+                ++id_changes[e.id];
+                current_id[e.id] = best->track_id;
+            }
+        }
+    };
+
+    const Metrics m = run(s, eng);
+
+    int kept = 0;
+    int total_changes = 0;
+    for (const auto& [eid, fid] : first_id) {
+        const auto it = id_changes.find(eid);
+        const int n = it == id_changes.end() ? 0 : it->second;
+        total_changes += n;
+        if (n == 0) ++kept;
+    }
+
+    char note[1000];
+    std::snprintf(note, sizeof(note),
+                  "nine stations, three lines, six travellers, %d turnstile taps\n"
+                  "  over %d scans - the engine sees nothing at all in %.0f%% of them.\n"
+                  "  two travellers stood at one station on %d entity-pairs-scans,\n"
+                  "  where their reported positions are identical and association\n"
+                  "  has only timing and direction of travel to work with.\n"
+                  "  identity: %d of %zu travellers held one track id for the whole\n"
+                  "  run; %d changes in total.\n"
+                  "  This is the case the coverage map is for: a traveller in a\n"
+                  "  tunnel is not missing, nobody is looking. Run --no-coverage to\n"
+                  "  see what the engine does without being told that, and\n"
+                  "  --no-constraint to drop the track topology.",
+                  taps, s.n_scans,
+                  100.0 * (s.n_scans - scans_with_any_observation) / s.n_scans,
+                  shared_station_scans, kept, first_id.size(), total_changes);
+    report("metro", m, eng, note);
+}
+
+// ---------------------------------------------------------------------------
 // 10. Sensor drift — a camera whose mount slowly slips
 // ---------------------------------------------------------------------------
 // The case SourceCredibility exists for, and which nothing tested until now.
@@ -1884,6 +2083,10 @@ std::map<std::string, ScenarioSpec>& registry() {
          {"Cameras drop out and come back; do identities survive the gap?",
           "dormancy, coasting, kinematic reacquisition after a long outage",
           run_blackout}},
+        {"metro",
+         {"Nine stations, three lines; position observed only at turnstiles",
+          "topological observation, identical positions, no coverage between stops",
+          run_metro}},
         {"weather",
          {"Fog rolls in: detection probability halves, position error triples",
           "sensor characteristics changing under a profile that asserts fixed ones",
@@ -1927,6 +2130,8 @@ int main(int argc, char** argv) {
             g_adaptive_pd = true;
         } else if (a == "--no-coverage") {
             g_no_coverage = true;
+        } else if (a == "--no-constraint") {
+            g_no_constraint = true;
         } else if (a == "--appearance" && i + 1 < argc) {
             g_blackout_appearance = std::atof(argv[++i]);
             g_decoy_appearance = g_blackout_appearance;
