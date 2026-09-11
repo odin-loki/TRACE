@@ -725,6 +725,23 @@ existed, the real drops stopped being found while the artefacts continued to
 be. A scenario that tests a detector has to be at least as carefully checked as
 the detector.
 
+## A note on what "it helped" means
+
+Not a defect — a near miss, recorded because the machinery for avoiding it was
+already in this file and it very nearly failed anyway.
+
+`meas_noise_var` is now optionally learned from the engine's own innovations.
+Measuring the fix for one problem, the `wildlife` scenario appeared to gain
+**eighteen points** of recovery with the estimate switched on. That was on its
+default seed. The median over nine seeds is a loss of two and a half.
+
+The convention that catches this — medians over seeds rather than single runs —
+is recorded under "A note on test thresholds" below, and was written after three
+tests turned out to have been fitted to whichever seed was in front of them. It
+did not prevent the same mistake being made again while concentrating on
+something else; it only caught it afterwards. A convention is worth having
+precisely because judgement under concentration is not reliable.
+
 ## A note on measuring before optimising
 
 Two hypotheses about where the time went were wrong before the third was right.

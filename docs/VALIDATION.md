@@ -242,6 +242,68 @@ against it before any claim about coasting or reacquisition is worth making.
 
 ---
 
+## Learning what a sensor's noise actually is
+
+The clutter rate is learned from unassigned detections. `meas_noise_var` beside
+it is asserted by the profile and never checked, which costs most exactly when
+it matters — conditions change under a deployment and the profile goes on
+asserting what it always did.
+
+The evidence is already being computed. The normalised innovation squared for a
+detection against its assigned track has expectation equal to the measurement
+dimension when the filter's assumptions are right; persistently above that means
+the sensor is noisier than claimed, and the ratio is how much. Run
+`trace_sim --adaptive-noise` or set `adaptive_meas_noise` to switch it on.
+
+**It ships off, and the measurement is why.** Over nine seeds:
+
+| Scenario | Asserted | Learned | Change |
+|---|---|---|---|
+| weather | 108.6% | **112.4%** | **+3.8** |
+| dark-vessel | 101.8% | 101.8% | — |
+| coordinated-evasion | 109.9% | 108.3% | −1.6 |
+| wildlife | 98.1% | 95.6% | −2.5 |
+| warehouse | 118.8% | 108.8% | **−10.0** |
+
+The estimator is *right about the noise* in every one of these — warehouse
+learns that one of its two BLE readers is twelve times noisier than claimed,
+and it is. Acting on that widens the association gate, which helps where
+detections are sparse and isolated and hurts where they are dense and
+confusable. So the capability exists, with the guidance recorded, rather than a
+default chosen by hope.
+
+### Two things it had to get right first
+
+**Bias is not noise.** They are different moments of the same residual and call
+for opposite responses: a biased sensor should be *distrusted*, a noisy one
+merely believed less precisely. Measured about zero, a sensor whose mount has
+drifted reads as a noisy one and has its gate widened — the one response that
+helps its wrong detections keep hold of tracks. On `sensor-drift` that cost
+twelve points. Spread is now measured about the source's own estimated offset:
+
+| Sensor | Learned noise scale |
+|---|---|
+| sound | 0.82 |
+| **biased by six sigma** | **0.82** |
+| genuinely 3× noisier | 2.25 |
+
+**A stale prediction is not a noisy sensor.** After a long coast the residual is
+dominated by where the track was *guessed* to be. Feeding those in tells the
+estimator the sensor is noisy when what is uncertain is the prediction; in
+`warehouse` that cost sixteen points on its own. Innovations are now sampled
+only from tracks whose prediction is one scan old.
+
+### And one that caught me
+
+On its default seed `wildlife` appeared to gain **eighteen points**, and that
+was nearly the headline of this section. The median over nine seeds is a loss of
+two and a half. It is the same single-seed trap recorded under "A note on test
+thresholds" in [PORTING_NOTES.md](PORTING_NOTES.md), fallen into again while
+measuring the fix for something else — which is the argument for the
+median-over-seeds convention rather than an anecdote about it.
+
+---
+
 ## Cost: how the engine scales with crowd size
 
 `trace_bench` sweeps entity count with density held constant, so it measures
@@ -570,11 +632,10 @@ detector" above.
 - **Nothing above 226 people per frame has been measured on real data**, and at
   that density one core manages 12 frames per second. Synthetically the engine
   has now been measured to 1365 tracks.
-- **`p_detection` and `meas_noise_var` are asserted, not estimated.** The
-  clutter rate is learned from unassigned detections; these two are not, and
-  `weather` shows the engine surviving a large mismatch mostly because the
-  learned quantity is the one that moves. Estimating them from residuals is the
-  obvious next step.
+- **`p_detection` is asserted, not estimated.** `meas_noise_var` can now be
+  learned (`adaptive_meas_noise`, off by default — see above); `p_detection`
+  cannot, and it is the field that decides how much a miss counts against a
+  track.
 - **Sensor availability is inferred, not known.** A coverage gap is guessed at
   from whether anything reported at all. A real deployment knows which cameras
   are down; there is no interface for it to say so.

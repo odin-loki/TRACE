@@ -259,9 +259,15 @@ velocity measured through four times the noise.
 
 Worth noting why it survives a mismatch this large: the one quantity the engine
 *learns* rather than asserts — the clutter rate — is the one that moves most, as
-the false-alarm rate rises eightfold. `p_detection` and `meas_noise_var` are
-asserted, and estimating them from residuals the way clutter is estimated from
-unassigned detections is the obvious next step.
+the false-alarm rate rises eightfold.
+
+`meas_noise_var` can be learned too, from the innovations the engine already
+computes: `--adaptive-noise` takes fog-phase recovery from 108.6% to 112.4%
+(median of nine seeds) and leaves clear conditions untouched. It ships off
+because it costs elsewhere — see
+[VALIDATION.md](VALIDATION.md#learning-what-a-sensors-noise-actually-is) for
+the trade and for the two things it had to get right before it was safe at all.
+`p_detection` has no such estimate.
 *Result: 83.7% detection overall, 109% of what the sensors produced (median of
 twelve seeds, 106–111%); fog-phase recovery median 104%, range 100–112%.*
 
@@ -312,10 +318,9 @@ worth taking from this list rather than any individual entry on it.
 - **MOT20 tuning.** All four sequences now replay, on the shared pedestrian
   profile; none has been tuned for. At 200+ people per frame it is the natural
   scalability test.
-- **Estimating `p_detection` and `meas_noise_var`** the way the clutter rate is
-  already estimated. `weather` shows the engine surviving a large mismatch
-  mostly because the learned quantity is the one that moves; the asserted ones
-  would survive less gracefully in a domain where they are further out.
+- **Estimating `p_detection`** the way the clutter rate and now
+  `meas_noise_var` are. It is what decides how much a miss counts against a
+  track, and a profile that overstates it kills tracks during any outage.
 
 ---
 
