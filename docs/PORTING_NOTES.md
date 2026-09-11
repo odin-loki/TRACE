@@ -584,7 +584,7 @@ Two fixes, both cheap:
   map each scan cost 12 ms of a 126 ms scan — worse than the leak.
 
 At 400 tracks: the detector falls from **102 ms to 53 ms**, total scan latency
-from **181 ms to 125 ms**, and overall cost from **n^1.23 to n^1.13**. The
+from **181 ms to 125 ms**, and overall cost from **n^1.23 to n^1.12**. The
 capability is unchanged — `transit-hub` still gives its first convergence
 warning at the same 15 s lead time, and `evader` is bit-identical.
 

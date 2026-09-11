@@ -168,6 +168,43 @@ void test_convergence_is_predicted_before_contact() {
     CHECK(first_warning_sep > cfg.profile.rv_threshold_m * 3.0);
 }
 
+void test_slow_convergence_is_still_predicted() {
+    // The convergence detector skips a pair that cannot meet inside the
+    // warning horizon at the sum of its own two speeds. That bound is what
+    // stops it walking every pair in a dense scene, and the failure mode it
+    // risks is the opposite of the one above: a pair closing slowly, where the
+    // separation is large relative to what their speeds cover. If the bound is
+    // ever tightened past what the horizon actually permits, this is the test
+    // that notices.
+    EngineConfig cfg;
+    cfg.profile = CityCameraSurveillance();
+    cfg.profile.scan_dt_s = 1.0;
+    cfg.profile.rv_threshold_m = 10.0;
+    cfg.area = Area{0, 400, 0, 200};
+    Engine eng(cfg);
+
+    Real first_warning_sep = -1.0;
+    for (int i = 0; i < 90; ++i) {
+        const Real t = i * 1.0;
+        // Closing at 0.35 m/s each - a quarter of walking pace.
+        const Vec2 a{140.0 + i * 0.35, 100.0};
+        const Vec2 b{260.0 - i * 0.35, 100.0};
+        std::vector<Observation> obs{
+            {"a" + std::to_string(i), t, a, Modality::GEOINT, 0.93, "CAM_A"},
+            {"b" + std::to_string(i), t, b, Modality::GEOINT, 0.93, "CAM_B"}};
+        const ScanReport r = eng.ingest(obs, t);
+        if (first_warning_sep < 0.0 && !r.rendezvous.empty()) {
+            first_warning_sep = r.rendezvous.front().current_sep_m;
+            std::printf("  slow closers: first warning at %.0f m, ETA %.0f s, "
+                        "method %s\n",
+                        first_warning_sep, r.rendezvous.front().eta_s,
+                        r.rendezvous.front().method.c_str());
+        }
+    }
+    CHECK(first_warning_sep > 0.0);
+    CHECK(first_warning_sep > cfg.profile.rv_threshold_m * 3.0);
+}
+
 void test_possibility_mismatch_discriminates() {
     // The dual-existence diagnostic must separate a track built on strong
     // evidence from one built on weak evidence repeated often. Before the
@@ -212,5 +249,6 @@ int main() {
     test_determinism();
     test_every_profile_runs();
     test_convergence_is_predicted_before_contact();
+    test_slow_convergence_is_still_predicted();
     return trace::test::summary("test_engine");
 }
