@@ -24,8 +24,17 @@
  *   - src/core/pmbm.cpp:611 matches reappearing detections to dormant tracks,
  *     so it is tall whenever more things reappear at once than went dormant.
  *
- * Run against the pre-fix source this harness FAILS, which is what makes it a
- * regression test rather than a description.
+ * Size is 3 rows by 2 columns with costs in {0,1,2} plus the two forbidden
+ * markers - the smallest shape that is tall AND can be gated, which is what
+ * discharges. The larger cases are covered by tests/test_assignment, which
+ * compares against exhaustive search at eight ungated and seven gated shapes
+ * and fails 568 times against a build with only the shape fix. That test, not
+ * this harness, is the regression evidence; this states the claim beside the
+ * code and proves it outright for one shape.
+ *
+ * The harness is sensitive to the substitution being right, not merely
+ * present: setting big_m to 0 makes it fail on exactly the two claims that
+ * matter, cardinality and cost.
  *
  * Costs are INTEGERS here, where v04's are doubles, and the encoding is now
  * exactly faithful rather than merely adequate. The source itself replaces
@@ -49,7 +58,7 @@
 
 #define N 3                    /* rows */
 #define M 2                    /* columns */
-#define MAXV 3
+#define MAXV 2
 #define INF 1000                /* see the header: never decremented here */
 
 /* hungarian_le: assignment.cpp:23-96, verbatim in control flow.
@@ -171,34 +180,48 @@ int main(void) {
     const int* row_to_col = t_ctr;
     const int* col_to_row = t_rtc;
 
-    /* Every cost is finite and within the gate, so every column must be used. */
-    CHECK(n_matched == M, "a full matching is found when every pair is admissible");
-
-    /* The result is a genuine matching. */
+    /* The result is a genuine matching, and carries nothing forbidden.
+     * Not every column need be matched now: a column admissible to nobody has
+     * to be left alone, which is the case the old version of this harness
+     * could not express because it generated no forbidden pairs. */
     for (int j = 0; j < M; ++j) {
         const int i = col_to_row[j];
-        CHECK(i >= 0 && i < N, "each column gets a real row");
+        if (i < 0) continue;
+        CHECK(i >= 0 && i < N, "a matched column names a real row");
         CHECK(row_to_col[i] == j, "the two maps agree");
+        CHECK(admissible(cost[i][j], max_cost), "no forbidden pair is matched");
     }
     for (int j = 0; j < M; ++j)
         for (int k = j + 1; k < M; ++k)
-            CHECK(col_to_row[j] != col_to_row[k], "no row serves two columns");
+            if (col_to_row[j] >= 0)
+                CHECK(col_to_row[j] != col_to_row[k], "no row serves two columns");
 
-    /* An arbitrary rival full matching. */
+    /* An arbitrary rival matching: each column takes a distinct row or none,
+     * and only admissible pairs count. */
     int rival[M];
     for (int j = 0; j < M; ++j) {
         int r = nondet_int();
-        ASSUME(r >= 0 && r < N);
+        ASSUME(r >= -1 && r < N);
         rival[j] = r;
     }
     for (int j = 0; j < M; ++j)
         for (int k = j + 1; k < M; ++k)
-            ASSUME(rival[j] != rival[k]);          /* injective: a real matching */
+            if (rival[j] >= 0 && rival[k] >= 0)
+                ASSUME(rival[j] != rival[k]);      /* injective: a real matching */
+    for (int j = 0; j < M; ++j)
+        if (rival[j] >= 0) ASSUME(admissible(cost[rival[j]][j], max_cost));
 
-    int rival_total = 0;
-    for (int j = 0; j < M; ++j) rival_total += cost[rival[j]][j];
+    int rival_n = 0, rival_total = 0;
+    for (int j = 0; j < M; ++j)
+        if (rival[j] >= 0) { ++rival_n; rival_total += cost[rival[j]][j]; }
 
-    /* THE CLAIM: no matching is cheaper than the one returned. */
-    CHECK(total <= rival_total, "the returned matching is minimum-cost");
+    /* THE CLAIM, which is `match`'s documented objective: take as many
+     * admissible pairs as exist, and among those take the cheapest. So no
+     * rival may pair up more, and no rival pairing up the same number may
+     * cost less. */
+    CHECK(n_matched >= rival_n, "no matching pairs up more than the one returned");
+    if (n_matched == rival_n) {
+        CHECK(total <= rival_total, "the returned matching is minimum-cost");
+    }
     return 0;
 }

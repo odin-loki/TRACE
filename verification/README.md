@@ -46,7 +46,7 @@ explained below rather than dropped.
 | v12 | the road projection lands on the segment, and its tangent is unit-length | *not discharged* |
 | v13 | the clutter posterior never divides by zero and never rules clutter impossible | *not discharged* |
 | v14 | the miss update is a probability, never increases existence, and is monotone in `p_D` | holds |
-| v15 | the matcher returns a **minimum-cost** matching on a tall problem | holds (fails before the fix) |
+| v15 | the matcher takes as many admissible pairs as exist, and the cheapest such matching, on a tall **gated** problem | holds |
 
 v02, v03 and v08 assert something the code does not do, and are expected to
 fail. They are in the suite because "where does a NaN stop" and "what is this

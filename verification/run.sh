@@ -60,7 +60,7 @@ MANIFEST=(
   "v12_closest_on_segment:SLOW:cbmc:"
   "v13_clutter_rate:SLOW:cbmc:--unwind 16"
   "v14_existence_miss:PASS:cbmc:"
-  "v15_hungarian_optimal:PASS:esbmc:--unwind 10"
+  "v15_hungarian_optimal:PASS:cbmc:--unwind 10"
 )
 
 pass=0; fail=0; slow=0

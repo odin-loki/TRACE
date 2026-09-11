@@ -209,7 +209,20 @@ two and identity switches by a factor of 2.2.
 The tests now compare against exhaustive search at eight shapes on both sides
 of square, and at seven shapes again with a quarter of entries infinite and
 half the rest above the gate. The gated cases fail 568 times against a build
-with only (a) fixed.
+with only (a) fixed. `verification/v15` proves the same objective outright for
+a tall gated 3x2 — as many admissible pairs as exist, and the cheapest such
+matching — and is sensitive to the substitution rather than merely to its
+presence: a `big_m` of zero makes it fail on exactly those two claims.
+
+The episode is the clearest thing in this document about what verification is
+worth. Both defects were in code that had passed every test in the repository,
+and the first fix was validated by a probe that measured the right property on
+the wrong inputs — 4000 trials per shape, all reporting exact, none of them
+resembling a matrix the engine builds. What caught the second was an
+independent adversarial pass that produced a two-by-two counterexample, and
+what settled it was reproducing that counterexample rather than accepting the
+report. A measurement that cannot fail is not evidence, however many trials it
+runs.
 
 ### 2. Betweenness was normalised to [0,2] — **fixed**
 
