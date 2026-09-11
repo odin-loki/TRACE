@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -29,7 +30,16 @@ std::vector<Real> betweenness_centrality(
 
 class NetworkAnalyser {
 public:
-    explicit NetworkAnalyser(Real coloc_distance) : coloc_dist_(coloc_distance) {}
+    /// `memory_scans` is the half-life of a contact: how long a single
+    /// proximity event goes on contributing to the graph. Without one the
+    /// graph only ever gains edges, and in any scene that runs long enough
+    /// every track ends up adjacent to every other - at which point
+    /// betweenness is uniformly zero and the network says nothing. It also
+    /// bounds the map, which otherwise keeps a row for every track that has
+    /// ever existed.
+    explicit NetworkAnalyser(Real coloc_distance, int memory_scans = 60)
+        : coloc_dist_(coloc_distance),
+          decay_(std::pow(0.5, 1.0 / std::max(memory_scans, 1))) {}
 
     /// Accumulate this scan's contacts and return the current clusters.
     std::vector<Cluster> analyse(const std::vector<TrackPtr>& tracks,
@@ -43,6 +53,7 @@ public:
 
 private:
     Real coloc_dist_{350.0};
+    Real decay_{1.0};
     std::unordered_map<std::string, std::unordered_map<std::string, Real>> adjacency_;
     std::unordered_map<std::string, std::deque<Real>> bc_history_;
     std::unordered_map<std::string, Real> latest_betweenness_;

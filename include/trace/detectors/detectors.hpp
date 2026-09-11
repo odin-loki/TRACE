@@ -170,8 +170,17 @@ public:
                                    const DetectorContext& ctx) override;
 
 private:
-    std::unordered_map<std::string, std::set<std::string>> contacts_;
+    /// Who each track has been near, and when. Not a lifetime set: a lifetime
+    /// set converges on "everyone has met everyone" in any scene that runs
+    /// long enough, and gets there far sooner than that when transient tracks
+    /// are present, since every one of them leaves a permanent mark on
+    /// whatever it appeared next to. Entries age out, which also stops this
+    /// map growing without bound in a long-running deployment.
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> contacts_;
     std::unordered_map<std::string, std::deque<std::string>> role_history_;
+    std::unordered_map<std::string, std::deque<Real>> speed_history_;
+    std::unordered_map<std::string, int> last_seen_;
+    int scan_{0};
 };
 
 /// Construct the default eight-detector pipeline.

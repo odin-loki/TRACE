@@ -18,34 +18,50 @@ void World::step(Real dt) {
             continue;
         }
 
+        // Latch the cruise speed once. The 1.4 m/s default is a walking pace
+        // for entities a scenario never gave a velocity; it is meaningless in
+        // any other unit system, so it must not become reachable by accident.
+        if (e.cruise_mps <= 0.0) {
+            e.cruise_mps = e.velocity.norm() > 1e-6 ? e.velocity.norm() : 1.4;
+        }
+
         if (e.waypoint_index >= e.waypoints.size()) {
             e.velocity = Vec2{0.0, 0.0};
             e.mode = "standing";
             continue;
         }
 
-        const Vec2 target = e.waypoints[e.waypoint_index];
-        const Vec2 delta = target - e.position;
-        const Real dist = delta.norm();
-        const Real speed = e.velocity.norm() > 1e-6 ? e.velocity.norm() : 1.4;
-        const Real travel = speed * dt;
-
-        if (dist <= travel || dist < 1e-6) {
-            // Arrived: snap to the waypoint and take the next one, so an entity
-            // cannot overshoot a corner and cut through a wall.
-            e.position = target;
-            ++e.waypoint_index;
-            if (e.waypoint_index < e.waypoints.size()) {
-                const Vec2 next = e.waypoints[e.waypoint_index] - e.position;
-                e.velocity = next.unit() * speed;
-            } else {
-                e.velocity = Vec2{0.0, 0.0};
-                e.mode = "standing";
+        // Spend the scan's travel budget along the route, waypoint by
+        // waypoint, rather than stopping dead at the first one reached.
+        // Reaching a waypoint mid-scan used to cost the remainder of that
+        // scan, and a repeated waypoint - which any two concatenated path
+        // segments produce at their join - cost a whole scan while moving
+        // nowhere. Following consecutive segments stays exactly on the route,
+        // so this still cannot cut a corner.
+        Real remaining = e.cruise_mps * dt;
+        while (remaining > 0.0 && e.waypoint_index < e.waypoints.size()) {
+            const Vec2 delta = e.waypoints[e.waypoint_index] - e.position;
+            const Real dist = delta.norm();
+            if (dist < 1e-9) {
+                ++e.waypoint_index;            // already there; costs nothing
+                continue;
             }
+            if (dist <= remaining) {
+                e.position = e.waypoints[e.waypoint_index];
+                remaining -= dist;
+                ++e.waypoint_index;
+            } else {
+                e.position += delta.unit() * remaining;
+                remaining = 0.0;
+            }
+        }
+
+        if (e.waypoint_index < e.waypoints.size()) {
+            const Vec2 heading = e.waypoints[e.waypoint_index] - e.position;
+            if (heading.norm() > 1e-9) e.velocity = heading.unit() * e.cruise_mps;
         } else {
-            const Vec2 dir = delta.unit();
-            e.position += dir * travel;
-            e.velocity = dir * speed;
+            e.velocity = Vec2{0.0, 0.0};
+            e.mode = "standing";
         }
     }
 

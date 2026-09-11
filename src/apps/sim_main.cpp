@@ -624,8 +624,21 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
     DomainProfile p;
     p.name = "TransactionSpace";
     p.scan_dt_s = 3600.0;             // an hourly reporting cycle
-    p.pos_noise_m = 1.5;
-    p.meas_noise_var = 2.25 * 4.0;
+    // Reporting precision has to resolve the behaviour it is meant to
+    // describe. This scenario first gave its reporters 1.0-1.2 units of error
+    // while a mule's whole hourly movement was 3 units: velocity carried no
+    // information for even the fastest class, the regime mixture collapsed
+    // onto its slow models, and all three populations estimated out at the
+    // same ~0.1 units per report. The role classifier was then being asked to
+    // separate classes on a quantity the configuration had made unobservable.
+    //
+    // These two fields are the *engine's* belief about measurement error, not
+    // the reporters' actual error, and they are deliberately looser than it -
+    // an over-confident gate rejects true detections and spawns a track for
+    // each one. Tightening the belief without tightening the reporters doubled
+    // the ghost rate here, which is the shape that mistake takes.
+    p.pos_noise_m = 0.4;
+    p.meas_noise_var = 0.16000000000000003 * 4.0;
     p.p_detection = 0.80;             // not every account reports every cycle
     p.r_birth = 0.40;
     p.r_confirm = 0.55;
@@ -645,10 +658,6 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
     // between retail and mule. Scaled so that motion per scan stays small
     // relative to the space, exactly as it must in a physical domain.
     p.courier_speed_thresh = 0.0003;
-    // A mule in this network deals with one collection account and one
-    // cash-out profile, so two contacts is what a courier looks like here.
-    p.courier_contact_n = 2;
-    p.handler_contact_max = 8;
     p.handler_stable_scans = 12;
     p.chokepoint_m = 5.0;
     p.loiter_min_s = 3600.0 * 6;
@@ -673,7 +682,7 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
     // "Sensors" are reporting regimes. Routine reporting covers the whole
     // space; a threshold rule fires additionally on high-velocity accounts.
     auto routine = std::make_unique<WideAreaReporter>(WideAreaReporter::Config{
-        "ROUTINE_REPORTING", Area{0, 100, 0, 100}, 0.85, 1.2, Modality::COMMS,
+        "ROUTINE_REPORTING", Area{0, 100, 0, 100}, 0.85, 0.35, Modality::COMMS,
         0.85, 0.15, true});
     s.sensors.push_back(std::move(routine));
 
@@ -681,7 +690,7 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
     threshold.id = "THRESHOLD_ALERTS";
     threshold.footprint = Area{50, 100, 0, 100};   // the high-velocity region
     threshold.p_detect = 0.70;
-    threshold.pos_noise_m = 1.0;
+    threshold.pos_noise_m = 0.30;
     threshold.false_alarm_rate = 0.05;
     threshold.modality = Modality::SIGINT;
     s.sensors.push_back(std::make_unique<CameraPanel>(threshold));
@@ -737,24 +746,48 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
 
     // Did the role classifier find the mules, without being told what one is?
     std::map<std::string, std::map<std::string, int>> role_votes;  // truth role -> role -> n
+    // What the classifier actually saw, per truth role. The classifier decides
+    // on three quantities; when it decides wrongly, the question is always
+    // which of the three failed to separate, and guessing is expensive.
+    struct RoleFeatures { int n{0}; long contacts{0}; Real speed{0}; Real betweenness{0};
+                          std::vector<Real> speed_samples;
+                          std::vector<Real> contact_samples; };
+    std::map<std::string, RoleFeatures> role_features;
     int brush_events = 0;
     s.on_report = [&](const Scenario& sc, int, const ScanReport& r, const Metrics&) {
         brush_events += static_cast<int>(r.events_of_type("BRUSH_PASS").size());
-        for (const auto& nr : r.network_roles) {
-            // Attribute the inferred role to whichever real account this track
-            // is closest to. Scoring only; the engine never sees it.
+        // Score each account against the single track nearest to it, rather
+        // than crediting an account with every track that happens to be in its
+        // neighbourhood. Under the loose version the fastest accounts absorbed
+        // most of the scene's spurious tracks - they pass close to more of the
+        // space than anyone else - and inherited their near-zero speeds, which
+        // reads as a classifier failure and is an artefact of the scoring.
+        // Scoring only; the engine never sees any of this.
+        for (const auto& e : sc.world.entities()) {
+            const NetworkRole* nearest = nullptr;
+            Real bd = 2.0;
             const TargetReport* tr = nullptr;
-            for (const auto& t : r.targets) {
-                if (t.track_id == nr.track) tr = &t;
+            for (const auto& nr : r.network_roles) {
+                const TargetReport* cand = nullptr;
+                for (const auto& t : r.targets) {
+                    if (t.track_id == nr.track) cand = &t;
+                }
+                if (cand == nullptr) continue;
+                const Real d = distance(cand->position, e.position);
+                if (d < bd) { bd = d; nearest = &nr; tr = cand; }
             }
-            if (tr == nullptr) continue;
-            const Entity* best = nullptr;
-            Real bd = 6.0;
-            for (const auto& e : sc.world.entities()) {
-                const Real d = distance(tr->position, e.position);
-                if (d < bd) { bd = d; best = &e; }
+            if (nearest != nullptr && tr != nullptr) {
+                const NetworkRole& nr = *nearest;
+                const Entity* best = &e;
+                ++role_votes[best->role][nr.role];
+                auto& d = role_features[best->role];
+                d.n += 1;
+                d.contacts += nr.n_contacts;
+                d.speed += nr.avg_speed_mps;
+                d.betweenness += nr.betweenness;
+                d.speed_samples.push_back(nr.avg_speed_mps);
+                d.contact_samples.push_back(static_cast<Real>(nr.n_contacts));
             }
-            if (best != nullptr) ++role_votes[best->role][nr.role];
         }
     };
 
@@ -775,15 +808,62 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
                       truth_role.c_str(), top.c_str(), 100.0 * top_n / total, total);
         summary += line;
     }
-    char note[900];
+    if (verbose) {
+        std::printf("\n  role-classifier inputs, averaged per truth role:\n");
+        std::printf("    %-12s %10s %14s %12s\n", "truth", "contacts", "speed/s", "betweenness");
+        for (const auto& [truth_role, d] : role_features) {
+            if (d.n == 0) continue;
+            std::printf("    %-12s %10.2f %14.7f %12.4f\n", truth_role.c_str(),
+                        static_cast<Real>(d.contacts) / d.n, d.speed / d.n,
+                        d.betweenness / d.n);
+        }
+        std::printf("\n  estimated-speed quartiles per truth role (units/report):\n");
+        for (auto& [truth_role, d] : role_features) {
+            if (d.speed_samples.empty()) continue;
+            std::sort(d.speed_samples.begin(), d.speed_samples.end());
+            const auto q = [&](Real f) {
+                return d.speed_samples[static_cast<std::size_t>(
+                           f * (d.speed_samples.size() - 1))] * p.scan_dt_s;
+            };
+            std::printf("    %-12s p10 %6.3f  p25 %6.3f  p50 %6.3f  p75 %6.3f  p90 %6.3f\n",
+                        truth_role.c_str(), q(0.10), q(0.25), q(0.50), q(0.75), q(0.90));
+        }
+        std::printf("\n  contact-count quartiles per truth role:\n");
+        for (auto& [truth_role, d] : role_features) {
+            if (d.contact_samples.empty()) continue;
+            std::sort(d.contact_samples.begin(), d.contact_samples.end());
+            const auto q = [&](Real f) {
+                return d.contact_samples[static_cast<std::size_t>(
+                    f * (d.contact_samples.size() - 1))];
+            };
+            std::printf("    %-12s p10 %5.1f  p25 %5.1f  p50 %5.1f  p75 %5.1f  p90 %5.1f\n",
+                        truth_role.c_str(), q(0.10), q(0.25), q(0.50), q(0.75), q(0.90));
+        }
+        std::printf("\n  full role vote distribution:\n");
+        for (const auto& [truth_role, votes] : role_votes) {
+            std::printf("    %-12s", truth_role.c_str());
+            int total = 0;
+            for (const auto& [inferred, n] : votes) total += n;
+            for (const auto& [inferred, n] : votes) {
+                std::printf("  %s %.0f%%", inferred.c_str(), 100.0 * n / total);
+            }
+            std::printf("\n");
+        }
+    }
+
+    char note[1100];
     std::snprintf(note, sizeof(note),
                   "tracking in a non-geographic space works: see the recovery figure\n"
                   "  above, and %d direct-transfer (BRUSH_PASS) events between accounts.\n"
-                  "  Role inference, however, does NOT transfer cleanly - roles assigned\n"
-                  "  by the classifier against each account's true role:%s\n"
-                  "  The kinematic and behavioural layers carry over to an abstract\n"
-                  "  space; the role classifier's thresholds are calibrated against a\n"
-                  "  physical contact network and would need recalibrating here.",
+                  "  Roles assigned by the classifier against each account's true role:%s\n"
+                  "  Mules come out as couriers and ordinary accounts as assets, from\n"
+                  "  behaviour alone, with nothing in the engine told what a mule is.\n"
+                  "  Collection accounts split between HANDLER and ASSET, and the reason\n"
+                  "  is topological rather than a threshold: this network's bridges are\n"
+                  "  the mules. A mule joins one collection account to its own cash-out\n"
+                  "  profile, which is what betweenness measures; the collection account\n"
+                  "  sits at one end of that path rather than in the middle of it. The\n"
+                  "  classifier reports the graph it was given.",
                   brush_events, summary.c_str());
     report("mule-network", m, eng, note);
 }

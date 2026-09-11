@@ -66,6 +66,22 @@ struct MotSequence {
     /// Ground truth, indexed by frame.
     std::map<int, std::vector<MotBox>> truth;
 
+    /// Robust bounds of this sequence's own detection-score distribution,
+    /// computed once at load. Detectors do not share a scale - DPM emits
+    /// roughly -1..+3, FRCNN and SDP quite different ranges again, and MOT20's
+    /// differ from all of them - so a score threshold only means anything
+    /// after normalising against the sequence that produced it.
+    Real score_lo{0.0};
+    Real score_hi{1.0};
+
+    /// Whether the score column carries usable information at all. MOT20's
+    /// public detections ship with it unset - 175,303 of MOT20-03's 177,347
+    /// rows are scored exactly 0 - so its 2nd and 98th percentiles coincide
+    /// and every detection normalises to the same value. A score threshold
+    /// against that scale is not a strict filter, it is an arbitrary one, and
+    /// at the default it discarded 96% of MOT20's detections.
+    bool scores_informative{true};
+
     [[nodiscard]] bool valid() const { return length > 0 && !detections.empty(); }
     [[nodiscard]] Area area() const {
         // Pad the frame: a person's feet can sit slightly outside the image, and
@@ -106,6 +122,12 @@ struct MotSequence {
     [[nodiscard]] std::vector<Entity> truth_for(int frame) const;
 
     /// Percentile of the detection score distribution, for thresholding.
+    /// Quantile of the loaded detection scores. Used at load time to fill
+    /// `score_lo` / `score_hi`; the result was previously memoised in a
+    /// function-local static keyed on `this`, which is not an identity -
+    /// sequences are replayed one at a time from the same stack slot, so every
+    /// sequence after the first silently normalised against the first one's
+    /// score distribution.
     [[nodiscard]] Real score_percentile(Real q) const;
 };
 

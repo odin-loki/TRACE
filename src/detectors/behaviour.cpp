@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <optional>
 
 namespace trace {
 namespace {
@@ -24,6 +25,49 @@ bool is_transport_model(const std::string& m) {
     return m == "vehicle" || m == "highway" || m == "sprint" ||
            m == "fast_craft" || m == "forklift" || m == "conveyor" ||
            m == "transiting" || m == "fixed_wing" || m == "fast_jet";
+}
+
+/// Split a sample into a low and a high mode, Otsu-style: sweep every cut
+/// point and keep the one maximising between-class variance. Returns the
+/// smallest value in the high mode.
+///
+/// Returns nothing when the sample has no high mode worth the name - the best
+/// available cut still leaves the two class means within `min_ratio` of each
+/// other. That case matters: a quantile always yields a threshold, so against
+/// a quantile the fastest member of a population of stationary objects is
+/// "fast". Here it is not, which is the correct answer.
+///
+/// `sample` must be sorted ascending.
+std::optional<Real> high_mode_threshold(const std::vector<Real>& sample,
+                                        Real min_ratio) {
+    const std::size_t n = sample.size();
+    if (n < 4) return std::nullopt;
+    const Real total = std::accumulate(sample.begin(), sample.end(), Real{0});
+
+    Real best_var = 0.0;
+    std::size_t best_k = 0;
+    Real cum = 0.0;
+    for (std::size_t k = 1; k < n; ++k) {
+        cum += sample[k - 1];
+        const Real w_lo = static_cast<Real>(k) / static_cast<Real>(n);
+        const Real mean_lo = cum / static_cast<Real>(k);
+        const Real mean_hi = (total - cum) / static_cast<Real>(n - k);
+        const Real var = w_lo * (1.0 - w_lo) * (mean_hi - mean_lo) *
+                         (mean_hi - mean_lo);
+        if (var > best_var) {
+            best_var = var;
+            best_k = k;
+        }
+    }
+    if (best_k == 0) return std::nullopt;
+
+    const Real cut = std::accumulate(sample.begin(),
+                                     sample.begin() + static_cast<long>(best_k),
+                                     Real{0});
+    const Real mean_lo = cut / static_cast<Real>(best_k);
+    const Real mean_hi = (total - cut) / static_cast<Real>(n - best_k);
+    if (mean_hi < mean_lo * min_ratio) return std::nullopt;
+    return sample[best_k];
 }
 
 }  // namespace
@@ -319,22 +363,122 @@ std::vector<NetworkRole> NetworkRoleDetector::roles(
     // any classification is an artefact of the threshold, so we decline.
     if (tracks.size() < 3) return out;
 
+    // Two different timescales, and conflating them costs accuracy in both
+    // directions. `handler_stable_scans` says how long a track must be
+    // observed before its behaviour counts as settled - it governs the speed
+    // average and the age gate. How long a *relationship* stays current is a
+    // separate question, and a much longer one: parties who deal with each
+    // other every few weeks are still associates in between. The profile
+    // already states that second timescale as `dormant_timeout` - how long an
+    // unobserved thing goes on being believed in - which is exactly the
+    // semantics wanted here.
+    const int window = std::clamp(p.handler_stable_scans, 3, 60);
+    const int contact_memory = std::max(p.dormant_timeout, window);
+    ++scan_;
+
+    for (const auto& t : tracks) last_seen_[t->id()] = scan_;
     for (const auto& [i, j] : ctx.near_pairs(p.coloc_dist_m, tracks.size())) {
         if (distance(tracks[i]->position(), tracks[j]->position()) < p.coloc_dist_m) {
-            contacts_[tracks[i]->id()].insert(tracks[j]->id());
-            contacts_[tracks[j]->id()].insert(tracks[i]->id());
+            contacts_[tracks[i]->id()][tracks[j]->id()] = scan_;
+            contacts_[tracks[j]->id()][tracks[i]->id()] = scan_;
         }
     }
+
+    // Age out contacts, and drop state for tracks that have gone for good.
+    for (auto it = contacts_.begin(); it != contacts_.end();) {
+        auto& seen = it->second;
+        for (auto e = seen.begin(); e != seen.end();) {
+            e = (scan_ - e->second > contact_memory) ? seen.erase(e)
+                                                      : std::next(e);
+        }
+        const auto ls = last_seen_.find(it->first);
+        const bool gone =
+            ls == last_seen_.end() || scan_ - ls->second > contact_memory;
+        it = (seen.empty() && gone) ? contacts_.erase(it) : std::next(it);
+    }
+    for (auto it = last_seen_.begin(); it != last_seen_.end();) {
+        if (scan_ - it->second > contact_memory) {
+            role_history_.erase(it->first);
+            speed_history_.erase(it->first);
+            it = last_seen_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    const auto n_contacts_of = [&](const std::string& id) {
+        const auto it = contacts_.find(id);
+        return it == contacts_.end() ? 0 : static_cast<int>(it->second.size());
+    };
 
     // Classify against this population's own distribution rather than fixed
     // cut-offs: "moves more than most" travels between domains, "moves faster
     // than 3 m/s" does not.
+    //
+    // "Fast" used to mean `max(1.5 * median, courier_speed_thresh)`, and the
+    // absolute floor in that max quietly vetoed the relative test. In the
+    // mule-network scenario couriers ran at five times the population median
+    // and were still not fast, because the profile's floor had been set from
+    // the couriers' *true* speed while the classifier sees their *estimated*
+    // speed, which is lower - a turning entity's smoothed velocity always is.
+    // Any absolute floor has that failure mode; it is only ever calibrated
+    // against a quantity nobody measures.
+    //
+    // So "fast" now means membership of a fast mode, if this population has
+    // one. That keeps what the floor was for - in a population where nothing
+    // moves, nobody is a courier - without needing a number per domain.
+    // And it is *sustained* speed that carries the meaning. An entity shuttling
+    // between two points reads as stationary every time it turns around, so
+    // classifying on the instantaneous estimate had couriers oscillating
+    // through every role in the list. Averaging over the window that already
+    // defines when a property has settled - `handler_stable_scans` - is enough
+    // to make the distinction stable, and it makes `avg_speed_mps` in the
+    // report mean what its name says for the first time.
     std::vector<Real> speeds;
     speeds.reserve(tracks.size());
-    for (const auto& t : tracks) speeds.push_back(t->speed_mps(p.scan_dt_s));
-    std::vector<Real> sorted_speeds = speeds;
+    for (const auto& t : tracks) {
+        auto& hist = speed_history_[t->id()];
+        hist.push_back(t->speed_mps(p.scan_dt_s));
+        while (hist.size() > static_cast<std::size_t>(window)) hist.pop_front();
+        speeds.push_back(std::accumulate(hist.begin(), hist.end(), Real{0}) /
+                         static_cast<Real>(hist.size()));
+    }
+
+    // The population these statistics describe is the *settled* one. A scene
+    // under churn carries short-lived fragments alongside its real tracks, and
+    // a fragment has no velocity yet - it is born at rest and takes several
+    // scans to acquire one. Including fragments drags every distribution
+    // towards zero, which is how a scene full of couriers can end up with no
+    // fast mode at all. Below a quorum there is nothing to be relative to, and
+    // the whole population is used rather than reporting confident nonsense
+    // about three tracks.
+    std::vector<std::size_t> settled;
+    for (std::size_t i = 0; i < tracks.size(); ++i) {
+        if (tracks[i]->age() >= p.handler_stable_scans) settled.push_back(i);
+    }
+    if (settled.size() < 3) {
+        settled.clear();
+        for (std::size_t i = 0; i < tracks.size(); ++i) settled.push_back(i);
+    }
+
+    std::vector<Real> sorted_speeds;
+    sorted_speeds.reserve(settled.size());
+    for (std::size_t i : settled) sorted_speeds.push_back(speeds[i]);
     std::sort(sorted_speeds.begin(), sorted_speeds.end());
-    const Real median_speed = sorted_speeds[sorted_speeds.size() / 2];
+    const std::optional<Real> fast_mode = high_mode_threshold(sorted_speeds, 1.5);
+
+    // Contact counts get the same treatment, for the same reason: what counts
+    // as well-connected is a property of the network, not of the domain. The
+    // median partitions the population cleanly and - unlike a quantile - does
+    // not cap the share of the population that any one role may hold.
+    std::vector<Real> contact_counts;
+    contact_counts.reserve(settled.size());
+    for (std::size_t i : settled) {
+        contact_counts.push_back(
+            static_cast<Real>(n_contacts_of(tracks[i]->id())));
+    }
+    std::sort(contact_counts.begin(), contact_counts.end());
+    const Real median_contacts = contact_counts[contact_counts.size() / 2];
 
     // Betweenness is compared against this population too, not against a fixed
     // number. A normalised betweenness above 0.2 requires a near-perfect star,
@@ -342,36 +486,67 @@ std::vector<NetworkRole> NetworkRoleDetector::roles(
     // hub test simply never fired, and every hub fell through to the catch-all
     // role. The speed test was already relative - this makes the two
     // consistent.
+    // Over the tracks this decision can apply to, which is not everyone: a
+    // courier cannot be a handler, but a courier's centrality was setting the
+    // bar a handler had to clear. In any network where the couriers do the
+    // moving they are also the bridges - a node that shuttles between two
+    // otherwise separate neighbourhoods is the definition of one - so
+    // including them put the threshold permanently out of reach of the
+    // sedentary nodes it was meant to select. Comparing a quantity across
+    // roles that are mutually exclusive by construction is the error; the
+    // comparison group is the other candidates for the same role.
     std::vector<Real> bc_values;
-    bc_values.reserve(tracks.size());
-    for (const auto& t : tracks) bc_values.push_back(ctx.betweenness_of(t->id()));
+    bc_values.reserve(settled.size());
+    for (std::size_t i : settled) {
+        const bool i_fast = fast_mode.has_value() && speeds[i] >= *fast_mode;
+        if (i_fast) continue;
+        bc_values.push_back(ctx.betweenness_of(tracks[i]->id()));
+    }
+    if (bc_values.size() < 3) {
+        bc_values.clear();
+        for (std::size_t i : settled) {
+            bc_values.push_back(ctx.betweenness_of(tracks[i]->id()));
+        }
+    }
     std::sort(bc_values.begin(), bc_values.end());
     const Real bc_high = bc_values[(bc_values.size() * 3) / 4];   // upper quartile
     const Real bc_threshold = std::max(bc_high, 1e-9);
 
     for (std::size_t i = 0; i < tracks.size(); ++i) {
         const Track& t = *tracks[i];
-        const int n_contacts = static_cast<int>(contacts_[t.id()].size());
+        const int n_contacts = n_contacts_of(t.id());
         const Real speed = speeds[i];
         const Real bc = ctx.betweenness_of(t.id());
 
         std::string role = "UNKNOWN";
         Real confidence = 0.3;
 
-        const bool fast = speed > std::max(median_speed * 1.5, p.courier_speed_thresh);
-        const bool well_connected = n_contacts >= p.courier_contact_n;
-        const bool few_contacts = n_contacts <= p.handler_contact_max;
+        const bool fast = fast_mode.has_value() && speed >= *fast_mode;
+        const bool well_connected = n_contacts > median_contacts;
+        const bool few_contacts = !well_connected;
         const bool stable = t.age() >= p.handler_stable_scans;
 
-        if (fast && well_connected) {
+        // The two sedentary roles test `!fast` rather than "slower than the
+        // median". Half of any population is slower than its median by
+        // construction, so that test excluded half the hubs for no reason -
+        // and it excluded the wrong half. A near-stationary track's velocity
+        // estimate is dominated by measurement noise, so the most static
+        // entities in a scene routinely measure *above* the median speed. The
+        // complement of the courier test says what was meant: not moving with
+        // purpose.
+        if (fast && well_connected && stable) {
             // Moves a lot, meets many: carries things between fixed points.
+            // `stable` gates this branch as it gates the other two: a track
+            // three scans old has not done anything yet, and calling it a
+            // courier on the strength of one fast estimate is how a role
+            // classifier ends up describing its own tracking noise.
             role = "COURIER";
             confidence = 0.55 + 0.1 * std::min(n_contacts, 4);
-        } else if (bc >= bc_threshold && bc > 0.0 && stable && speed < median_speed) {
+        } else if (bc >= bc_threshold && bc > 0.0 && stable && !fast) {
             // Sits still, but everything routes through them.
             role = "HANDLER";
             confidence = 0.5 + std::min(bc * 2.0, 0.4);
-        } else if (few_contacts && stable && speed < median_speed) {
+        } else if (few_contacts && stable && !fast) {
             role = "ASSET";
             confidence = 0.45;
         } else if (n_contacts > 0) {

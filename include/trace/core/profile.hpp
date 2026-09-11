@@ -170,8 +170,6 @@ struct DomainProfile {
     // -- Network analysis ---------------------------------------------------
     Real coloc_dist_m{350.0};
     Real courier_speed_thresh{3.0};
-    int  courier_contact_n{3};
-    int  handler_contact_max{2};
     int  handler_stable_scans{10};
 
     // -- Pattern of life ----------------------------------------------------

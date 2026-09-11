@@ -95,6 +95,18 @@ std::vector<Cluster> NetworkAnalyser::analyse(const std::vector<TrackPtr>& track
             for (std::size_t j = i + 1; j < tracks.size(); ++j) candidates.emplace_back(i, j);
         }
     }
+    // Age the existing graph before adding this scan's contacts, and drop
+    // edges that have faded past the point of meaning anything. An edge only
+    // stays if the proximity keeps recurring.
+    constexpr Real kEdgeFloor = 0.05;
+    for (auto row = adjacency_.begin(); row != adjacency_.end();) {
+        for (auto e = row->second.begin(); e != row->second.end();) {
+            e->second *= decay_;
+            e = e->second < kEdgeFloor ? row->second.erase(e) : std::next(e);
+        }
+        row = row->second.empty() ? adjacency_.erase(row) : std::next(row);
+    }
+
     for (const auto& [i, j] : candidates) {
         const Real d = distance(tracks[i]->position(), tracks[j]->position());
         if (d >= coloc_dist_) continue;

@@ -26,14 +26,19 @@ supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **46.2%** |
-| MOTP | 27.1 px |
-| Recall | 62.0% |
-| Precision | 86.3% |
-| Mostly tracked | 11.8% |
-| Mostly lost | 2.4% |
-| Identity switches | 20,233 |
-| Throughput | 6.3 ms/frame, one core |
+| **MOTA** | **48.0%** |
+| MOTP | 27.4 px |
+| Recall | 58.1% |
+| Precision | 92.3% |
+| Mostly tracked | 7.6% |
+| Mostly lost | 4.1% |
+| Identity switches | 17,876 |
+| Throughput | 5.6 ms/frame, one core |
+
+At the tool's defaults, which is what the command above runs. An earlier
+version of this table reported a different operating point (`--min-score 0`,
+`--radius 120`) than the command printed beside it; that configuration gives
+47.1% MOTA and 103.7% of ceiling, so the choice is worth about a point.
 
 ### The number that matters more than MOTA
 
@@ -43,11 +48,11 @@ detection it was handed — gives:
 
 | | |
 |---|---|
-| Detector ceiling, recall | **59.9%** |
-| TRACE, recall | **62.0%** |
-| **TRACE recovered** | **103.6% of the recall the detections allow** |
+| Detector ceiling, recall | **54.4%** |
+| TRACE, recall | **58.1%** |
+| **TRACE recovered** | **106.9% of the recall the detections allow** |
 
-No tracker consuming these detections can exceed 59.9% recall by reporting
+No tracker consuming these detections can exceed 54.4% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
 those coasted positions still match ground truth. That is precisely what a
 tracker is for, and it is the single clearest evidence in this repository that
@@ -64,14 +69,21 @@ a kinematics-only tracker.
 
 | Detector | MOTA range | Character |
 |---|---|---|
-| **SDP** (strongest) | 50–71% | Best result: **MOT17-04-SDP at 71.3% MOTA** |
-| **FRCNN** | 40–62% | Precision routinely above 95% |
-| **DPM** (oldest) | 4–38% | Precision falls to 54–77%; its false positives get promoted |
+| **SDP** (strongest) | 48.6 – **70.2%** | Best result: MOT17-04-SDP |
+| **FRCNN** | 38.6 – 60.5% | Precision routinely above 95% |
+| **DPM** (oldest) | 14.0 – 39.2% | Its false positives get promoted to tracks |
 
-Raising the detection threshold to suppress DPM's false positives makes MOTA
-*worse* (20.7% → 12.0% on MOT17-02-DPM): recall dominates MOTA, so trading it
-for precision is a losing exchange. DPM is simply a weak detector and there is
-no tuning that rescues it.
+DPM's range was 4–38% before the source-credibility work; discounting a source
+whose reports disagree with its peers is worth roughly ten MOTA points on the
+sequences where the detector is unreliable, and nothing at all where it is not.
+
+The detection threshold has a shallow optimum and falls away either side of it.
+On MOT17-02-DPM, sweeping it gives 18.4% MOTA at 0.0, 18.9% at the default
+0.15, and 15.5% at 0.30: a little filtering pays for itself, more does not,
+because recall dominates MOTA and beyond that point precision is being bought
+with it. An earlier version of this document reported the same sweep as a
+monotone loss (20.7% → 12.0%); that no longer reproduces. DPM remains a weak
+detector and no threshold rescues it.
 
 ## Scalability: MOT20, dense crowds
 
@@ -80,15 +92,27 @@ association is hardest and the O(n^2) parts of the engine start to matter.
 
 | Sequence | People/frame | MOTA | Precision | Recall | Recovery of ceiling | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | ~46 | **51.8%** | 98.9% | 66.2% | 105.2% | 12.0 |
-| MOT20-02 | ~56 | 49.2% | 96.0% | 59.9% | 107.1% | 50.9* |
+| MOT20-01 | ~46 | **51.8%** | 98.9% | 66.2% | 105.2% | 12.2 |
+| MOT20-02 | ~56 | 37.0% | 95.2% | 41.9% | 74.8% | 13.9 |
 
-Both score *higher* than the MOT17 average, because MOT20's detections are
-cleaner (98–99% precision at the ceiling). MOT20-01 loses no identity for more
-than 80% of its life at all: **mostly-lost 0.0%**.
+The two sequences disagree, and the disagreement is the finding. MOT20-01
+beats the MOT17 average and exceeds its detector ceiling (105.2%); MOT20-02
+recovers only **74.8%** of what its detections allow — the first sequence in
+this repository where TRACE falls materially short of its input.
 
-\* MOT20-02 was measured before the cost work described below; expect roughly
-a third of that figure now, as MOT20-01 went from 33.4 to 12.0 ms/frame.
+Precision stays at 95.2%, so the engine is not inventing tracks; it is failing
+to hold them. Mostly-lost rises from 0.0% to 23.0% and identity switches to
+4,182 across 2,782 frames. MOT20-02 is the same scene as MOT20-01 at higher
+density and longer duration, which points at the association step rather than
+at the detections: with ~56 people in frame, a track that loses its detection
+for a few frames has many plausible continuations, and the gate admits several
+of them. This is the same mechanism documented under reacquisition below,
+arriving through a different door — and unlike the MOT17 case it costs recall
+outright rather than trading it.
+
+It has not been tuned for, deliberately: `MotPedestrianPixels` is one profile
+shared by every MOT sequence here, and fitting it to MOT20-02 would make the
+MOT17 numbers a different kind of claim.
 
 ---
 
@@ -240,27 +264,71 @@ strictly separate from anything the engine can see.
 
 | Scenario | Sensors produced | TRACE reported | Recovery |
 |---|---|---|---|
-| evader | 71.6% | 96.8% | **135%** |
-| warehouse | 46.7% | 57.1% | **122%** |
-| transit-hub | 81.5% | 97.7% | **120%** |
-| anpr-corridor | 21.2% | 23.4% | **111%** |
-| wildlife | 45.0% | 42.1% | 94% |
-| dark-vessel | 76.8% | 53.8% | 70% |
+| evader | 71.5% | 96.3% | **135%** |
+| warehouse | 49.0% | 61.5% | **126%** |
+| transit-hub | 81.7% | 97.9% | **120%** |
+| spoofing | 85.9% | 98.0% | **114%** |
+| mule-network | 92.0% | 98.7% | **107%** |
+| anpr-corridor | 19.9% | 20.8% | **104%** |
+| dark-vessel | 76.8% | 78.8% | **103%** |
+| sensor-drift | 98.1% | 97.3% | 99% |
+| wildlife | 45.0% | 39.4% | 88% |
 
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
 This changed the assessment of three scenarios materially. `anpr-corridor` had
 been documented as the weakest of the seven on a 20% detection rate; the
-sensors only ever produced a detection in 21.2% of truth-scans, because ANPR
+sensors only ever produced a detection in 19.9% of truth-scans, because ANPR
 readers 400 m apart cover about a fifth of the corridor. It was never a tracking
 failure. The same applies to `warehouse` and `wildlife`.
 
-**`dark-vessel` at 70% is the one genuine shortfall.** Vessels at 12 knots
-sampled hourly move 21.6 km between scans, and the motion model's own one-scan
-prediction uncertainty is around 13 km. That is a real limit and it is not a
-tuning problem: at that sampling rate relative to that speed, the information
-simply is not there.
+### The shortfall that was not one
+
+An earlier version of this document recorded `dark-vessel` at 70% recovery as
+"the one genuine shortfall", and explained it as physics:
+
+> Vessels at 12 knots sampled hourly move 21.6 km between scans, and the
+> motion model's own one-scan prediction uncertainty is around 13 km. That is
+> a real limit and it is not a tuning problem.
+
+**That explanation was wrong, and the arithmetic in it was an invitation to
+stop looking.** The scenario now recovers 103% with a mean position error of
+1.7 km, and nothing about the motion model, the scan period or the vessel speed
+changed. What changed was a defect in the *simulator*, three layers away from
+anything this document was measuring.
+
+`World::step` moved an entity toward its next waypoint and stopped there for
+the remainder of the scan. On arriving it took the next waypoint and set a
+heading from it — and `Vec2::unit()` of a zero-length delta is `{0, 0}`, so a
+*repeated* waypoint set the entity's velocity to zero. Concatenating two path
+segments produces a repeated waypoint at the join, which is how every route in
+`sim_main.cpp` is built. From then on the step function fell through to its
+`1.4` m/s default — a walking pace, meaningless in knots or in the abstract
+units of `mule-network`, where it worked out at 5,040 units per scan. The
+entity tore through its entire remaining route in a few scans and then stood
+still, because a route with no waypoints left is a stationary entity.
+
+So the ground truth the engine was being scored against had entities that
+teleported and then stopped. Some scenarios were barely touched; `dark-vessel`
+was scored almost entirely against vessels that were not moving as the scenario
+said they were.
+
+Fixed, the step function spends its whole travel budget along the route,
+waypoint by waypoint, so reaching one mid-scan no longer costs the rest of that
+scan and a repeated waypoint costs nothing; and cruise speed is latched once at
+first use rather than re-derived from a heading vector that gets rewritten at
+every corner. Two things are worth taking from it:
+
+- **The scenarios got harder, not easier.** Entities now traverse their full
+  routes, so there is more ground to cover and more handoffs to get wrong.
+  `wildlife` fell from 94% recovery to 88% and `anpr-corridor` from 111% to
+  104%; the maze went from 83.3% detection and zero identity switches to 78.2%
+  and five. Those are the honest numbers for a harder problem, and they are
+  reported here rather than the flattering ones.
+- **A tidy physical explanation for a bad number is the most expensive kind of
+  wrong.** The 21.6 km against 13 km was arithmetic that happened to be true
+  and had nothing to do with the result it was explaining.
 
 ---
 

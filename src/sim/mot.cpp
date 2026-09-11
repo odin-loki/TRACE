@@ -125,17 +125,15 @@ std::vector<Observation> MotSequence::observations_for(int frame, Real timestamp
     const auto it = detections.find(frame);
     if (it == detections.end()) return out;
 
-    // Normalise this sequence's score range onto 0..1. DPM emits roughly -1..+3,
-    // FRCNN and SDP quite different ranges again, and a single absolute
-    // threshold across all three would be meaningless.
-    const Real lo = score_percentile(0.02);
-    const Real hi = score_percentile(0.98);
-    const Real span = std::max(hi - lo, 1e-6);
+    // Normalise this sequence's score range onto 0..1, against the bounds
+    // measured from this sequence at load.
+    const Real span = std::max(score_hi - score_lo, 1e-6);
+    const Real lo = score_lo;
 
     int n = 0;
     for (const auto& b : it->second) {
         const Real norm = std::clamp((b.score - lo) / span, 0.0, 1.0);
-        if (norm < min_score) continue;
+        if (scores_informative && norm < min_score) continue;
         // Confidence floors at 0.3: a detection that survives the threshold is
         // still worth something, and zero-confidence observations are ignored
         // by the birth gate entirely.
@@ -178,18 +176,11 @@ std::vector<Entity> MotSequence::truth_for(int frame) const {
 }
 
 Real MotSequence::score_percentile(Real q) const {
-    // Cached on first use: the score distribution is fixed once loaded, and
-    // recomputing it per frame would dominate the replay cost.
-    static thread_local const MotSequence* cached_for = nullptr;
-    static thread_local std::vector<Real> sorted;
-    if (cached_for != this) {
-        sorted.clear();
-        for (const auto& [f, boxes] : detections) {
-            for (const auto& b : boxes) sorted.push_back(b.score);
-        }
-        std::sort(sorted.begin(), sorted.end());
-        cached_for = this;
+    std::vector<Real> sorted;
+    for (const auto& [f, boxes] : detections) {
+        for (const auto& b : boxes) sorted.push_back(b.score);
     }
+    std::sort(sorted.begin(), sorted.end());
     if (sorted.empty()) return 0.0;
     const auto idx = static_cast<std::size_t>(
         std::clamp(q * static_cast<Real>(sorted.size() - 1), 0.0,
@@ -219,6 +210,12 @@ MotSequence load_mot_sequence(const std::string& directory) {
     if (seq.length == 0 && !seq.detections.empty()) {
         seq.length = seq.detections.rbegin()->first;
     }
+
+    // Measure the score distribution once, here, where the sequence's own
+    // detections are the only ones in scope.
+    seq.score_lo = seq.score_percentile(0.02);
+    seq.score_hi = seq.score_percentile(0.98);
+    seq.scores_informative = (seq.score_hi - seq.score_lo) > 1e-6;
     return seq;
 }
 

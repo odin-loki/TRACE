@@ -26,7 +26,7 @@ Engine::Engine(EngineConfig config)
     : config_(std::move(config)),
       pmbm_(config_.profile, config_.area, config_.seed,
             config_.motion_constraint),
-      network_(config_.profile.coloc_dist_m),
+      network_(config_.profile.coloc_dist_m, config_.profile.dormant_timeout),
       detectors_(default_detectors()),
       rng_(config_.seed ^ 0x1234ABCDULL) {}
 

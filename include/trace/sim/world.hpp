@@ -29,6 +29,12 @@ struct Entity {
     std::vector<Vec2> waypoints;   ///< remaining path
     std::size_t waypoint_index{0};
 
+    /// Cruise speed, latched from the initial `velocity` on the first step.
+    /// Velocity carries both heading and speed, and heading is rewritten at
+    /// every waypoint; deriving speed from it again each step means one
+    /// degenerate waypoint can lose it permanently.
+    Real cruise_mps{0.0};
+
     /// Free-form per-scenario state (dwell timers, intent flags).
     Real dwell_remaining_s{0.0};
     std::string role;              ///< scenario's own label, for scoring

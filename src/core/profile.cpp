@@ -146,8 +146,6 @@ DomainProfile OrganisedCrimeNetwork() {
     p.dormant_timeout = 200;
     p.rv_warning_horizon_s = 5400.0;
     p.coloc_dist_m = 500.0;
-    p.courier_contact_n = 4;
-    p.handler_contact_max = 3;
     p.handler_stable_scans = 20;
     p.pol_min_obs = 25;              // richer baselines before judging normal
     p.threat_weights = {0.16, 0.14, 0.12, 0.12, 0.10, 0.10, 0.16, 0.10};
