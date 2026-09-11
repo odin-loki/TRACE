@@ -205,6 +205,13 @@ struct ScanReport {
     int n_dormant{0};
     Real clutter_rate{0.0};
     Real latency_ms{0.0};
+
+    /// No source reported anything this scan, in a scene where sources had
+    /// been reporting steadily. The engine treats that as a gap in coverage
+    /// rather than as evidence that everything left, and says so here because
+    /// the two are genuinely different and only the operator can confirm
+    /// which.
+    bool coverage_gap{false};
     /// Where the scan's time went, by stage. Present because the engine's cost
     /// profile is not obvious: tracking is linear in track count while some
     /// detectors are not, and which dominates decides whether a deployment is

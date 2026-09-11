@@ -1,5 +1,7 @@
 #include "trace/core/pmbm.hpp"
 
+#include "trace/core/assignment.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -369,14 +371,17 @@ void PmbmManager::predict() {
     ++scan_;
 }
 
-TrackPtr PmbmManager::try_reacquire(const Observation& obs, Real timestamp) {
-    if (dormant_.empty() || !obs.has_position()) return nullptr;
+std::optional<Real> PmbmManager::reacquire_score(const Observation& obs,
+                                                 std::size_t d,
+                                                 Real timestamp) {
+    if (d >= dormant_.size() || !obs.has_position()) return std::nullopt;
     const Vec2 pos = *obs.position;
+    const auto& entry = dormant_[d];
 
-    // Score each dormant track by how well its learned pattern of life
-    // explains a sighting here, now. This is what turns "we lost him three
-    // days ago" into "that is him, at his usual place, at his usual hour".
-    // Two complementary cues, for two very different timescales.
+    // Score a dormant track by how well its learned pattern of life explains a
+    // sighting here, now. This is what turns "we lost him three days ago" into
+    // "that is him, at his usual place, at his usual hour". Two complementary
+    // cues, for two very different timescales.
     //
     //   pattern of life - "this is where he is at this hour, most days";
     //   kinematics      - "he went that way two seconds ago".
@@ -391,73 +396,131 @@ TrackPtr PmbmManager::try_reacquire(const Observation& obs, Real timestamp) {
             ? profile_->reacquire_kinematic_s
             : std::max(profile_->scan_dt_s * 10.0, 1e-6);
 
-    Real best_score = -std::numeric_limits<Real>::infinity();
-    long best_idx = -1;
-
-    for (std::size_t i = 0; i < dormant_.size(); ++i) {
-        const auto& entry = dormant_[i];
-        Vec2 predicted{};
-        Real uncertainty = 0.0;
-        bool usable = false;
-
-        if (entry.track->pol().fitted()) {
-            const auto pred = entry.track->pol().predict_location(timestamp, rng_);
-            predicted = pred.position;
-            uncertainty = pred.uncertainty_m;
-            usable = true;
-        } else {
-            const Real elapsed = timestamp - entry.track->last_seen();
-            if (elapsed >= 0.0 && elapsed <= kinematic_window) {
-                // Carry the last velocity forward, and let the gate widen with
-                // the gap: after a second of not looking, we know much less.
-                predicted = entry.track->position() + entry.track->velocity() * elapsed;
-                uncertainty = entry.track->position_uncertainty() +
-                              profile_->courier_speed_thresh * 2.0 * elapsed +
-                              profile_->pos_noise_m;
-                usable = true;
-            }
-        }
-        if (!usable) continue;
-
+    // Both cues, and the better one wins. They used to be an if/else on whether
+    // a pattern of life had been fitted, which quietly made them exclusive: a
+    // track with a fitted baseline was judged on hour-of-day alone, even when
+    // it had vanished four seconds ago and its velocity said exactly where it
+    // went. Over any run short enough that hour-of-day carries no information,
+    // the fitted baseline predicts the middle of the entity's path, the gate
+    // rejects the reappearance, and every entity comes back as a new track.
+    // That is the opposite of what the comment above describes, and it is worth
+    // being explicit: these are two estimates of the same quantity, so the
+    // right combination is whichever explains the sighting better, not
+    // whichever was checked first.
+    //
+    // A Gaussian log-likelihood with its normalisation, so that the two are
+    // comparable at all. The score was -dist/sigma, which tends to zero - the
+    // best score available - as sigma grows, so the vaguest candidate won
+    // every detection it was gated for. Being uncertain is not evidence.
+    const Real gate_floor = 2.0 * profile_->pos_noise_m;
+    auto evaluate = [&](Vec2 predicted, Real uncertainty) -> std::optional<Real> {
         const Real dist = distance(pos, predicted);
-        if (dist > std::max(uncertainty * 3.0, 2.0 * profile_->pos_noise_m)) continue;
-        Real score = -dist / std::max(uncertainty, 1.0);
+        if (dist > std::max(uncertainty * 3.0, gate_floor)) return std::nullopt;
+        const Real sigma = std::max(uncertainty, profile_->pos_noise_m * 0.5);
+        return -0.5 * (dist / sigma) * (dist / sigma) - std::log(sigma);
+    };
 
-        // Appearance is worth more here than anywhere else in the engine.
-        // Association only has to choose between candidates competing in the
-        // same scan, where position usually settles it; reacquisition has to
-        // decide whether somebody appearing now is somebody who vanished
-        // earlier, and across a gap position has decayed to a guess. This is
-        // the re-identification problem proper, and a descriptor is the only
-        // evidence that survives the gap intact.
-        if (profile_->appearance_weight > 0.0 && obs.has_descriptor()) {
-            const Descriptor& remembered = entry.track->appearance();
-            if (remembered.valid()) {
-                const Real sim = remembered.similarity(obs.descriptor);
-                score += profile_->appearance_weight * profile_->reacquire_appearance_gain * sim;
-                // A confident mismatch is grounds for refusal, not merely a
-                // lower score: resurrecting the wrong identity is worse than
-                // starting a new track.
-                if (sim < profile_->reacquire_min_similarity) continue;
-            }
-        }
+    std::optional<Real> best;
+    if (entry.track->pol().fitted()) {
+        const auto pred = entry.track->pol().predict_location(timestamp, rng_);
+        best = evaluate(pred.position, pred.uncertainty_m);
+    }
 
-        if (score > best_score) {
-            best_score = score;
-            best_idx = static_cast<long>(i);
+    const Real elapsed = timestamp - entry.track->last_seen();
+    if (elapsed >= 0.0 && elapsed <= kinematic_window) {
+        // Carry the last velocity forward from where the state actually
+        // stopped, not from the last detection. A track keeps being propagated
+        // for several scans after its final hit - that is what coasting is -
+        // and only freezes when it goes dormant, so its stored position is
+        // already advanced. Extrapolating again from `last_seen` re-applies
+        // the coast the filter had already applied.
+        const Real since_frozen =
+            static_cast<Real>(scan_ - entry.dormant_since_scan) * profile_->scan_dt_s;
+        const Vec2 predicted = entry.track->position() +
+                               entry.track->velocity() * std::max(since_frozen, 0.0);
+        // Uncertainty grows with the whole gap since the last sighting: that is
+        // how long it has been since anything was confirmed.
+        const Real uncertainty = entry.track->position_uncertainty() +
+                                 profile_->courier_speed_thresh * 2.0 * elapsed +
+                                 profile_->pos_noise_m;
+        if (const auto k = evaluate(predicted, uncertainty)) {
+            if (!best.has_value() || *k > *best) best = k;
         }
     }
 
-    if (best_idx < 0) return nullptr;
+    if (!best.has_value()) return std::nullopt;
+    Real score = *best;
 
-    TrackPtr revived = dormant_[static_cast<std::size_t>(best_idx)].track;
-    dormant_.erase(dormant_.begin() + best_idx);
+    // Appearance is worth more here than anywhere else in the engine.
+    // Association only has to choose between candidates competing in the same
+    // scan, where position usually settles it; reacquisition has to decide
+    // whether somebody appearing now is somebody who vanished earlier, and
+    // across a gap position has decayed to a guess. This is the
+    // re-identification problem proper, and a descriptor is the only evidence
+    // that survives the gap intact.
+    if (profile_->appearance_weight > 0.0 && obs.has_descriptor()) {
+        const Descriptor& remembered = entry.track->appearance();
+        if (remembered.valid()) {
+            const Real sim = remembered.similarity(obs.descriptor);
+            score += profile_->appearance_weight *
+                     profile_->reacquire_appearance_gain * sim;
+            // A confident mismatch is grounds for refusal, not merely a lower
+            // score: resurrecting the wrong identity is worse than starting a
+            // new track.
+            if (sim < profile_->reacquire_min_similarity) return std::nullopt;
+        }
+    }
+    return score;
+}
+
+TrackPtr PmbmManager::revive(std::size_t d, const Observation& obs) {
+    TrackPtr revived = dormant_[d].track;
+    dormant_.erase(dormant_.begin() + static_cast<long>(d));
 
     // Re-seed the particle cloud on the new detection; the old kinematic state
     // is stale, but the pattern of life and the identity carry over.
-    revived->filter().init(pos);
+    revived->filter().init(*obs.position);
     revived->set_existence(profile_->r_birth);
     return revived;
+}
+
+std::unordered_map<const Observation*, TrackPtr> PmbmManager::reacquire_batch(
+    const std::vector<const Observation*>& unassigned, Real timestamp) {
+    std::unordered_map<const Observation*, TrackPtr> out;
+    if (dormant_.empty() || unassigned.empty()) return out;
+
+    // Rows are reappearing detections, columns are dormant tracks. `match`
+    // minimises cost, and the score is "higher is better", so cost is its
+    // negation; a pair that cannot go together is infinite and gated out.
+    constexpr Real kNoMatch = std::numeric_limits<Real>::infinity();
+    std::vector<std::vector<Real>> cost(unassigned.size(),
+                                        std::vector<Real>(dormant_.size(), kNoMatch));
+    bool any = false;
+    for (std::size_t r = 0; r < unassigned.size(); ++r) {
+        for (std::size_t c = 0; c < dormant_.size(); ++c) {
+            if (const auto sc = reacquire_score(*unassigned[r], c, timestamp)) {
+                cost[r][c] = -*sc;
+                any = true;
+            }
+        }
+    }
+    if (!any) return out;
+
+    const Assignment a = match(cost, kNoMatch);
+
+    // Revive in descending column order: reviving erases from `dormant_`, which
+    // would invalidate the indices of every column after it.
+    std::vector<std::pair<std::size_t, std::size_t>> pairs;   // (column, row)
+    for (std::size_t r = 0; r < unassigned.size(); ++r) {
+        if (a.row_to_col[r] >= 0) {
+            pairs.emplace_back(static_cast<std::size_t>(a.row_to_col[r]), r);
+        }
+    }
+    std::sort(pairs.begin(), pairs.end(), std::greater<>());
+    for (const auto& [col, row] : pairs) {
+        out[unassigned[row]] = revive(col, *unassigned[row]);
+    }
+    return out;
 }
 
 void PmbmManager::try_group_spawn(Track& fresh) {
@@ -505,8 +568,37 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         cred_.note_source(o.source_id);
     }
 
+    // A scan with nothing in it is genuinely ambiguous: either nothing is
+    // there, or nobody is looking. Treating it as evidence of absence is only
+    // right in the first case, and it is expensive to get wrong - a camera
+    // estate that drops out for four scans loses every track it holds, because
+    // at p_detection 0.9 four consecutive misses is overwhelming evidence that
+    // the entity has gone. `max_coast_s` and `dormant_timeout` never come into
+    // it; existence has already collapsed.
+    //
+    // The engine is never told which sensors are live, but it does not need to
+    // be: a scene that has been producing detections every scan and abruptly
+    // produces none is far more likely to have lost its sensors than to have
+    // lost every entity simultaneously. Silence from everything at once is
+    // not evidence about any one thing.
+    constexpr std::size_t kCoverageWindow = 10;
+    const bool was_reporting =
+        std::count(scan_had_detections_.begin(), scan_had_detections_.end(), true) >=
+        static_cast<long>(scan_had_detections_.size()) / 2;
+    scan_had_detections_.push_back(!valid.empty());
+    while (scan_had_detections_.size() > kCoverageWindow) {
+        scan_had_detections_.pop_front();
+    }
+    coverage_gap_ = valid.empty() && was_reporting && !tracks_.empty();
+
     if (valid.empty()) {
-        for (auto& t : tracks_) t->update_miss();
+        // Time still passes in a coverage gap - tracks age, and dormancy and
+        // pruning are on wall-clock, so an outage cannot hold a track open for
+        // ever. What is withheld is the *evidential* penalty for not being
+        // seen by an instrument that was not looking.
+        if (!coverage_gap_) {
+            for (auto& t : tracks_) t->update_miss();
+        }
         prune(timestamp);
         return;
     }
@@ -632,6 +724,19 @@ void PmbmManager::update(const std::vector<Observation>& observations,
     std::vector<Vec2> unassigned_now;
 
     // Leftover detections: either a dormant entity resurfacing, or a birth.
+    // Resurfacing is settled first and for all of them at once, because which
+    // dormant track a detection belongs to depends on what the other
+    // detections claim. Deciding it one detection at a time gives the answer
+    // away to whichever happened to be considered first.
+    std::vector<const Observation*> leftover;
+    for (const Observation* o : valid) {
+        if (assigned.contains(o)) continue;
+        const Real weight = profile_->modality_weight(o->modality) * o->confidence;
+        if (weight * cred_.get(o->source_id) < kMinBirthWeight) continue;
+        leftover.push_back(o);
+    }
+    auto revivals = reacquire_batch(leftover, timestamp);
+
     for (std::size_t j = 0; j < valid.size(); ++j) {
         const Observation& obs = *valid[j];
         if (assigned.contains(&obs)) continue;
@@ -640,7 +745,9 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         const Real weight = profile_->modality_weight(obs.modality) * obs.confidence;
         if (weight * cred_.get(obs.source_id) < kMinBirthWeight) continue;
 
-        if (TrackPtr revived = try_reacquire(obs, timestamp)) {
+        if (const auto it = revivals.find(&obs); it != revivals.end()) {
+            TrackPtr revived = std::move(it->second);
+            revivals.erase(it);
             revived->update_hit(obs, profile_->scan_dt_s);
             revived->note_hit_scan(scan_, obs.source_id);
             tracks_.push_back(std::move(revived));

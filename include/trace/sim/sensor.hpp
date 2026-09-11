@@ -74,6 +74,19 @@ public:
         /// slowly slipping, which is harder to notice than a sudden knock.
         Vec2 bias_drift_per_s{};
         bool enabled{true};
+
+        /// How distinctive this camera's appearance descriptors are, as the
+        /// fraction of the descriptor that is signal rather than noise. Zero
+        /// attaches no descriptor at all, which is the default and what every
+        /// scenario written before this did.
+        ///
+        /// Appearance is the only evidence that survives a long gap intact -
+        /// across one, position has decayed to a guess - so a scenario that
+        /// asks whether identities survive an outage cannot answer it without
+        /// this. It is a knob rather than a switch because the interesting
+        /// question is never "does a perfect descriptor help" but "how good
+        /// does one have to be".
+        Real appearance_quality{0.0};
     };
 
     explicit CameraPanel(Config cfg) : cfg_(std::move(cfg)) {}

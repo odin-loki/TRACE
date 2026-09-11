@@ -1,11 +1,18 @@
-// TRACE — truth-to-track assignment for scoring.
+// TRACE — gated minimum-cost matching.
+//
+// Used in two places that are the same problem wearing different clothes.
 //
 // Scoring a tracker means deciding which track corresponds to which real
-// entity, and that decision is itself an assignment problem. Getting it wrong
-// invents errors: assigning each entity to its nearest track independently lets
-// one track "cover" several entities and reports identity switches that never
-// happened. That is exactly what inflated the warehouse scenario's switch count,
-// where eight entities converge inside the match radius.
+// entity. Getting it wrong invents errors: assigning each entity to its
+// nearest track independently lets one track "cover" several entities and
+// reports identity switches that never happened. That is exactly what inflated
+// the warehouse scenario's switch count, where eight entities converge inside
+// the match radius.
+//
+// Reacquisition is the same shape - which of these reappearing detections is
+// which of these vanished tracks - and was doing exactly the independent
+// nearest-match this header warns about. It lives in core rather than sim
+// because the engine needs it, not only the scoring harness.
 #pragma once
 
 #include <cstddef>
@@ -14,7 +21,7 @@
 
 #include "trace/core/types.hpp"
 
-namespace trace::sim {
+namespace trace {
 
 /// Result of matching rows (truth) to columns (tracks).
 struct Assignment {
@@ -42,4 +49,4 @@ Assignment match_points(const std::vector<Vec2>& truth,
                         const std::vector<Vec2>& tracks, Real max_distance,
                         std::size_t exact_limit = 64);
 
-}  // namespace trace::sim
+}  // namespace trace

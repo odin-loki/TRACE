@@ -1,6 +1,6 @@
 #include "trace/sim/scenario.hpp"
 
-#include "trace/sim/assignment.hpp"
+#include "trace/core/assignment.hpp"
 
 #include <algorithm>
 #include <cmath>

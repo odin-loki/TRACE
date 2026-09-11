@@ -9,6 +9,7 @@
 #include <cmath>
 #include <deque>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -203,6 +204,10 @@ public:
     void predict();
     void update(const std::vector<Observation>& observations, Real timestamp);
 
+    /// True when the most recent scan carried no detections at all in a scene
+    /// that had been producing them steadily. See `coverage_gap` in ScanReport.
+    [[nodiscard]] bool coverage_gap() const { return coverage_gap_; }
+
     /// Tracks whose existence probability clears the reporting threshold,
     /// strongest first.
     [[nodiscard]] std::vector<TrackPtr> confirmed() const;
@@ -217,12 +222,41 @@ public:
     [[nodiscard]] int total_created() const { return track_counter_; }
 
 private:
+    /// Recent scans that carried at least one detection. A scene that has been
+    /// reporting steadily and then reports nothing at all is far more likely to
+    /// have lost its sensors than to have lost every entity at once, and the
+    /// two call for opposite responses.
+    std::deque<bool> scan_had_detections_;
+    bool coverage_gap_{false};
     struct DormantEntry {
         TrackPtr track;
         int dormant_since_scan{0};
     };
 
-    [[nodiscard]] TrackPtr try_reacquire(const Observation& obs, Real timestamp);
+    /// How well dormant track `d` explains observation `obs`, or nothing if it
+    /// cannot have produced it. Higher is better.
+    /// Not const: the pattern-of-life cue predicts by Monte Carlo, so scoring
+    /// a candidate draws from the engine's stream.
+    [[nodiscard]] std::optional<Real> reacquire_score(const Observation& obs,
+                                                      std::size_t d,
+                                                      Real timestamp);
+
+    /// Revive dormant track `d` onto `obs` and remove it from the dormant pool.
+    [[nodiscard]] TrackPtr revive(std::size_t d, const Observation& obs);
+
+    /// Match every reappearing detection to at most one dormant track, and
+    /// each dormant track to at most one detection.
+    ///
+    /// This was a per-detection greedy search: each unassigned detection took
+    /// whichever dormant track scored best for it, in whatever order the
+    /// detections happened to arrive. That is the same defect the main
+    /// association had - a one-to-one problem solved independently per row -
+    /// and it fails the same way, by handing one entity's identity to its
+    /// neighbour. Five people walking a corridor through a camera blackout got
+    /// their identities rotated by one position, every time.
+    [[nodiscard]] std::unordered_map<const Observation*, TrackPtr>
+    reacquire_batch(const std::vector<const Observation*>& unassigned,
+                    Real timestamp);
     void try_group_spawn(Track& fresh);
     void prune(Real timestamp);
     void merge_duplicates();

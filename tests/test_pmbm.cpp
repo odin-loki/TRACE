@@ -2,6 +2,9 @@
 // targets, in clutter, through missed detections?
 #include "trace/core/pmbm.hpp"
 
+#include "trace/core/engine.hpp"
+#include <map>
+
 #include <cstdio>
 #include <algorithm>
 #include <numbers>
@@ -310,6 +313,143 @@ void test_two_entities_one_sensor_stay_separate() {
 
 }  // namespace
 
+void test_reacquisition_is_one_to_one() {
+    // Reacquisition is a one-to-one problem - each reappearing detection is at
+    // most one vanished track - and it was being solved one detection at a
+    // time, each taking whichever dormant track scored best for it. That is
+    // the same defect the main association had, and it fails the same way: it
+    // hands one entity's identity to its neighbour.
+    //
+    // Four entities in well-separated lanes, all vanishing together and all
+    // reappearing together. Anything other than four identities preserved
+    // means the engine crossed them over.
+    EngineConfig cfg;
+    cfg.profile = CityCameraSurveillance();
+    cfg.profile.scan_dt_s = 1.0;
+    cfg.profile.pos_noise_m = 2.0;
+    cfg.profile.meas_noise_var = 4.0;
+    cfg.profile.reacquire_kinematic_s = 30.0;
+    cfg.profile.mou_models = {{motion("walking", 45.0, 1.5),
+                               motion("standing", 8.0, 0.10)}};
+    cfg.profile.model_trans = {{{{0.92, 0.08}}, {{0.20, 0.80}}}};
+    cfg.area = Area{0, 600, 0, 400};
+    cfg.seed = 3;
+    Engine eng(cfg);
+
+    Rng rng(17);
+    constexpr int kN = 4;
+    std::vector<Vec2> truth;
+    for (int i = 0; i < kN; ++i) truth.push_back(Vec2{40.0, 60.0 + 80.0 * i});
+
+    std::map<int, std::string> before;
+    std::map<int, std::string> after;
+    for (int scan = 0; scan < 90; ++scan) {
+        for (auto& t : truth) t.x += 1.5;
+        const bool dark = scan >= 50 && scan < 62;          // 12-scan outage
+        std::vector<Observation> obs;
+        if (!dark) {
+            for (int i = 0; i < kN; ++i) {
+                obs.emplace_back("o" + std::to_string(scan) + "_" + std::to_string(i),
+                                 static_cast<Real>(scan),
+                                 Vec2{truth[i].x + rng.normal() * 2.0,
+                                      truth[i].y + rng.normal() * 2.0},
+                                 Modality::GEOINT, 0.9, "CAM");
+            }
+        }
+        const ScanReport r = eng.ingest(obs, static_cast<Real>(scan));
+
+        std::map<int, std::string> now;
+        for (int i = 0; i < kN; ++i) {
+            const TargetReport* best = nullptr;
+            Real bd = 20.0;
+            for (const auto& t : r.targets) {
+                const Real d = distance(t.position, truth[i]);
+                if (d < bd) { bd = d; best = &t; }
+            }
+            if (best != nullptr) now[i] = best->track_id;
+        }
+        if (scan == 49) before = now;
+        if (scan >= 62 && scan <= 75) {
+            for (const auto& [i, id] : now) {
+                if (after.count(i) == 0) after[i] = id;
+            }
+        }
+    }
+
+    int kept = 0;
+    for (const auto& [i, id] : before) {
+        const auto it = after.find(i);
+        if (it != after.end() && it->second == id) ++kept;
+    }
+    std::printf("  reacquisition across a 12-scan outage: %d of %zu identities kept\n",
+                kept, before.size());
+    CHECK(before.size() == kN);
+    // Four lanes 80 m apart, a 12-second gap, and a velocity estimate that is
+    // sound: there is no excuse for losing any of them.
+    CHECK(kept == kN);
+}
+
+void test_vague_tracks_do_not_win_reacquisition() {
+    // The reacquisition score was -distance/uncertainty, which tends to zero -
+    // the best score available - as uncertainty grows, so the vaguest dormant
+    // track won every detection it was gated for. Being uncertain is not
+    // evidence. Two dormant tracks, one seen recently and one long gone: a
+    // detection on top of the recent one must go to the recent one.
+    EngineConfig cfg;
+    cfg.profile = CityCameraSurveillance();
+    cfg.profile.scan_dt_s = 1.0;
+    cfg.profile.pos_noise_m = 2.0;
+    cfg.profile.meas_noise_var = 4.0;
+    cfg.profile.reacquire_kinematic_s = 60.0;
+    cfg.area = Area{0, 600, 0, 400};
+    cfg.seed = 9;
+    Engine eng(cfg);
+
+    Rng rng(23);
+    // A: observed for 40 scans, then stops. B: observed for 40 scans further
+    // away, and goes quiet 20 scans earlier, so its prediction is far vaguer.
+    std::string id_a;
+    for (int scan = 0; scan < 80; ++scan) {
+        std::vector<Observation> obs;
+        if (scan < 60) {
+            obs.emplace_back("a" + std::to_string(scan), static_cast<Real>(scan),
+                             Vec2{100.0 + rng.normal() * 2.0, 100.0 + rng.normal() * 2.0},
+                             Modality::GEOINT, 0.9, "CAM");
+        }
+        if (scan < 40) {
+            obs.emplace_back("b" + std::to_string(scan), static_cast<Real>(scan),
+                             Vec2{160.0 + rng.normal() * 2.0, 100.0 + rng.normal() * 2.0},
+                             Modality::GEOINT, 0.9, "CAM");
+        }
+        const ScanReport r = eng.ingest(obs, static_cast<Real>(scan));
+        if (scan == 59) {
+            for (const auto& t : r.targets) {
+                if (distance(t.position, Vec2{100.0, 100.0}) < 15.0) id_a = t.track_id;
+            }
+        }
+    }
+
+    // Now detections exactly where A was. They are A's, not the vaguer B's.
+    // Scored over several scans rather than one: a revived track re-enters the
+    // report at birth confidence and needs a scan or two to be confirmed, so
+    // looking only at the first scan measures the reporting delay.
+    std::string got;
+    for (int scan = 80; scan < 90 && got.empty(); ++scan) {
+        std::vector<Observation> obs{
+            {"rev" + std::to_string(scan), static_cast<Real>(scan),
+             Vec2{100.0, 100.0}, Modality::GEOINT, 0.9, "CAM"}};
+        const ScanReport r = eng.ingest(obs, static_cast<Real>(scan));
+        for (const auto& t : r.targets) {
+            if (distance(t.position, Vec2{100.0, 100.0}) < 15.0) got = t.track_id;
+        }
+    }
+    std::printf("  reacquired '%s' where '%s' vanished\n",
+                got.empty() ? "(nothing)" : got.c_str(),
+                id_a.empty() ? "(none)" : id_a.c_str());
+    CHECK(!id_a.empty());
+    CHECK(got == id_a);
+}
+
 int main() {
     test_overlapping_sensors_do_not_spawn_duplicates();
     test_two_entities_one_sensor_stay_separate();
@@ -318,5 +458,7 @@ int main() {
     test_survives_detection_gap();
     test_clutter_estimate_adapts();
     test_ids_are_stable();
+    test_reacquisition_is_one_to_one();
+    test_vague_tracks_do_not_win_reacquisition();
     return trace::test::summary("test_pmbm");
 }

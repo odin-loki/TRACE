@@ -40,9 +40,15 @@ struct Result {
     Real per_track_us{0.0};
 };
 
+// The profile's own track cap, raised so a sweep can go past it. Without this
+// every point above CityCameraSurveillance's 400 measures the same 400 tracks
+// and the curve flattens for a reason that has nothing to do with cost.
+int g_track_cap = 0;
+
 Result measure(int n_entities, int scans, bool detectors_on) {
     EngineConfig cfg;
     cfg.profile = CityCameraSurveillance();
+    if (g_track_cap > 0) cfg.profile.max_tracks = g_track_cap;
     cfg.profile.scan_dt_s = 1.0;
     cfg.profile.pos_noise_m = 1.5;
     cfg.profile.meas_noise_var = 9.0;
@@ -128,14 +134,18 @@ int main(int argc, char** argv) {
             max_entities = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--scans") == 0 && i + 1 < argc) {
             scans = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--max-tracks") == 0 && i + 1 < argc) {
+            g_track_cap = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--help") == 0) {
-            std::puts("usage: trace_bench [--max N] [--scans N]");
+            std::puts("usage: trace_bench [--max N] [--scans N] [--max-tracks N]");
             return 0;
         }
     }
 
-    std::printf("TRACE scalability  (%s, %d scans per point, density held constant)\n\n",
-                simd::backend_name(), scans);
+    if (g_track_cap <= 0) g_track_cap = std::max(max_entities, 400);
+    std::printf("TRACE scalability  (%s, %d scans per point, density held "
+                "constant, track cap %d)\n\n",
+                simd::backend_name(), scans, g_track_cap);
     std::printf("  %8s %8s %11s %10s %14s   %s\n", "entities", "tracks", "median ms",
                 "p95 ms", "us per track", "detectors");
     std::printf("  %s\n", std::string(74, '-').c_str());

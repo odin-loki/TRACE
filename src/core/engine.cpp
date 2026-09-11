@@ -240,6 +240,7 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     report.n_components = static_cast<int>(pmbm_.all_tracks().size());
     report.n_dormant = static_cast<int>(pmbm_.dormant_count());
     report.clutter_rate = pmbm_.clutter_rate();
+    report.coverage_gap = pmbm_.coverage_gap();
 
     const auto t_end = std::chrono::steady_clock::now();
     report.latency_ms =

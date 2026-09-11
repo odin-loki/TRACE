@@ -12,6 +12,34 @@ std::string make_id(const std::string& sensor_id, long n) {
 
 }  // namespace
 
+namespace {
+
+/// A stable per-entity descriptor, blended with fresh noise.
+///
+/// The signal part is a deterministic function of the entity's id, so the same
+/// entity looks the same to every camera on every scan - which is exactly what
+/// a re-identification embedding is for. `quality` is how much of the result
+/// is that signal: at 1.0 it is an oracle, at 0.0 pure noise, and the range
+/// between is where a real descriptor lives.
+Descriptor entity_descriptor(const std::string& entity_id, Real quality, Rng& rng) {
+    Descriptor d;
+    std::uint64_t h = 1469598103934665603ULL;          // FNV-1a over the id
+    for (const char c : entity_id) {
+        h = (h ^ static_cast<unsigned char>(c)) * 1099511628211ULL;
+    }
+    Rng stable(h);
+    const Real q = std::clamp(quality, 0.0, 1.0);
+    for (std::size_t i = 0; i < kDescriptorDim; ++i) {
+        d.v[i] = static_cast<float>(q * stable.normal() +
+                                    (1.0 - q) * rng.normal());
+    }
+    d.present = true;
+    d.normalise();
+    return d;
+}
+
+}  // namespace
+
 std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth, Rng& rng,
                                               DetectionLedger* ledger) {
     std::vector<Observation> out;
@@ -52,8 +80,13 @@ std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth, Rng& r
             report_positions[i].y + bias.y + rng.normal(0.0, cfg_.pos_noise_m)};
         const Real conf = std::clamp(
             rng.normal(cfg_.confidence_mean, cfg_.confidence_sigma), 0.1, 1.0);
-        out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp, noisy,
-                         cfg_.modality, conf, cfg_.id);
+        Observation obs(make_id(cfg_.id, counter_++), truth.timestamp, noisy,
+                        cfg_.modality, conf, cfg_.id);
+        if (cfg_.appearance_quality > 0.0) {
+            obs.descriptor = entity_descriptor(in_view[i]->id,
+                                               cfg_.appearance_quality, rng);
+        }
+        out.push_back(std::move(obs));
     }
 
     // False alarms land anywhere in the footprint - reflections, foliage, a

@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "trace/core/engine.hpp"
-#include "trace/sim/assignment.hpp"
+#include "trace/core/assignment.hpp"
 #include "trace/sim/mot.hpp"
 
 using namespace trace;

@@ -1,11 +1,11 @@
-#include "trace/sim/assignment.hpp"
+#include "trace/core/assignment.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <tuple>
 
-namespace trace::sim {
+namespace trace {
 namespace {
 
 constexpr Real kInf = std::numeric_limits<Real>::infinity();
@@ -150,4 +150,4 @@ Assignment match_points(const std::vector<Vec2>& truth,
     return match(cost, max_distance, exact_limit);
 }
 
-}  // namespace trace::sim
+}  // namespace trace

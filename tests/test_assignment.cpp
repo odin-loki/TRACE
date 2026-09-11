@@ -1,14 +1,13 @@
 // Scoring is itself an assignment problem. If it is wrong, every performance
 // number in this repository is wrong with it, so it gets checked against cases
 // whose answer can be worked out by hand.
-#include "trace/sim/assignment.hpp"
+#include "trace/core/assignment.hpp"
 
 #include <cstdio>
 
 #include "test_harness.hpp"
 
 using namespace trace;
-using namespace trace::sim;
 
 namespace {
 
