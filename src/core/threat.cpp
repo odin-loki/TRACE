@@ -123,7 +123,20 @@ Credibility fuse_credibility(const std::vector<Observation>& evidence,
     // Dempster's rule over {hypothesis, negation, uncertain}. Tracking the
     // conflict mass K separately is what distinguishes "we have little
     // evidence" from "our sources contradict each other".
-    Real m_h = 1.0, m_not_h = 1.0, m_theta = 1.0;
+    //
+    // The accumulator starts from the VACUOUS mass function - all belief on
+    // the whole frame, none committed either way - which is what "no evidence
+    // yet" means and is the identity element of the rule below. A mass
+    // function has to sum to one; this began at (1, 1, 1), which sums to
+    // three, and the rule then propagated that excess through every
+    // combination. Belief and plausibility came out at exactly 1.0000 for
+    // every possible input - a near-worthless single report and eight
+    // corroborating ones were indistinguishable - and the conflict mass
+    // saturated at its 0.999 cap after three observations. From the vacuous
+    // prior the same evidence separates properly: 0.04 for one report at
+    // r = 0.05, 0.99 for three at r = 0.9, and a conflict that rises when
+    // sources genuinely disagree instead of sitting at the cap.
+    Real m_h = 0.0, m_not_h = 0.0, m_theta = 1.0;
     Real conflict = 0.0;
 
     const std::size_t start = evidence.size() > 8 ? evidence.size() - 8 : 0;

@@ -4,6 +4,7 @@
 // is, and a camera biased by sixteen times its own noise scored *higher* than
 // its sound neighbours.
 #include "trace/core/engine.hpp"
+#include "trace/core/threat.hpp"
 
 #include <cstdio>
 #include <vector>
@@ -352,6 +353,89 @@ void test_coverage_map_recovers_a_point_sensors_detection_rate() {
     CHECK(informed > blind + 0.04);
 }
 
+
+// ---------------------------------------------------------------------------
+// Dempster-Shafer fusion of a track's supporting evidence
+// ---------------------------------------------------------------------------
+
+Observation report(Modality m, Real confidence) {
+    Observation o;
+    o.source_id = "S";
+    o.modality = m;
+    o.confidence = confidence;
+    o.position = Vec2{0.0, 0.0};
+    return o;
+}
+
+void test_fusion_masses_stay_a_mass_function() {
+    // Belief never exceeds plausibility, and both stay probabilities. This is
+    // the invariant that fails the moment the accumulator stops summing to
+    // one, and it failed silently before: belief and plausibility were both
+    // exactly 1.0 for every input, which satisfies "in [0,1]" and is still
+    // meaningless.
+    DomainProfile p;
+    for (Real c = 0.0; c <= 1.0; c += 0.05) {
+        for (int n = 1; n <= 8; ++n) {
+            std::vector<Observation> ev(static_cast<std::size_t>(n),
+                                        report(Modality::GEOINT, c));
+            const Credibility cr = fuse_credibility(ev, p);
+            CHECK(cr.belief >= 0.0 && cr.belief <= 1.0);
+            CHECK(cr.plausibility >= 0.0 && cr.plausibility <= 1.0);
+            CHECK(cr.conflict >= 0.0 && cr.conflict <= 1.0);
+            CHECK(cr.belief <= cr.plausibility + 1e-12);
+        }
+    }
+}
+
+void test_fusion_discriminates() {
+    // The whole point of the mechanism: more and better evidence must produce
+    // more belief than less and worse. Before the vacuous prior was restored
+    // every one of these comparisons was an equality at 1.0.
+    DomainProfile p;
+    const Credibility weak =
+        fuse_credibility({report(Modality::GEOINT, 0.05)}, p);
+    const Credibility strong =
+        fuse_credibility({report(Modality::GEOINT, 0.95)}, p);
+    const Credibility many =
+        fuse_credibility({report(Modality::GEOINT, 0.95),
+                          report(Modality::GEOINT, 0.95),
+                          report(Modality::GEOINT, 0.95)}, p);
+
+    CHECK(weak.belief < strong.belief);
+    CHECK(strong.belief < many.belief);
+    CHECK(weak.belief < 0.2);          // a near-worthless report stays weak
+    CHECK(many.belief > 0.9);           // three good ones are near-conclusive
+    // Uncertainty shrinks as evidence accumulates: plausibility comes down to
+    // meet belief.
+    CHECK((many.plausibility - many.belief) < (weak.plausibility - weak.belief));
+}
+
+void test_fusion_reports_conflict_only_when_sources_disagree() {
+    // Corroborating evidence is not conflict. A run of agreeing reports must
+    // not drive K up, or "our sources contradict each other" stops being
+    // distinguishable from "we have a lot of evidence" - which is the one
+    // distinction tracking K separately exists to make.
+    DomainProfile p;
+    const Credibility agreeing =
+        fuse_credibility({report(Modality::GEOINT, 0.9),
+                          report(Modality::GEOINT, 0.9),
+                          report(Modality::GEOINT, 0.9)}, p);
+    const Credibility disagreeing =
+        fuse_credibility({report(Modality::GEOINT, 0.9),
+                          report(Modality::GEOINT, 0.02),
+                          report(Modality::GEOINT, 0.02)}, p);
+    CHECK(disagreeing.conflict > agreeing.conflict);
+    CHECK(agreeing.conflict < 0.5);
+}
+
+void test_fusion_with_no_evidence_is_uncommitted() {
+    DomainProfile p;
+    const Credibility none = fuse_credibility({}, p);
+    // The struct's own defaults, untouched: no evidence, no claim.
+    CHECK_NEAR(none.belief, 0.5, 1e-12);
+    CHECK_NEAR(none.conflict, 0.0, 1e-12);
+}
+
 }  // namespace
 
 int main() {
@@ -363,5 +447,9 @@ int main() {
     test_birth_survives_a_long_single_source_run();
     test_bias_is_not_mistaken_for_noise();
     test_coverage_map_recovers_a_point_sensors_detection_rate();
+    test_fusion_masses_stay_a_mass_function();
+    test_fusion_discriminates();
+    test_fusion_reports_conflict_only_when_sources_disagree();
+    test_fusion_with_no_evidence_is_uncommitted();
     return trace::test::summary("test_credibility");
 }
