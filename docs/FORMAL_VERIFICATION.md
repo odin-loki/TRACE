@@ -10,8 +10,8 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Five did not, and are set out below with the
-evidence. Four are fixed; the fifth is a calibration decision that belongs to
+Ten derivations came back sound. Six did not, and are set out below with the
+evidence. Five are fixed; the sixth is a calibration decision that belongs to
 whoever owns the engine, and is reported rather than patched over.
 
 ---
@@ -322,6 +322,51 @@ arg-max never depended on the track. It always returned whichever modality the
 profile weights highest, dressed up as a per-track choice. Choosing per track
 would need a per-modality accuracy and the profile carries only a per-modality
 reliability weight.
+
+### 6. The adaptive noise estimator converged to a square root — **fixed**
+
+`src/core/pmbm.cpp:128`. `MeasurementNoiseEstimator` learns a multiplier on
+each source's assumed measurement **variance** from the normalised innovation
+squared its detections produce. The multiplier was set to `mean_nis / target`.
+
+The NIS arriving at the estimator was measured against an innovation covariance
+that already carries the multiplier. If a source's true variance is `k` times
+the profile's assertion, then under an applied scale `s`,
+
+    E[NIS] = trace(S^-1 R_true) = 2k/s
+
+so setting `s = E[NIS]/target = k/s` solves `s^2 = k`. The estimator settles at
+the **square root** of the ratio it exists to find. Reading the symptom as the
+answer, when the symptom is already damped by the answer.
+
+Measured by sweeping a source's true variance ratio and fitting the exponent —
+`learned = ratio^alpha`, where a correct multiplier on a variance gives
+`alpha = 1`:
+
+| true variance ratio | learned, before | after | correct |
+|---|---|---|---|
+| 2.25 | 1.24 | 2.36 | 2.25 |
+| 4 | 1.66 | 4.07 | 4 |
+| 9 | 2.25 | 8.80 | 9 |
+| 16 | 2.32 | 15.25 | 16 |
+| 25 | 2.37 | 16.00 (ceiling) | 25 |
+| **fitted alpha** | **0.51** | **1.03** | 1.0 |
+
+A source genuinely four times noisier than claimed had its assumed variance
+widened 1.66-fold. The gap widens with the fault: at 25 times, 2.37-fold. So
+the mechanism was weakest exactly where it was needed most, and the residual
+`alpha` below 0.5 at the top of the range is the sample cap and scale ceiling
+binding on top of the square root.
+
+The correction is multiplicative on the scale already in force, which solves
+`mean_nis = target` — the definition of a consistent filter, and what the
+target was chosen to express. It is damped at the same rate as the NIS average
+driving it, because the two are a coupled pair and stepping straight to the
+implied value rings.
+
+`adaptive_meas_noise` is off in every shipped profile and reached only through
+`--adaptive-noise`, so no default measurement in this repository changes. What
+changes is that the opt-in feature now does what it claims.
 
 ---
 

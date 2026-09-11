@@ -68,6 +68,10 @@ public:
 private:
     struct State {
         Real mean_nis{2.0};
+        /// The multiplier currently applied to this source's assumed variance.
+        /// Carried as state because the NIS the estimator sees was measured
+        /// with it already in force - see the note in observe().
+        Real scale{1.0};
         int samples{0};
     };
     std::unordered_map<std::string, State> by_source_;

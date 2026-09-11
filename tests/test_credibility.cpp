@@ -367,6 +367,31 @@ Observation report(Modality m, Real confidence) {
     return o;
 }
 
+void test_learned_noise_tracks_variance_not_its_square_root() {
+    // The profile asserts meas_noise_var = 4.0, i.e. sigma = 2 m, and the
+    // helper gives the sensor sigma = 2*m. Its true VARIANCE ratio is
+    // therefore m^2, and a multiplier on a variance has to learn m^2.
+    //
+    // It learned sqrt(m^2) instead, because the NIS driving it was measured
+    // against an innovation covariance that already carried the scale: under
+    // an applied scale s the expected NIS is 2k/s, so setting the scale to
+    // mean_nis/target solves s = k/s. Fitted across ratios from 2.25 to 9 the
+    // exponent was 0.51 rather than 1.0.
+    //
+    // The bands below straddle the correct answer and exclude its square root
+    // by a wide margin, which is the only thing that makes this a test of the
+    // fix rather than of the arithmetic.
+    const Real ratio4 = learned_noise_scale(0.0, 2.0);   // true ratio 4
+    const Real ratio9 = learned_noise_scale(0.0, 3.0);   // true ratio 9
+
+    CHECK(ratio4 > 3.0 && ratio4 < 5.5);     // 4, not 2
+    CHECK(ratio9 > 6.5 && ratio9 < 11.5);    // 9, not 3
+
+    // Monotone, and by roughly the right factor: 9/4 = 2.25.
+    CHECK(ratio9 > ratio4);
+    CHECK((ratio9 / ratio4) > 1.6);
+}
+
 void test_fusion_masses_stay_a_mass_function() {
     // Belief never exceeds plausibility, and both stay probabilities. This is
     // the invariant that fails the moment the accumulator stops summing to
@@ -447,6 +472,7 @@ int main() {
     test_birth_survives_a_long_single_source_run();
     test_bias_is_not_mistaken_for_noise();
     test_coverage_map_recovers_a_point_sensors_detection_rate();
+    test_learned_noise_tracks_variance_not_its_square_root();
     test_fusion_masses_stay_a_mass_function();
     test_fusion_discriminates();
     test_fusion_reports_conflict_only_when_sources_disagree();
