@@ -247,19 +247,41 @@ std::vector<CollectionTask> schedule_collection(const std::vector<TrackPtr>& tra
     std::vector<CollectionTask> tasks;
     // Expected information gain: point the most reliable sensor at the track
     // that matters most and is currently least well localised.
+    //
+    // For a Gaussian position estimate of variance P observed by a sensor of
+    // noise R, one measurement leaves PR/(P+R), so the entropy it removes is
+    //
+    //     dH = 0.5 * log(1 + P/R)
+    //
+    // which INCREASES with the prior uncertainty: there is more to learn about
+    // a track you have localised badly. This scored `existence / unc`, which
+    // decreases with it, so the schedule ranked the best-localised tracks
+    // first - the exact inverse of the quantity its own comment describes, and
+    // of what a collection plan is for.
+    const Real r_meas = std::max(profile.pos_noise_m * profile.pos_noise_m, 1e-6);
     for (const auto& t : tracks) {
         const Real unc = std::max(t->position_uncertainty(), 1.0);
+        const Real gain_shape = 0.5 * std::log(1.0 + (unc * unc) / r_meas);
+
+        // The arg-max below cannot depend on the track: every factor that
+        // varies between tracks is common to all five modalities, so this
+        // always selects whichever modality the profile weights highest. That
+        // is stated rather than dressed up in a loop, because choosing a
+        // modality per track would need a per-modality accuracy in the profile
+        // and there is only a per-modality reliability weight. Until there is
+        // one, the honest recommendation is "use your best sensor".
         Modality best = Modality::GEOINT;
-        Real best_gain = -1.0;
+        Real best_weight = -1.0;
         for (std::size_t m = 0; m < static_cast<std::size_t>(Modality::Count); ++m) {
             const auto mod = static_cast<Modality>(m);
-            const Real gain = profile.modality_weight(mod) * t->existence() / unc;
-            if (gain > best_gain) {
-                best_gain = gain;
+            const Real w = profile.modality_weight(mod);
+            if (w > best_weight) {
+                best_weight = w;
                 best = mod;
             }
         }
-        tasks.push_back(CollectionTask{t->id(), best, best_gain, unc});
+        const Real gain = best_weight * t->existence() * gain_shape;
+        tasks.push_back(CollectionTask{t->id(), best, gain, unc});
     }
 
     std::sort(tasks.begin(), tasks.end(),

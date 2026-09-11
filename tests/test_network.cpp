@@ -6,6 +6,9 @@
 // sample but a proof.
 #include "trace/core/network.hpp"
 
+#include "trace/core/profile.hpp"
+#include "trace/core/track.hpp"
+
 #include <cmath>
 #include <cstdio>
 #include <queue>
@@ -176,6 +179,80 @@ void test_degenerate_sizes() {
     CHECK(bc[1] > 0.0);
 }
 
+
+// ---------------------------------------------------------------------------
+// Collection tasking
+// ---------------------------------------------------------------------------
+
+void test_collection_prioritises_the_worst_localised() {
+    // The point of a collection plan is to spend the next look where it buys
+    // the most: on the track localised worst. Expected information gain for a
+    // Gaussian of prior variance P under sensor noise R is 0.5*log(1 + P/R),
+    // which increases with P. Scoring `existence / uncertainty` instead, as
+    // this did, is monotone the other way, so the plan recommended looking
+    // again at whichever track was already pinned down.
+    //
+    // Which of two tracks ends up more uncertain is a property of the filter
+    // and not the thing under test, so the ranking is checked against the
+    // uncertainties the tracks actually report rather than against an
+    // assumption about which should be larger.
+    DomainProfile p;
+    const MouConstants mou = MouConstants::from(p, p.scan_dt_s);
+
+    auto fed = std::make_shared<Track>("fed", 0.9, p, mou, 0.0, 1u);
+    auto coasting = std::make_shared<Track>("coasting", 0.9, p, mou, 0.0, 2u);
+    // The filter is inert until it is seeded - Track's constructor does not do
+    // it, PmbmManager does at birth - and an unseeded one reports zero
+    // uncertainty for everything, which would make this test vacuous.
+    fed->filter().init(Vec2{0.0, 0.0});
+    coasting->filter().init(Vec2{0.0, 0.0});
+    for (int k = 0; k < 25; ++k) {
+        Observation o;
+        o.source_id = "S";
+        o.modality = Modality::GEOINT;
+        o.confidence = 0.95;
+        o.position = Vec2{0.0, 0.0};
+        o.timestamp = k * p.scan_dt_s;
+        fed->predict();
+        fed->update_hit(o, p.scan_dt_s);
+        coasting->predict();
+    }
+
+    const Real u_fed = fed->position_uncertainty();
+    const Real u_coast = coasting->position_uncertainty();
+    // Which one ends up wider is the filter's business, not this test's, so
+    // the expected ordering is taken from what the tracks actually report.
+    CHECK(u_fed != u_coast);
+    const char* worse = u_fed > u_coast ? "fed" : "coasting";
+
+    const std::vector<TrackPtr> tracks{fed, coasting};
+    const std::vector<CollectionTask> plan = schedule_collection(tracks, p, 8);
+    CHECK(plan.size() == 2);
+
+    // Equal existence, so the ordering must follow uncertainty alone.
+    CHECK(plan[0].track_id == worse);
+    CHECK(plan[0].current_uncertainty_m > plan[1].current_uncertainty_m);
+    CHECK(plan[0].expected_info_gain > plan[1].expected_info_gain);
+
+    // Gain is an entropy reduction in nats, so it is non-negative, and it is
+    // strictly increasing in uncertainty rather than decreasing.
+    for (const CollectionTask& t : plan) CHECK(t.expected_info_gain >= 0.0);
+}
+
+void test_collection_respects_how_much_a_track_matters() {
+    // Two tracks equally badly localised: the one more likely to exist is
+    // worth the look.
+    DomainProfile p;
+    const MouConstants mou = MouConstants::from(p, p.scan_dt_s);
+    std::vector<TrackPtr> tracks;
+    tracks.push_back(std::make_shared<Track>("unlikely", 0.10, p, mou, 0.0, 3u));
+    tracks.push_back(std::make_shared<Track>("likely", 0.95, p, mou, 0.0, 3u));
+    for (const TrackPtr& t : tracks) t->filter().init(Vec2{0.0, 0.0});
+    const std::vector<CollectionTask> plan = schedule_collection(tracks, p, 8);
+    CHECK(plan.size() == 2);
+    CHECK(plan[0].track_id == "likely");
+}
+
 }  // namespace
 
 int main() {
@@ -184,5 +261,7 @@ int main() {
     test_path_matches_closed_form();
     test_complete_graph_is_all_zero();
     test_degenerate_sizes();
+    test_collection_prioritises_the_worst_localised();
+    test_collection_respects_how_much_a_track_matters();
     return trace::test::summary("test_network");
 }
