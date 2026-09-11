@@ -279,39 +279,43 @@ roughly ten MOTA points on MOT17's weakest detector.
 Sketched with what each would newly stress. The `Scenario`, `World` and `Sensor`
 pieces are in place; each is roughly one file.
 
+Four of the sketches below have since been built — `blackout`, `decoy-split`,
+`coordinated-evasion` and `weather` — and between them they found nine defects,
+every one in a subsystem that had no scenario exercising it. That is the pattern
+worth taking from this list rather than any individual entry on it.
+
 **Sensor and environment**
 - **Stadium egress.** Thousands of entities in minutes. `trace_bench` now
-  measures cost to 400 tracks (about 7 scans/second on one core); beyond that
-  needs partitioning the area across workers, which is not implemented.
+  measures cost to 1365 tracks (674 ms/scan, about 1.5 scans/second on one
+  core); beyond that needs partitioning the area across workers, which is not
+  implemented.
 - **Metro network.** Turnstile taps only: purely topological observation with no
   metric position at all. Forces the question of what the filter means when
   "distance" is graph hops.
 - **Multi-floor building.** Genuine 3-D, where two entities one metre apart
-  vertically are on different floors and cannot interact.
-- **Adverse weather.** Detection probability and position noise varying *over
-  time* rather than being fixed per sensor.
-- **Intermittent sensor failure.** A camera that drops out and returns, rather
-  than one that drifts — `sensor-drift` covers the drifting case.
+  vertically are on different floors and cannot interact. The only sketch here
+  that is architectural rather than a file: `Vec2` is assumed throughout.
+- ~~**Adverse weather.**~~ Implemented; see scenario 14.
+- ~~**Intermittent sensor failure.**~~ Implemented; see scenario 11.
 
-**Adversarial** — spoofing is now implemented; see scenario 8.
-- **Decoy and split.** A subject who hands off to a lookalike mid-route.
-- **Coordinated evasion.** A team deliberately breaking co-location so the
-  network analyser cannot connect them.
+**Adversarial** — spoofing is implemented; see scenario 8.
+- ~~**Decoy and split.**~~ Implemented; see scenario 12.
+- ~~**Coordinated evasion.**~~ Implemented; see scenario 13.
 
-**Non-geographic** — the transaction-space case is now implemented; see
-scenario 9.
+**Non-geographic** — the transaction-space case is implemented; see scenario 9.
 - **Lateral movement on a network graph**, with "position" as a service
   embedding. The `MotionConstraint` hook is the natural place to express the
   graph.
 
-**Validation** — MOTChallenge replay is now implemented; see
+**Validation** — MOTChallenge replay is implemented; see
 [VALIDATION.md](VALIDATION.md) and `trace_mot`.
 - **MOT20 tuning.** All four sequences now replay, on the shared pedestrian
   profile; none has been tuned for. At 200+ people per frame it is the natural
   scalability test.
-- **An appearance cue.** `Observation` would need a descriptor field and the
-  association likelihood a term for it. The largest available improvement for
-  camera domains, irrelevant to every other one.
+- **Estimating `p_detection` and `meas_noise_var`** the way the clutter rate is
+  already estimated. `weather` shows the engine surviving a large mismatch
+  mostly because the learned quantity is the one that moves; the asserted ones
+  would survive less gracefully in a domain where they are further out.
 
 ---
 

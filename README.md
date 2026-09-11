@@ -24,7 +24,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
 ./build/src/apps/trace_maze          # watch it track through a maze
-./build/src/apps/trace_sim --all     # ten more scenarios
+./build/src/apps/trace_sim --all     # thirteen more scenarios
 ./build/src/apps/trace_bench         # how cost grows with crowd size
 ctest --test-dir build               # the test suite
 ```
@@ -93,9 +93,15 @@ people per frame, against 5.8 for MOT17.
 TRACE supports appearance descriptors but they are **switched off** on MOT, and
 that is a measurement rather than an omission: a *perfect* oracle descriptor
 moves identity switches by 2.6% and MOTA not at all, because 89% of the MOTA
-penalty there is missed detections, capped by the detector. The mechanism does
-work where descriptors are discriminative — six entities huddling then
-dispersing lose 6/6 identities without it, 3/6 with it. [The full analysis is in
+penalty there is missed detections, capped by the detector.
+
+Where descriptors are discriminative the same mechanism is decisive. In the
+`decoy-split` scenario — a subject hands off to a lookalike who then leaves
+along the subject's original heading — kinematics alone follows the decoy 3
+times in 12, and a *modest* descriptor (quality 0.5) never does. A mechanism is
+worth exactly what the failure mode it addresses is worth: MOT's penalty is
+missed detections, which appearance cannot touch; `decoy-split`'s single error
+is a confusion, which is the only thing it addresses. [The full analysis is in
 docs/VALIDATION.md](docs/VALIDATION.md).
 
 The same question asked of the simulations — how much of what the *sensors*
@@ -297,13 +303,22 @@ decayed.
 
 ## Honest limitations
 
-- **Nothing here is validated against real sensor data.** Every number in this
-  repository comes from its own simulations. That is evidence the code does what
-  it is meant to, and no evidence at all about the world. Replaying against
-  MOT17 or WILDTRACK is the most valuable next step.
-- **Point-sensor domains need a road-network motion model.** Free-space motion
-  does not know a vehicle is confined to a road; see the `anpr-corridor`
-  scenario, which is the weakest of the seven and documented rather than tuned.
+- **Train-split numbers only.** MOT17 and MOT20 are replayed and scored
+  locally; nothing has been submitted to the evaluation server, which is what
+  a number comparable to the public leaderboard would require.
+- **A velocity estimate needs `speed × heading-hold ≫ position noise`.** Below a
+  ratio of about 5 it is not an estimate, and coasting and reacquisition are
+  only as good as it is. This is a modelling constraint rather than a defect —
+  a genuinely twisty target seen by a coarse sensor has no measurable velocity —
+  but a profile has to be checked against it before any claim about coasting is
+  worth making. `CityCameraSurveillance` sits at 1.4 for a walking pedestrian.
+- **`p_detection` and `meas_noise_var` are asserted, not estimated.** The
+  clutter rate is learned from unassigned detections; these two are not. The
+  `weather` scenario shows the engine surviving a large mismatch mostly because
+  the learned quantity is the one that moves.
+- **Sensor availability is inferred, not known.** A coverage gap is guessed at
+  from whether anything reported at all. A real deployment knows which cameras
+  are down and has no way to say so.
 - **Pattern of life needs enough sightings.** Below `pol_min_obs` the anomaly
   score returns 0.5 — unknown, deliberately not alarming.
 - **Motion regime identification** requires the per-scan motion difference
