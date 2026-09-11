@@ -77,8 +77,8 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **48.2%** | **110.2%** |
-| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **59.9%** | **114.8%** |
+| MOT17 train, 21 sequences | 336,891 | **50.5%** | **110.2%** |
+| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **60.8%** | **114.9%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
@@ -272,6 +272,7 @@ include/trace/{core,detectors,backend,sim}/   headers
 src/{core,detectors,sim,cuda,apps}/           implementation and applications
 scripts/fetch_mot.sh                          fetch MOTChallenge annotations
 tests/                                        dependency-free test suite
+verification/                                 ESBMC/CBMC proof harnesses
 docs/                                         see below
 reference/                                    the original Python implementation
 third_party/xsimd/                            vendored
@@ -284,6 +285,8 @@ third_party/xsimd/                            vendored
 | [docs/SIMULATIONS.md](docs/SIMULATIONS.md) | Every simulation, what failure mode each one stresses, and further ones worth building |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | MOTChallenge replay results, the detector-ceiling method, and how to read them against published work |
 | [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Twelve defects found and fixed, why each was invisible, and what changed |
+| [docs/FORMAL_VERIFICATION.md](docs/FORMAL_VERIFICATION.md) | Every formula checked against the model it implements, and what a bounded model checker could prove about the code |
+| [verification/README.md](verification/README.md) | The proof harnesses themselves, how to run them, and what they do not establish |
 
 ---
 

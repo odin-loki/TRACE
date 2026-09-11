@@ -26,19 +26,62 @@ supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **48.2%** |
-| MOTP | 27.4 px |
+| **MOTA** | **50.5%** |
+| MOTP | 15.7 px |
 | Recall | 60.0% |
-| Precision | 90.8% |
-| Mostly tracked | 10.0% |
-| Mostly lost | 3.5% |
-| Identity switches | 19,156 |
-| Throughput | 5.0 ms/frame, one core |
+| Precision | 90.9% |
+| Mostly tracked | 7.1% |
+| Mostly lost | 6.5% |
+| Identity switches | 11,621 |
+| Throughput | 5.1 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
 version of this table reported a different operating point (`--min-score 0`,
 `--radius 120`) than the command printed beside it; that configuration gives
-47.1% MOTA and 103.7% of ceiling, so the choice is worth about a point.
+46.4% MOTA and 111.7% of ceiling — four points of MOTA for one and a half
+points of ceiling recovery, since dropping the score filter buys recall (68.0%)
+at the cost of precision (81.5%).
+
+### These numbers moved, and it was the scorer
+
+Every MOTChallenge figure in this document was re-measured after a defect was
+found in the matcher that decides which track corresponds to which ground-truth
+box — the tables above and below, the per-detector ranges, the threshold sweep
+and the appearance comparison. The Jonker-Volgenant solver is only valid when
+rows do not outnumber columns, and
+truth-to-track scoring is tall exactly when the tracker is under-reporting —
+which is most frames of most sequences. The matching it returned had the right
+number of pairs and the wrong pairs.
+
+So the figures that depend on **how many** pairs were matched did not move, and
+the figures that depend on **which** pairs did:
+
+| MOT17 train, all 21 sequences | before | after |
+|---|---|---|
+| Recall | 60.0% | 60.0% |
+| Precision | 90.8% | 90.9% |
+| MOTA | 48.2% | **50.5%** |
+| MOTP | 27.4 px | **15.7 px** |
+| Identity switches | 19,156 | **11,621** |
+
+Recall and precision are count-only and are unchanged, which is the signature
+of the fault and the reason it survived this long: the headline recovery figure
+below, the one this document leans on hardest, was never affected. Localisation
+error was overstated by a factor of 1.7 and identity switches by 1.6.
+
+Mostly-tracked fell from 10.0% to 7.1% and mostly-lost rose from 3.5% to 6.5%.
+Those move in the unflattering direction and they are the honest numbers: a
+matching that spread tracks across ground-truth identities made each identity
+look better covered than it was.
+
+The simulator figures elsewhere in this document are affected far less, and
+were checked rather than assumed: across all twelve scenarios the fix moves
+recovery by at most 0.4 points and identity-switch counts by a handful in
+either direction. Those scenarios carry five to seventeen entities, so their
+cost matrices are rarely tall by much; MOT frames carry tens to hundreds.
+
+The derivation, the exhaustive-search evidence and the fix are in
+[FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md).
 
 ### The number that matters more than MOTA
 
@@ -69,19 +112,20 @@ a kinematics-only tracker.
 
 | Detector | MOTA range | Character |
 |---|---|---|
-| **SDP** (strongest) | 49.4 – **70.1%** | Best result: MOT17-04-SDP |
-| **FRCNN** | 38.6 – 60.4% | Precision routinely above 95% |
-| **DPM** (oldest) | 18.8 – 38.4% | Its false positives get promoted to tracks |
+| **SDP** (strongest) | 54.3 – **75.9%** | Best result: MOT17-04-SDP |
+| **FRCNN** | 42.0 – 63.0% | Precision routinely above 95% |
+| **DPM** (oldest) | 18.5 – 39.8% | Its false positives get promoted to tracks |
 
 DPM's range was 4–38% before the source-credibility work; discounting a source
 whose reports disagree with its peers is worth roughly ten MOTA points on the
 sequences where the detector is unreliable, and nothing at all where it is not.
 
 The detection threshold has a shallow optimum and falls away either side of it.
-On MOT17-02-DPM, sweeping it gives 18.4% MOTA at 0.0, 18.9% at the default
-0.15, and 15.5% at 0.30: a little filtering pays for itself, more does not,
+On MOT17-02-DPM, sweeping it gives 18.1% MOTA at 0.0, 18.5% at the default
+0.15, and 16.1% at 0.30: a little filtering pays for itself, more does not,
 because recall dominates MOTA and beyond that point precision is being bought
-with it. An earlier version of this document reported the same sweep as a
+with it. The optimum is shallow — four tenths of a point between 0.0 and 0.15 —
+so the default is a reasonable choice rather than a tuned one. An earlier version of this document reported the same sweep as a
 monotone loss (20.7% → 12.0%); that no longer reproduces. DPM remains a weak
 detector and no threshold rescues it.
 
@@ -94,17 +138,24 @@ for them:
 
 | Sequence | People/frame | MOTA | Precision | Recall | Mostly lost | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | 62 | 55.9% | 98.6% | 67.4% | 2.7% | 13 |
-| MOT20-02 | 72 | 51.2% | 95.5% | 59.7% | 3.3% | 20 |
-| MOT20-03 | 148 | 60.8% | 96.7% | 64.1% | 12.0% | 50 |
-| MOT20-05 | 226 | **61.6%** | 95.7% | 65.7% | 10.2% | 83 |
-| **Overall** | **127** | **59.9%** | **96.0%** | **64.5%** | **5.0%** | **52** |
+| MOT20-01 | 62 | **65.2%** | 98.6% | 67.4% | 8.1% | 11 |
+| MOT20-02 | 72 | 56.2% | 95.5% | 59.8% | 5.9% | 18 |
+| MOT20-03 | 148 | 60.8% | 96.7% | 64.2% | 11.8% | 44 |
+| MOT20-05 | 226 | 61.7% | 95.7% | 65.7% | 10.4% | 74 |
+| **Overall** | **127** | **60.8%** | **96.0%** | **64.5%** | **5.4%** | **45** |
 
 | | |
 |---|---|
 | Detector ceiling, recall | 56.2% |
 | TRACE, recall | 64.5% |
-| **TRACE recovered** | **114.8% of the recall the detections allow** |
+| **TRACE recovered** | **114.9% of the recall the detections allow** |
+
+The spread across these four is itself a measurement. MOT20-01 gained 9.3 MOTA
+from the matcher fix described below and MOT20-05 gained 0.1, because the exact
+solver is only used below 64 rows or columns: at 62 people per frame MOT20-01
+is almost always inside that limit and at 226 MOT20-05 is almost never. The
+sequences that moved are exactly the ones that were using the code that
+changed.
 
 **MOT20 scores higher than MOT17**, on the same profile, and recovers more of
 its ceiling. That is not the expected direction and the reason is the
@@ -166,7 +217,7 @@ asserts something the file never said, and it asserted the worst case.
 | MOT20-03 | MOTA | Mostly lost | Recovery of ceiling |
 |---|---|---|---|
 | before | 18.4% | 74.8% | 26% |
-| **after** | **60.8%** | **12.0%** | **117%** |
+| **after** | **60.8%** | **11.8%** | **117%** |
 
 The same two fixes are worth 2.7 points of ceiling recovery on MOT17, and took
 `wildlife` — the sparsest scenario in the suite, and the only one that had ever
@@ -526,30 +577,42 @@ term in both the association likelihood and the reacquisition score. The
 question was how much it buys. The answer on MOT is: **nothing**, and the
 measurements are worth recording because the conclusion is counter-intuitive.
 
+The MOT profile sets `appearance_weight` to zero, so `--appearance oracle`
+alone changes nothing — it selects a descriptor the association never consults,
+and reproduces the `none` row exactly. The weight has to be given explicitly
+for the mechanism to run at all:
+
 | Descriptor on MOT17-02-FRCNN | MOTA | Identity switches |
 |---|---|---|
-| none | 39.7% | 1039 |
-| detection-box geometry | 39.5% | 1055 |
-| **oracle — perfect ground-truth identity** | **39.7%** | **1012** |
+| `--appearance none` | 42.0% | 198 |
+| `--appearance oracle` (profile weight, 0.0) | 42.0% | 198 |
+| `--appearance oracle --appearance-weight 0.15` | **42.1%** | **179** |
+| `--appearance oracle --appearance-weight 0.35` | 42.0% | 211 |
 
-A *perfect* descriptor, handed the true identity of every detection, moves
-identity switches by 2.6% and MOTA not at all. No weight, reacquisition window
-or dormancy setting changed that.
+A *perfect* descriptor, handed the true identity of every detection, removes 19
+identity switches out of 198 and moves MOTA by a tenth of a point. Too much
+weight on it (0.35) makes matters worse. No reacquisition window or dormancy
+setting changed that.
 
-The arithmetic explains it. On MOT17-02-FRCNN the MOTA penalty decomposes as:
+The arithmetic explains it. On MOT17-02-FRCNN, with 18,581 ground-truth boxes
+and 42.0% MOTA, the penalty decomposes as:
 
 | Component | Count | Share of penalty |
 |---|---|---|
-| Missed detections | 9,997 | **89.2%** |
-| Identity switches | 1,039 | 9.3% |
-| False positives | 166 | 1.5% |
+| Missed detections | ~10,390 | **96.4%** |
+| Identity switches | 198 | 1.8% |
+| False positives | ~190 | 1.8% |
 
 Missed detections are capped by the detector — which TRACE already exceeds by
-coasting — so appearance can only address a ninth of the penalty. Eliminating
-*every* identity switch would be worth 5.6 MOTA points. And the switches that
-remain are not the kind appearance fixes: they are fragmentation, where a person
-goes undetected for seconds and their coasted track has drifted too far to be
-recognised as theirs.
+coasting — so appearance can only address a fiftieth of the penalty.
+Eliminating *every* identity switch would be worth 1.1 MOTA points. And the
+switches that remain are not the kind appearance fixes: they are fragmentation,
+where a person goes undetected for seconds and their coasted track has drifted
+too far to be recognised as theirs.
+
+(The counts are derived from the reported rates rather than printed directly,
+so the two approximate ones carry a rounding band of about twenty. The
+conclusion does not turn on it.)
 
 **The mechanism does work where descriptors are discriminative**, and the
 `decoy-split` scenario is the cleanest case: a subject hands off to a lookalike
@@ -586,8 +649,8 @@ was wrong for this benchmark, and the measurement above is what disproved it.
 ## How to read this against published work
 
 Published MOT17 results using public detections generally sit around 50–60%
-MOTA. TRACE at 48.2% is just under that range, and the reason is worth stating
-plainly rather than explaining away:
+MOTA. TRACE at 50.5% sits at the bottom of that range, and the reason is worth
+stating plainly rather than explaining away:
 
 **TRACE has no *learned* appearance model.** Methods at the top of the MOT
 leaderboards

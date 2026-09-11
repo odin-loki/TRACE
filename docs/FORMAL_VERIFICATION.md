@@ -10,10 +10,9 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Three did not, and are set out below with the
-evidence. Two of the three are fixed; the third is a design decision that
-belongs to whoever owns the engine's calibration, and is reported rather than
-patched over.
+Ten derivations came back sound. Five did not, and are set out below with the
+evidence. Four are fixed; the fifth is a calibration decision that belongs to
+whoever owns the engine, and is reported rather than patched over.
 
 ---
 
@@ -269,6 +268,81 @@ properly means re-deriving the lifecycle thresholds — and probably the coast
 timeout — against the corrected update, then re-measuring. It is not a drive-by
 change, and pretending otherwise by tuning thresholds until the numbers came
 back would be fitting to the scenarios rather than fixing anything.
+
+### 4. Dempster's rule started from a mass vector summing to three — **fixed**
+
+`src/core/threat.cpp:118`. `fuse_credibility` combines evidence over
+`{H, not-H, Theta}`. The rule itself is written correctly. The accumulator it
+started from was `(1, 1, 1)`.
+
+A mass function sums to one. This summed to three, and the excess propagated
+through every combination that followed, so **belief and plausibility came out
+at exactly 1.0000 for every possible input**:
+
+| evidence | belief, before | belief, after | conflict, before | after |
+|---|---|---|---|---|
+| one report at r = 0.05 | 1.0000 | 0.0425 | 0.1375 | 0.0000 |
+| one report at r = 0.9 | 1.0000 | 0.7650 | 0.7750 | 0.0000 |
+| three at r = 0.9 | 1.0000 | 0.9866 | 0.9990 | 0.0130 |
+| strong, then twice contradicted | 1.0000 | 0.7492 | 0.9990 | 0.0734 |
+
+One near-worthless report and eight corroborating ones were indistinguishable,
+and the conflict mass sat at its 0.999 cap from the third observation onwards —
+so the one distinction that tracking `K` separately exists to make, between
+"our sources contradict each other" and "we have a lot of evidence", could not
+be made either. The clamps on the way out hid it: a belief pinned at 1.0 is
+still a number in [0,1], and every range check the code had passed.
+
+The fix is the identity element of the rule — all mass on the frame, none
+committed either way, which is what "no evidence yet" means. `Credibility` is
+carried on `TargetReport` and read by no decision in the engine, so this
+corrects a number an operator is invited to interpret rather than a control
+path. It had no tests; it has four now.
+
+### 5. Collection tasking ranked against its own objective — **fixed**
+
+`src/core/network.cpp:243`. The comment says it points a sensor at "the track
+that matters most and is currently least well localised". The score was
+
+    modality_weight * existence / uncertainty
+
+which is monotone the wrong way in the one term meant to drive it. For a
+Gaussian estimate of prior variance `P` under sensor noise `R`, a measurement
+leaves `PR/(P+R)`, so the entropy it removes is
+
+    dH = 0.5 * log(1 + P/R)
+
+— **increasing** in `P`, because there is more to learn about a track you have
+localised badly. Dividing by uncertainty ranks the best-localised tracks first,
+which is the exact inverse of a collection plan's purpose.
+
+The modality loop in the same function needed stating rather than fixing: every
+factor that varies between tracks is common to all five modalities, so the
+arg-max never depended on the track. It always returned whichever modality the
+profile weights highest, dressed up as a per-track choice. Choosing per track
+would need a per-modality accuracy and the profile carries only a per-modality
+reliability weight.
+
+---
+
+## Noted in passing, not chased
+
+Writing the test for section 5 turned up two things that are outside this
+exercise but should not go unrecorded.
+
+`Track`'s constructor does not seed its particle filter — `PmbmManager` does
+that at birth — and an unseeded filter reports **zero** position uncertainty
+rather than an undefined or maximal one. A caller who builds a `Track` directly
+gets a track that claims perfect localisation.
+
+More seriously, a filter fed detections that jump 40 m either side of its
+prediction each scan also settles at **exactly zero** reported uncertainty:
+resampling collapses the cloud onto a single ancestor, and the spread of one
+point is zero. The filter reports maximum confidence at precisely the moment it
+is most confused. That is a particle-filter degeneracy rather than a formula
+error, so it is not in scope here, but anything reading
+`position_uncertainty()` as a confidence — the collection plan in section 5
+among them — inherits it.
 
 ---
 
