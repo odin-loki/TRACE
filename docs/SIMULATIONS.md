@@ -62,8 +62,10 @@ Every knob is exposed because the interesting behaviour is at the edges: raise
 `--swap`, drop `--pd`, disable more panels, and watch where it breaks.
 
 **Typical result** (15×9, 3×3 panels, 1 blind, 3 travellers, 60 scans):
-detection 83%, mean position error 1.6 m, **0 identity switches**, 0.08 ghost
-tracks/scan, 0.35 ms median latency.
+detection 80% — **117% of what the cameras actually produced** — mean position
+error 1.5 m, **0 identity switches**, **0 ghost tracks**, 0.65 ms median
+latency. At 21×11 with 12 panels and 400 scans it holds 78% detection and five
+identity switches across three travellers.
 
 ---
 
@@ -88,7 +90,7 @@ Hourly satellite AIS over a 400 × 300 km box; one vessel goes silent for 25
 scans and comes back. Stresses long scan periods, existence decay over a real
 gap, and pattern-of-life reacquisition. This is the scenario that exposed the
 SI-units defect — it ran at 15% detection until the motion models were fixed.
-*Result: 78.8% detection, 1 identity switch, 103% of what the sensors
+*Result: 80.3% detection, 1 identity switch, 105% of what the sensors
 produced, reacquired after resurfacing. Long documented at 70% recovery and
 explained as a hard limit of vessel speed against scan period; that was a
 simulator defect, not physics. See [VALIDATION.md](VALIDATION.md).*
@@ -121,16 +123,18 @@ produced.*
 ### 7. `wildlife` — GPS collars reporting every four hours for twenty days
 Animals looping between den sites and a waterhole. Stresses extreme sparsity,
 single-sighting track birth, and pattern-of-life on thin data. The thinnest
-input in the suite and the only scenario that recovers less than the sensors
-produced.
-*Result: 39.4% detection, 88% of what the sensors produced.*
+input in the suite, and the scenario most improved by not discounting a lone
+sensor: with one collar per animal there are no peers to judge it against, and
+the engine had been steadily disbelieving its only source.
+*Result: 48.3% detection, 107% of what the sensors produced, up from 88%.*
 
 ### 8. `spoofing` — a fabricated track reported by a single source
 One entity is reported by several independent sensors; another is reported by
 one, confidently and consistently. Stresses Dempster–Shafer credibility fusion
 and the possibility/necessity pair, which is where a claim no other source
 corroborates is supposed to show up.
-*Result: 98.0% detection, 114% of what the sensors produced.*
+*Result: 98.4% detection, 115% of what the sensors produced, 0 identity
+switches.*
 
 ### 9. `mule-network` — accounts in a behavioural space, not a physical one
 "Position" is a two-dimensional behaviour embedding: transaction size against
@@ -213,9 +217,9 @@ scenario 9.
 Every scenario reports three numbers, not one:
 
 ```
-  sensor detections  46.7%   (1766 of 3780 truth-scans produced a detection)
-  detection rate     57.1%   (2160 of 3780 truth-scans had a track)
-  recovery          122.3%   of what the sensors made possible
+  sensor detections  49.0%   (1852 of 3780 truth-scans produced a detection)
+  detection rate     61.5%   (2325 of 3780 truth-scans had a track)
+  recovery          125.5%   of what the sensors made possible
 ```
 
 The first is the sensors' own ledger — which ground-truth entities actually
@@ -232,7 +236,7 @@ detection in 19.9% of truth-scans, and TRACE recovers 104% of that. The same
 applies to `warehouse` and `wildlife`.
 
 `dark-vessel` was documented here as the one genuine shortfall at 70%, with a
-physical explanation attached. It now recovers 103%, and nothing about the
+physical explanation attached. It now recovers 105%, and nothing about the
 motion model or the scan period changed — the shortfall was a defect in
 `World::step`, which let a repeated waypoint zero an entity's velocity and drop
 it onto a hardcoded walking-pace default. The write-up is in

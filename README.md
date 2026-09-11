@@ -64,9 +64,9 @@ they disagree.
 ./trace_maze --swap 0.3 --pd 0.6      # make it hard
 ```
 
-**15×9 maze, 3×3 cameras, 1 blind, 3 travellers, 60 scans:** 83% detection,
-1.6 m mean error, **0 identity switches**, 0.08 ghost tracks/scan, 0.29 ms
-median scan latency on one core.
+**15×9 maze, 3×3 cameras, 1 blind, 3 travellers, 60 scans:** 80% detection —
+**117% of what the cameras actually produced** — 1.5 m mean error, **0 identity
+switches**, **0 ghost tracks**, 0.65 ms median scan latency on one core.
 
 ---
 
@@ -77,14 +77,18 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **46.2%** | **103.6%** |
-| MOT20-01, ~46 people/frame | 19,870 | **51.8%** | 105.2% |
-| MOT20-02, ~56 people/frame | 154,742 | 49.2% | 107.1% |
+| MOT17 train, 21 sequences | 336,891 | **48.1%** | **109.6%** |
+| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **59.8%** | **114.7%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
-missed — which is the entire job. Best single sequence: **71.3% MOTA**
+missed — which is the entire job. Best single sequence: **70.1% MOTA**
 (MOT17-04-SDP).
+
+MOT20 scoring above MOT17 is not the expected direction, and it is the
+detections rather than the tracker: MOT20's are uniformly good where MOT17's
+include DPM. Density costs latency far more than accuracy — 83 ms/frame at 226
+people per frame, against 5.8 for MOT17.
 
 TRACE supports appearance descriptors but they are **switched off** on MOT, and
 that is a measurement rather than an omission: a *perfect* oracle descriptor
@@ -97,7 +101,7 @@ docs/VALIDATION.md](docs/VALIDATION.md).
 The same question asked of the simulations — how much of what the *sensors*
 produced did the engine recover? — reframed three of them. `anpr-corridor` had
 been the weakest scenario on a 20% detection rate; its readers only ever produce
-a detection in 21.2% of truth-scans, and TRACE recovers 111% of that.
+a detection in 19.9% of truth-scans, and TRACE recovers 104% of that.
 
 ```bash
 ./scripts/fetch_mot.sh ./data/mot        # ~30 MB, annotations only

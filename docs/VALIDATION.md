@@ -26,14 +26,14 @@ supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **48.0%** |
+| **MOTA** | **48.1%** |
 | MOTP | 27.4 px |
-| Recall | 58.1% |
-| Precision | 92.3% |
-| Mostly tracked | 7.6% |
-| Mostly lost | 4.1% |
-| Identity switches | 17,876 |
-| Throughput | 5.6 ms/frame, one core |
+| Recall | 59.6% |
+| Precision | 91.0% |
+| Mostly tracked | 10.0% |
+| Mostly lost | 3.5% |
+| Identity switches | 18,962 |
+| Throughput | 5.8 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
 version of this table reported a different operating point (`--min-score 0`,
@@ -49,8 +49,8 @@ detection it was handed — gives:
 | | |
 |---|---|
 | Detector ceiling, recall | **54.4%** |
-| TRACE, recall | **58.1%** |
-| **TRACE recovered** | **106.9% of the recall the detections allow** |
+| TRACE, recall | **59.6%** |
+| **TRACE recovered** | **109.6% of the recall the detections allow** |
 
 No tracker consuming these detections can exceed 54.4% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
@@ -69,9 +69,9 @@ a kinematics-only tracker.
 
 | Detector | MOTA range | Character |
 |---|---|---|
-| **SDP** (strongest) | 48.6 – **70.2%** | Best result: MOT17-04-SDP |
-| **FRCNN** | 38.6 – 60.5% | Precision routinely above 95% |
-| **DPM** (oldest) | 14.0 – 39.2% | Its false positives get promoted to tracks |
+| **SDP** (strongest) | 49.4 – **70.1%** | Best result: MOT17-04-SDP |
+| **FRCNN** | 38.6 – 60.4% | Precision routinely above 95% |
+| **DPM** (oldest) | 18.8 – 38.4% | Its false positives get promoted to tracks |
 
 DPM's range was 4–38% before the source-credibility work; discounting a source
 whose reports disagree with its peers is worth roughly ten MOTA points on the
@@ -87,32 +87,96 @@ detector and no threshold rescues it.
 
 ## Scalability: MOT20, dense crowds
 
-MOT20 is the crowd split — tens to hundreds of people per frame, where
-association is hardest and the O(n^2) parts of the engine start to matter.
+MOT20 is the crowd split — 62 to 226 people per frame, where association is
+hardest and the cost of the engine's pairwise work starts to show. All four
+train sequences, on the same pedestrian profile MOT17 uses, with nothing tuned
+for them:
 
-| Sequence | People/frame | MOTA | Precision | Recall | Recovery of ceiling | ms/frame |
+| Sequence | People/frame | MOTA | Precision | Recall | Mostly lost | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | ~46 | **51.8%** | 98.9% | 66.2% | 105.2% | 12.2 |
-| MOT20-02 | ~56 | 37.0% | 95.2% | 41.9% | 74.8% | 13.9 |
+| MOT20-01 | 62 | 55.7% | 98.6% | 67.4% | 1.4% | 12 |
+| MOT20-02 | 72 | 51.2% | 95.5% | 59.8% | 3.0% | 20 |
+| MOT20-03 | 148 | 60.7% | 96.7% | 64.1% | 11.5% | 50 |
+| MOT20-05 | 226 | **61.6%** | 95.7% | 65.7% | 10.2% | 83 |
+| **Overall** | **127** | **59.8%** | **96.0%** | **64.4%** | **5.3%** | **51** |
 
-The two sequences disagree, and the disagreement is the finding. MOT20-01
-beats the MOT17 average and exceeds its detector ceiling (105.2%); MOT20-02
-recovers only **74.8%** of what its detections allow — the first sequence in
-this repository where TRACE falls materially short of its input.
+| | |
+|---|---|
+| Detector ceiling, recall | 56.2% |
+| TRACE, recall | 64.4% |
+| **TRACE recovered** | **114.7% of the recall the detections allow** |
 
-Precision stays at 95.2%, so the engine is not inventing tracks; it is failing
-to hold them. Mostly-lost rises from 0.0% to 23.0% and identity switches to
-4,182 across 2,782 frames. MOT20-02 is the same scene as MOT20-01 at higher
-density and longer duration, which points at the association step rather than
-at the detections: with ~56 people in frame, a track that loses its detection
-for a few frames has many plausible continuations, and the gate admits several
-of them. This is the same mechanism documented under reacquisition below,
-arriving through a different door — and unlike the MOT17 case it costs recall
-outright rather than trading it.
+**MOT20 scores higher than MOT17**, on the same profile, and recovers more of
+its ceiling. That is not the expected direction and the reason is the
+detections: MOT20's are 96% precise where MOT17's average 95% but include DPM
+at far less. Density hurts association, but it is a smaller effect than
+detection quality, and the denser sequences also give the coasting mechanism
+more to work with — a crowd that thins for a few frames is still a crowd.
 
-It has not been tuned for, deliberately: `MotPedestrianPixels` is one profile
-shared by every MOT sequence here, and fitting it to MOT20-02 would make the
-MOT17 numbers a different kind of claim.
+The cost, though, is real: 83 ms/frame at 226 people. That is 12 frames per
+second on one core, so a 25 fps camera at that density needs the area
+partitioned across workers. See the scaling measurements below.
+
+These numbers are all much better than the ones this document carried
+previously, and the reason is a pair of defects that only a long dense sequence
+could expose — written up next, because the way they were found is more useful
+than the numbers.
+
+---
+
+## The failure that only a long sequence could show
+
+MOT20's two largest sequences ran at 18% MOTA and 75% mostly-lost while
+recovering a quarter of what their detections allowed. That was not a density
+limit. Watching the track count against the detection count over the sequence
+showed it plainly:
+
+| Frame of MOT20-03 | Detections offered | Tracks held |
+|---|---|---|
+| 200 | 58 | 45 |
+| 800 | 70 | 31 |
+| 1400 | 78 | 19 |
+| 2000 | 89 | 13 |
+| 2400 | 87 | 10 |
+
+Detections steady, tracks decaying to nothing. Tracks were dying and none were
+replacing them, so the fault was in birth, and two things were sitting on it.
+
+**Credibility was discounting the only sensor there was.** `SourceCredibility`
+multiplies into the birth gate, and its own header already says the fit-to-track
+test is circular — a sensor steering a track will fit it however wrong it is —
+and that peer disagreement is the only test that is not. MOT has one source, so
+the only signal available was the circular one, and in a dense scene it falls
+steadily for a reason that has nothing to do with the sensor: ambiguous
+association is not the detector's fault. The score fell from 0.80 to 0.42 over
+the sequence. Credibility is a *relative* judgement and now returns the neutral
+default when only one source has ever reported — there is nothing to compare a
+lone sensor against, and nothing left if you disbelieve it. Where peers do
+exist the mechanism is untouched; `sensor-drift` still discounts the drifting
+camera to 0.434 against a sound neighbour's 0.605 and flags it as against
+consensus.
+
+**An absent score was being read as a low score.** MOT20 ships its score column
+unset. Every detection therefore came through at the 0.3 confidence floor,
+which after the modality weight is 0.285, against a birth threshold of 0.25.
+The entire benchmark balanced on that 0.035, and any credibility multiplier
+below 0.877 shut birth off outright. Deriving a confidence from a validity flag
+asserts something the file never said, and it asserted the worst case.
+
+| MOT20-03 | MOTA | Mostly lost | Recovery of ceiling |
+|---|---|---|---|
+| before | 18.4% | 74.8% | 26% |
+| **after** | **60.7%** | **11.5%** | **117%** |
+
+The same two fixes are worth 2.7 points of ceiling recovery on MOT17, and took
+`wildlife` — the sparsest scenario in the suite, and the only one that had ever
+recovered *less* than its sensors produced — from 88% to 107%.
+
+What made this findable was a ratio that should have been stable and was not.
+Neither number is alarming alone: a dense sequence scoring badly is
+unsurprising, and a track count of 10 is only wrong next to 87 detections. It
+also could not have been found on MOT17, whose sequences are 600–1050 frames —
+short enough that the decay never has time to bite.
 
 ---
 
@@ -221,8 +285,8 @@ was wrong for this benchmark, and the measurement above is what disproved it.
 ## How to read this against published work
 
 Published MOT17 results using public detections generally sit around 50–60%
-MOTA. TRACE at 46.2% is at the low end of that, and the reason is worth stating plainly
-rather than explaining away:
+MOTA. TRACE at 48.1% is just under that range, and the reason is worth stating
+plainly rather than explaining away:
 
 **TRACE has no *learned* appearance model.** Methods at the top of the MOT
 leaderboards
@@ -267,15 +331,20 @@ strictly separate from anything the engine can see.
 | evader | 71.5% | 96.3% | **135%** |
 | warehouse | 49.0% | 61.5% | **126%** |
 | transit-hub | 81.7% | 97.9% | **120%** |
-| spoofing | 85.9% | 98.0% | **114%** |
+| spoofing | 85.9% | 98.4% | **115%** |
+| wildlife | 45.0% | 48.3% | **107%** |
 | mule-network | 92.0% | 98.7% | **107%** |
+| dark-vessel | 76.8% | 80.3% | **105%** |
 | anpr-corridor | 19.9% | 20.8% | **104%** |
-| dark-vessel | 76.8% | 78.8% | **103%** |
 | sensor-drift | 98.1% | 97.3% | 99% |
-| wildlife | 45.0% | 39.4% | 88% |
 
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
+
+Every scenario but one now recovers more than its sensors produced, which is
+what a tracker is for. `sensor-drift` sits just under, and appropriately: its
+sensors detect 98% of everything, so there are almost no gaps left to coast
+through.
 
 This changed the assessment of three scenarios materially. `anpr-corridor` had
 been documented as the weakest of the seven on a 20% detection rate; the
@@ -293,7 +362,7 @@ An earlier version of this document recorded `dark-vessel` at 70% recovery as
 > a real limit and it is not a tuning problem.
 
 **That explanation was wrong, and the arithmetic in it was an invitation to
-stop looking.** The scenario now recovers 103% with a mean position error of
+stop looking.** The scenario now recovers 105% with a mean position error of
 1.7 km, and nothing about the motion model, the scan period or the vessel speed
 changed. What changed was a defect in the *simulator*, three layers away from
 anything this document was measuring.
@@ -322,8 +391,9 @@ every corner. Two things are worth taking from it:
 
 - **The scenarios got harder, not easier.** Entities now traverse their full
   routes, so there is more ground to cover and more handoffs to get wrong.
-  `wildlife` fell from 94% recovery to 88% and `anpr-corridor` from 111% to
-  104%; the maze went from 83.3% detection and zero identity switches to 78.2%
+  `anpr-corridor` fell from 111% recovery to 104%, and `wildlife` from 94% to
+  88% before later fixes took it to 107%; the maze, at its larger 21x11
+  configuration, went from 83.3% detection and zero identity switches to 78.2%
   and five. Those are the honest numbers for a harder problem, and they are
   reported here rather than the flattering ones.
 - **A tidy physical explanation for a bad number is the most expensive kind of
@@ -343,13 +413,19 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ./build/src/apps/trace_mot ./data/mot/MOT20Labels/train          # dense crowds
 ```
 
-Deterministic under a fixed seed: the same command gives the same numbers.
+Deterministic under a fixed seed: the same command gives the same numbers. The
+tool's defaults are what every table here reports; `--min-score` and `--radius`
+change the operating point, and the sweep of the first is in "Per-sequence, by
+detector" above.
 
 ## What is still missing
 
-- **MOT20 has been loaded but not tuned for.** It is far denser — up to 200+
-  people per frame — and is the natural scalability test.
 - **No test-split submission.** These are train-split numbers, scored locally.
   Numbers comparable to the public leaderboard require submitting to the
   evaluation server.
 - **No appearance cue**, as discussed above.
+- **MOT20 has not been tuned for.** All four sequences now replay on the same
+  pedestrian profile MOT17 uses, and score higher than MOT17 does on it; a
+  profile fitted to dense crowds has not been tried.
+- **Nothing above 226 people per frame has been measured**, and at that density
+  one core manages 12 frames per second.
