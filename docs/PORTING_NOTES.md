@@ -1,7 +1,7 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Thirty-three substantive defects were
-found — eleven inherited from `reference/aria_intel.py`, twenty-two introduced
+The C++23 port is not a transliteration. Thirty-six substantive defects were
+found — eleven inherited from `reference/aria_intel.py`, twenty-five introduced
 or exposed by the port itself — while getting the simulations, then real
 MOTChallenge data, and finally the engine's own cost profile to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
@@ -671,6 +671,59 @@ wall-clock, so an outage cannot hold a track open indefinitely. `ScanReport`
 carries a `coverage_gap` flag, because the two cases are genuinely different
 and only the operator can confirm which it was. The protection lapses once
 silence has persisted long enough to be the more likely explanation.
+
+## 34. The dead-drop detector could not see a dead drop
+
+**Severity: high.** A dead drop is two people using one place, hours apart,
+never together — and `dead_drop_min_s` / `dead_drop_max_s` exist to say how far
+apart "hours" is. The detector looked at each track's **last five** visit
+records. At any scan period longer than a few seconds that is a shorter span
+than `dead_drop_min_s` requires, so the detector could not fire at all whenever
+the domain's idea of "hours apart" exceeded five scans — which is every domain
+it was written for.
+
+**Fix:** look back over the window the profile actually specifies, bounded by
+the visit history's own depth. On `coordinated-evasion` this took it from zero
+events to finding both drop sites.
+
+## 35. And then it flagged most of the city
+
+**Severity: medium.** Firing at last, it raised 330 events of which 25 were at a
+real drop site. Two reasons, both about what "used this place" means.
+
+The finding had degenerated to "two people were in this cell at different
+times", which in a populated scene is everybody. A dead drop is defined by the
+*pause* — somebody has to put something down. Visitors now have to have dwelt,
+not merely passed through.
+
+That test only discriminates if walking through a cell yields fewer records than
+stopping in one does, and at five times the chokepoint radius it did not: a
+pedestrian crossed the 100 m cell in about three scans, which is exactly what
+stopping looked like. The cell is now one chokepoint radius — the profile's own
+statement of "the same place".
+
+## 36. A dead drop on a cell boundary was invisible
+
+**Severity: medium.** Visits were binned onto a single fixed grid, so two
+visits a metre apart either side of a boundary landed in different cells and
+never met. That is not a rare case: the places people use are exactly the sort
+of round coordinates a grid puts its boundaries on, and in the scenario that
+found this the drop sat precisely on a grid corner — all four of its records
+split four ways and nothing fired.
+
+**Fix:** two offset grids per axis, half a cell apart, so any two visits within
+half a cell of each other share at least one bin, with duplicate suppression so
+one place still reports as one event.
+
+**A note on the scenario that found these.** Two of its own first-draft
+defects are worth recording next to the detector's, because both would have
+made it pass for the wrong reason. Staggering the team by having members stand
+still at their start points manufactured exactly the evidence the detector
+looks for — every site it flagged was a start position. And the entities never
+actually stopped at the drop, so once the dwell requirement of defect 35
+existed, the real drops stopped being found while the artefacts continued to
+be. A scenario that tests a detector has to be at least as carefully checked as
+the detector.
 
 ## A note on measuring before optimising
 

@@ -69,7 +69,7 @@ identity switches across three travellers.
 
 ---
 
-## 2–12. The scenario suite — `trace_sim`
+## 2–13. The scenario suite — `trace_sim`
 
 ```bash
 ./trace_sim --list        # descriptions and what each stresses
@@ -213,6 +213,30 @@ worth. MOT's errors are missed detections, which appearance cannot help;
 this scenario's single error is a confusion, which is all appearance addresses.
 *Result: 98.8% detection, 107% of what the sensors produced (median of twelve
 seeds, 106–109%).*
+
+### 13. `coordinated-evasion` — a team that never stands together
+Every network finding in this engine rests on co-location: the contact graph,
+the clusters, the betweenness that decides who is a hub. A team that knows this
+simply never co-locates. Four people pass material through two dead drops — one
+leaves, another collects twenty minutes later — among six members of the public.
+Truth co-location between team members: **zero entity-scans**.
+
+So the contact graph finding nothing is the *correct* answer here, not a
+failure. The question the scenario actually asks is whether anything else can
+see a network built specifically to defeat it. The tradecraft detectors can: a
+dead drop is defined by two people using one place and never being there
+together, which is the evidence a disciplined team cannot avoid leaving.
+
+It found three defects in a detector that had never been exercised — see
+[PORTING_NOTES.md](PORTING_NOTES.md) defects 34–36 — and two in the scenario
+as first written, which is worth recording separately because both were the
+kind that make a test pass for the wrong reason: staggering the team by having
+them stand still at their start points manufactured exactly the evidence the
+detector looks for, and every site it flagged was a start position.
+*Result: 96.8% detection, 109% of what the sensors produced (median of twelve
+seeds). Both real drop sites found in every run, alongside about four
+false positives — places where somebody genuinely did stand still where
+somebody else had.*
 
 ### 10. `sensor-drift` — a camera whose mount slowly slips
 One sensor's reports acquire a growing systematic offset while its peers stay

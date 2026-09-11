@@ -1059,6 +1059,201 @@ void run_decoy_split(std::uint64_t seed, bool verbose) {
 }
 
 // ---------------------------------------------------------------------------
+// 13. Coordinated evasion — a team that never stands together
+// ---------------------------------------------------------------------------
+// Every network finding in this engine rests on co-location: the contact graph,
+// the clusters, the betweenness that decides who is a hub. A team that knows
+// this simply never co-locates. They pass material through dead drops - one
+// leaves, another collects an hour later - and they route around each other in
+// the street.
+//
+// So the contact graph is *supposed* to find nothing here, and reporting that
+// it found nothing is the correct answer rather than a failure. The question
+// the scenario actually asks is whether anything else in the engine can see a
+// network that has been built specifically to defeat the contact graph. The
+// tradecraft detectors are the ones that can: a dead drop is defined by two
+// entities using one place and never being there together, which is exactly
+// the evidence a disciplined team cannot avoid leaving.
+void run_coordinated_evasion(std::uint64_t seed, bool verbose) {
+    Scenario s(seed);
+    s.n_scans = 260;
+    s.match_radius_m = 15.0;
+
+    DomainProfile p = CityCameraSurveillance();
+    p.scan_dt_s = 30.0;                  // half-minute aggregation over hours
+    p.pos_noise_m = 4.0;
+    p.meas_noise_var = 16.0;
+    p.mou_models = {{motion("walking",  240.0, 1.3),
+                     motion("standing",  90.0, 0.05)}};
+    p.model_trans = {{{{0.88, 0.12}}, {{0.25, 0.75}}}};
+    p.coloc_dist_m = 25.0;               // what counts as "together"
+    // A dead drop is a place two people use hours apart. The window has to
+    // admit that and exclude two strangers crossing the same pavement.
+    p.dead_drop_min_s = 30.0 * 6;        // at least three minutes apart
+    p.dead_drop_max_s = 30.0 * 120;      // and within an hour
+    p.chokepoint_m = 20.0;
+    s.engine_config.profile = p;
+    s.engine_config.area = Area{0, 1000, 0, 600};
+    s.engine_config.seed = seed;
+
+    for (int i = 0; i < 6; ++i) {
+        CameraPanel::Config c;
+        c.id = "CAM_" + std::to_string(i);
+        c.footprint = Area{(i % 3) * 334.0, (i % 3) * 334.0 + 334.0,
+                           (i / 3) * 300.0, (i / 3) * 300.0 + 300.0};
+        c.p_detect = 0.88;
+        c.pos_noise_m = 4.0;
+        c.false_alarm_rate = 0.03;
+        s.sensors.push_back(std::make_unique<CameraPanel>(c));
+    }
+
+    // Two dead-drop sites the team uses.
+    const std::array<Vec2, 2> drops{Vec2{500.0, 300.0}, Vec2{760.0, 180.0}};
+
+    // Four team members. Each visits a drop, waits, and leaves - but their
+    // schedules are staggered so no two are ever at one within the contact
+    // radius at the same time. They are a network with no edges.
+    struct Leg { Vec2 from; Vec2 to; };
+    const std::array<Leg, 4> routes{
+        Leg{Vec2{60.0, 320.0},  drops[0]},
+        Leg{Vec2{940.0, 260.0}, drops[0]},
+        Leg{Vec2{80.0, 120.0},  drops[1]},
+        Leg{Vec2{920.0, 520.0}, drops[1]}};
+
+    for (int i = 0; i < 4; ++i) {
+        Entity e;
+        e.id = "cell_" + std::to_string(i);
+        e.role = "cell";
+        e.position = routes[static_cast<std::size_t>(i)].from;
+        e.velocity = Vec2{1.3, 0.0};
+        // Staggered arrivals: the second user of each drop simply walks slower,
+        // arriving some twenty minutes after the first has gone.
+        //
+        // Not by standing still at the start, which the first version did.
+        // Standing still is itself the evidence this scenario is about, so
+        // manufacturing it for scheduling reasons plants exactly the finding
+        // the scenario exists to test for - and every site that version
+        // flagged was a start position. Nor by a detour, which was too short
+        // to separate them and merely put two team members on the same
+        // pavement.
+        if (i % 2 == 1) e.velocity = Vec2{0.45, 0.0};
+        const Leg& leg = routes[static_cast<std::size_t>(i)];
+        for (const Vec2& v : line(leg.from, leg.to, 10)) e.waypoints.push_back(v);
+        for (const Vec2& v : line(leg.to, leg.from, 10)) e.waypoints.push_back(v);
+        s.world.add(std::move(e));
+    }
+
+    // Six ordinary people going about their business, several of whom pass
+    // near the drops - so "somebody was here" is not by itself suspicious.
+    for (int i = 0; i < 6; ++i) {
+        Entity e;
+        e.id = "public_" + std::to_string(i);
+        e.role = "public";
+        const Real y = 60.0 + i * 90.0;
+        e.position = Vec2{40.0 + i * 20.0, y};
+        e.velocity = Vec2{1.1 + 0.08 * i, 0.0};
+        e.waypoints = line(Vec2{40.0 + i * 20.0, y}, Vec2{960.0, y + 40.0}, 26);
+        s.world.add(std::move(e));
+    }
+
+    // Each cell member pauses at its drop: that pause is the whole event, and
+    // an entity that turns round on the spot has not made a drop at all.
+    std::map<std::string, bool> has_dropped;
+    s.on_scan = [&](Scenario& sc, int) {
+        for (auto& e : sc.world.entities()) {
+            if (e.role != "cell" || has_dropped[e.id]) continue;
+            if (e.dwell_remaining_s > 0.0) continue;
+            for (const Vec2& d : drops) {
+                // Within one scan's travel: at this scan period an entity
+                // covers 39 m per step, so it is almost never within a few
+                // metres of anything at a scan boundary. Somebody visiting a
+                // dead drop goes to the drop, so snap to it and stop.
+                if (distance(e.position, d) < e.velocity.norm() * p.scan_dt_s) {
+                    e.position = d;
+                    e.dwell_remaining_s = p.scan_dt_s * 5.0;
+                    has_dropped[e.id] = true;
+                    break;
+                }
+            }
+        }
+    };
+
+    Engine eng(s.engine_config);
+
+    // Distinct places flagged, not events: the detector re-raises while the
+    // condition holds, so counting events measures how long something stayed
+    // true rather than how many things it found.
+    std::set<std::pair<long, long>> flagged_sites;
+    std::set<std::pair<long, long>> flagged_real_sites;
+    int dead_drops = 0;
+    int dead_drops_at_real_site = 0;
+    int coloc_contacts = 0;
+    int clusters_with_two_cells = 0;
+
+    s.on_report = [&](const Scenario& sc, int, const ScanReport& r, const Metrics&) {
+        for (const auto& e : r.events_of_type("DEAD_DROP")) {
+            ++dead_drops;
+            if (!e->location.has_value()) continue;
+            const std::pair<long, long> site{
+                static_cast<long>(e->location->x / 30.0),
+                static_cast<long>(e->location->y / 30.0)};
+            flagged_sites.insert(site);
+            for (const Vec2& d : drops) {
+                if (distance(*e->location, d) < 45.0) {
+                    ++dead_drops_at_real_site;
+                    flagged_real_sites.insert(site);
+                    break;
+                }
+            }
+        }
+        // Did the team ever actually stand together? If they did, the scenario
+        // is not testing what it claims to.
+        for (const auto& a : sc.world.entities()) {
+            if (a.role != "cell") continue;
+            for (const auto& b : sc.world.entities()) {
+                if (b.role != "cell" || b.id <= a.id) continue;
+                if (distance(a.position, b.position) < p.coloc_dist_m) ++coloc_contacts;
+            }
+        }
+        for (const auto& c : r.clusters) {
+            int n_cell = 0;
+            for (const auto& tid : c.member_ids) {
+                const TargetReport* t = nullptr;
+                for (const auto& tr : r.targets) {
+                    if (tr.track_id == tid) t = &tr;
+                }
+                if (t == nullptr) continue;
+                for (const auto& e : sc.world.entities()) {
+                    if (e.role == "cell" && distance(t->position, e.position) < 15.0) {
+                        ++n_cell;
+                    }
+                }
+            }
+            if (n_cell >= 2) ++clusters_with_two_cells;
+        }
+    };
+
+    const Metrics m = run(s, eng);
+
+    char note[1000];
+    std::snprintf(note, sizeof(note),
+                  "four people who never stand together, using two dead drops, among\n"
+                  "  six members of the public.\n"
+                  "  co-location between team members, in truth: %d entity-scans\n"
+                  "  clusters containing two team members:        %d\n"
+                  "  DEAD_DROP: %zu distinct places flagged, %zu of them a real\n"
+                  "  drop site (%d events over the run, %d at a real site)\n"
+                  "  The contact graph finding nothing here is the correct answer, not\n"
+                  "  a failure - there is nothing for it to find, which is the whole\n"
+                  "  design of the manoeuvre. What a disciplined team cannot avoid\n"
+                  "  leaving is the place itself: two people using one spot and never\n"
+                  "  being there together is exactly what a dead drop is.",
+                  coloc_contacts, clusters_with_two_cells, flagged_sites.size(),
+                  flagged_real_sites.size(), dead_drops, dead_drops_at_real_site);
+    report("coordinated-evasion", m, eng, note);
+}
+
+// ---------------------------------------------------------------------------
 // 10. Sensor drift — a camera whose mount slowly slips
 // ---------------------------------------------------------------------------
 // The case SourceCredibility exists for, and which nothing tested until now.
@@ -1430,6 +1625,10 @@ std::map<std::string, ScenarioSpec>& registry() {
          {"Cameras drop out and come back; do identities survive the gap?",
           "dormancy, coasting, kinematic reacquisition after a long outage",
           run_blackout}},
+        {"coordinated-evasion",
+         {"A team that never stands together, passing material through dead drops",
+          "tradecraft detection where the contact graph is defeated by design",
+          run_coordinated_evasion}},
         {"decoy-split",
          {"A subject hands off to a lookalike and they leave in different directions",
           "association where every cue but appearance points the wrong way",

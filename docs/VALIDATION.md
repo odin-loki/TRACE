@@ -461,6 +461,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 | warehouse | 48.0% | 55.4% | **115%** | 101 – 127% |
 | mule-network | 91.8% | 98.8% | **107%** | 106 – 108% |
 | decoy-split | 92.0% | 98.8% | **107%** | 106 – 109% |
+| coordinated-evasion | 88.1% | 96.8% | **110%** | 109 – 113% |
 | anpr-corridor | 19.9% | 21.3% | **107%** | 95 – 124% |
 | dark-vessel | 76.0% | 77.2% | **102%** | 98 – 105% |
 | sensor-drift | 98.5% | 97.5% | 99% | 98 – 100% |
@@ -469,7 +470,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
-Nine of the eleven recover more than their sensors produced, which is what a
+Ten of the twelve recover more than their sensors produced, which is what a
 tracker is for. The two that do not are the two with the least to work with in
 opposite directions: `sensor-drift`'s sensors detect 98% of everything, so
 there are almost no gaps left to coast through, and `wildlife` has four animals
