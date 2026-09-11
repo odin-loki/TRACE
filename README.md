@@ -77,7 +77,7 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **48.1%** | **109.7%** |
+| MOT17 train, 21 sequences | 336,891 | **48.2%** | **110.2%** |
 | MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **59.9%** | **114.8%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
@@ -238,6 +238,11 @@ two speeds took that detector from 56% of the engine to 44% and the exponent to
 n^1.12. Every report carries a per-stage timing breakdown, because the cost
 profile is not obvious from reading the code — see
 [docs/VALIDATION.md](docs/VALIDATION.md).
+
+Measured out to **1365 tracks** (674 ms/scan, n^1.23 over that wider range) —
+which had never been done before, because the profile's own 400-track cap meant
+every larger sweep point measured the same 400 tracks and the curve obediently
+flattened.
 
 At 400 simultaneous tracks that is about 8 scans/second on one core, and 12
 frames/second at MOT20-05's 226 people per frame: fine for a 1 Hz camera estate,

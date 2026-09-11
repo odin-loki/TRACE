@@ -69,7 +69,7 @@ identity switches across three travellers.
 
 ---
 
-## 2–10. The scenario suite — `trace_sim`
+## 2–11. The scenario suite — `trace_sim`
 
 ```bash
 ./trace_sim --list        # descriptions and what each stresses
@@ -164,6 +164,28 @@ This scenario is also what turned up the `World::step` waypoint defect, because
 its units are not metres — the step function's hardcoded 1.4 m/s fallback came
 to 5,040 units per scan here, which was too absurd to explain away.
 *Result: 98.8% detection, 0.33 unit error, 107% of what the sensors produced.*
+
+### 11. `blackout` — cameras that drop out and come back
+`sensor-drift` covers a sensor that degrades; this covers one that vanishes.
+Six cameras along a corridor go dark three times, for 12, 25 and 40 scans, while
+five people walk through. Stresses dormancy, coasting and reacquisition — the
+path with more tunable parameters than any other in the profile, and the one
+nothing exercised deliberately until this scenario existed.
+
+The metric is not the detection rate. It is whether an entity keeps its
+*identity* across the gap, which is the whole point of a tracker. It found four
+separate defects in the reacquisition path and one in how the engine reads an
+empty scan; see [PORTING_NOTES.md](PORTING_NOTES.md) defects 29–33. Two of
+fifteen walkers kept their identity when the scenario was first run.
+
+Run with `--appearance Q` to give the cameras descriptors of quality Q. The
+simulated sensors had none before this — the entire appearance subsystem was
+reachable only through MOTChallenge replay.
+*Result: 15 of 15 identities kept across the three blackouts, 0 identity
+switches, 120% of what the sensors produced (median of twelve seeds, 119–122%).
+Kinematics alone carries it: the median without descriptors is 15 of 15 across
+seeds, ranging 11–15, and at Q=0.9 every seed keeps every identity — so
+appearance buys the variance rather than the median.*
 
 ### 10. `sensor-drift` — a camera whose mount slowly slips
 One sensor's reports acquire a growing systematic offset while its peers stay

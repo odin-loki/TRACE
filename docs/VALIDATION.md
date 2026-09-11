@@ -26,14 +26,14 @@ supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **48.1%** |
+| **MOTA** | **48.2%** |
 | MOTP | 27.4 px |
-| Recall | 59.7% |
-| Precision | 91.1% |
-| Mostly tracked | 11.2% |
+| Recall | 60.0% |
+| Precision | 90.8% |
+| Mostly tracked | 10.0% |
 | Mostly lost | 3.5% |
-| Identity switches | 19,230 |
-| Throughput | 5.8 ms/frame, one core |
+| Identity switches | 19,156 |
+| Throughput | 5.0 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
 version of this table reported a different operating point (`--min-score 0`,
@@ -49,8 +49,8 @@ detection it was handed — gives:
 | | |
 |---|---|
 | Detector ceiling, recall | **54.4%** |
-| TRACE, recall | **59.7%** |
-| **TRACE recovered** | **109.7% of the recall the detections allow** |
+| TRACE, recall | **60.0%** |
+| **TRACE recovered** | **110.2% of the recall the detections allow** |
 
 No tracker consuming these detections can exceed 54.4% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
@@ -180,6 +180,68 @@ short enough that the decay never has time to bite.
 
 ---
 
+## When is a velocity estimate worth anything?
+
+Coasting through a gap means predicting where something went, which needs a
+velocity. Reacquiring it afterwards needs the same. Both are only as good as
+that estimate, and there turns out to be a single ratio that decides whether it
+is worth having at all:
+
+```
+    typical speed  x  heading-hold time
+    ──────────────────────────────────────
+           position noise
+```
+
+The numerator is how far the entity travels while still going the same way —
+the MOU model's own velocity correlation time. If that distance is not large
+compared with the measurement error, the filter can never accumulate enough
+evidence to measure the speed, because mean-reversion discards the older
+evidence before it adds up.
+
+Measured directly, on an entity travelling at a constant 1.50 m/s, over nine
+seeds and 200 scans each:
+
+| Ratio | Median estimated speed | 10th–90th percentile |
+|---|---|---|
+| 0.8 | 3.24 | 1.18 – 6.47 |
+| 1.5 | 2.39 | 0.88 – 4.54 |
+| 2.4 | 1.21 | 0.56 – 2.21 |
+| 4.8 | 1.31 | 0.68 – 2.18 |
+| 12 | 1.36 | 0.82 – 2.03 |
+| 36 | 1.43 | 1.04 – 1.85 |
+| **108** | **1.46** | **1.20 – 1.72** |
+
+Below about 5 the estimate is not an estimate. Note the *direction* of the
+error: at low ratios the reported speed is far too **high**, because speed is
+the norm of a noisy vector and noise cannot make a norm smaller.
+
+Checked across the shipped profiles, only one was in the bad region:
+
+| Profile | Worst travelling regime |
+|---|---|
+| VehicleConvoy | 500 |
+| Maritime | 432 |
+| UrbanHUMINT, CounterTerrorism, OrganisedCrime, Fugitive, Wildlife | 288 |
+| Airspace | 144 |
+| WarehouseAssets, SportsPitch | 12 |
+| IndoorVenue | 8.7 |
+| BorderPatrol | 7.2 |
+| **CityCameraSurveillance** | **1.4 (walking)** |
+
+A walking pedestrian was given an eight-second heading hold against eight
+metres of position noise. That is a defensible description of someone browsing
+a concourse and a poor one of someone walking down a corridor, and under it the
+velocity estimate is noise — which is why the blackout scenario carries its own
+motion models rather than inheriting them.
+
+This is a modelling constraint rather than a bug: a genuinely twisty target
+observed by a coarse sensor *has* no measurable velocity, and no amount of
+filtering invents one. What it means is that a profile has to be checked
+against it before any claim about coasting or reacquisition is worth making.
+
+---
+
 ## Cost: how the engine scales with crowd size
 
 `trace_bench` sweeps entity count with density held constant, so it measures
@@ -251,11 +313,30 @@ applied before anything that allocates:
 The capability is unchanged: `transit-hub` still raises its first convergence
 warning at the same 15 s lead time, and `evader` is bit-identical.
 
+### Above 400 tracks
+
+Earlier versions of this document said scaling above 400 tracks "has not been
+measured". The reason it had not is worth recording, because it looked like a
+measurement and was not: the bench's profile caps tracks at 400, so every sweep
+point above that measured the same 400 tracks and the curve obediently
+flattened. `trace_bench --max-tracks N` raises the cap.
+
+| Tracks | Median ms/scan | µs per track |
+|---|---|---|
+| 405 | 136.8 | 338 |
+| 607 | 239.0 | 394 |
+| 910 | 399.2 | 439 |
+| **1365** | **674.2** | **494** |
+
+**n^1.23 over the full 10–1365 range.** Per-track cost roughly triples from 10
+tracks to 1365 — the detectors' pairwise work, not the tracking — but nothing
+falls off a cliff. At 1365 simultaneous tracks the engine manages 1.5 scans per
+second on one core.
+
 **What this means in practice.** At 400 simultaneous tracks the engine runs at
-about 8 scans per second on one core, and at 226 people per frame on MOT20-05
+about 7 scans per second on one core, and at 226 people per frame on MOT20-05
 at 12 frames per second. Comfortable for a 1 Hz camera estate, not for 25 fps
-without partitioning the area across workers. Above 400 tracks has not been
-measured.
+without partitioning the area across workers.
 
 ---
 
@@ -312,7 +393,7 @@ was wrong for this benchmark, and the measurement above is what disproved it.
 ## How to read this against published work
 
 Published MOT17 results using public detections generally sit around 50–60%
-MOTA. TRACE at 48.1% is just under that range, and the reason is worth stating
+MOTA. TRACE at 48.2% is just under that range, and the reason is worth stating
 plainly rather than explaining away:
 
 **TRACE has no *learned* appearance model.** Methods at the top of the MOT
@@ -360,6 +441,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 | Scenario | Sensors produced | TRACE reported | Recovery | Spread over 12 seeds |
 |---|---|---|---|---|
 | evader | 70.1% | 94.8% | **134%** | 131 – 138% |
+| blackout | 66.6% | 80.2% | **120%** | 119 – 122% |
 | transit-hub | 81.5% | 97.7% | **120%** | 118 – 121% |
 | spoofing | 84.8% | 98.0% | **116%** | 112 – 118% |
 | warehouse | 48.0% | 55.4% | **115%** | 101 – 127% |
@@ -372,7 +454,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
-Seven of the nine recover more than their sensors produced, which is what a
+Eight of the ten recover more than their sensors produced, which is what a
 tracker is for. The two that do not are the two with the least to work with in
 opposite directions: `sensor-drift`'s sensors detect 98% of everything, so
 there are almost no gaps left to coast through, and `wildlife` has four animals
@@ -460,5 +542,9 @@ detector" above.
 - **MOT20 has not been tuned for.** All four sequences now replay on the same
   pedestrian profile MOT17 uses, and score higher than MOT17 does on it; a
   profile fitted to dense crowds has not been tried.
-- **Nothing above 226 people per frame has been measured**, and at that density
-  one core manages 12 frames per second.
+- **Nothing above 226 people per frame has been measured on real data**, and at
+  that density one core manages 12 frames per second. Synthetically the engine
+  has now been measured to 1365 tracks.
+- **Sensor availability is inferred, not known.** A coverage gap is guessed at
+  from whether anything reported at all. A real deployment knows which cameras
+  are down; there is no interface for it to say so.

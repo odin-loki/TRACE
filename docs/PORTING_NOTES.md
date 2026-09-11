@@ -1,8 +1,8 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Twenty-eight substantive defects were
-found — eleven inherited from `reference/aria_intel.py`, seventeen introduced or
-exposed by the port itself — while getting the simulations, then real
+The C++23 port is not a transliteration. Thirty-three substantive defects were
+found — eleven inherited from `reference/aria_intel.py`, twenty-two introduced
+or exposed by the port itself — while getting the simulations, then real
 MOTChallenge data, and finally the engine's own cost profile to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
 changed — partly as a changelog, partly because several are easy traps to fall
@@ -588,6 +588,90 @@ from **181 ms to 125 ms**, and overall cost from **n^1.23 to n^1.12**. The
 capability is unchanged — `transit-hub` still gives its first convergence
 warning at the same 15 s lead time, and `evader` is bit-identical.
 
+## 29. The two reacquisition cues were exclusive, not complementary
+
+**Severity: high.** `try_reacquire` scores a dormant track two ways — pattern of
+life ("this is where he is at this hour, most days") and kinematics ("he went
+that way two seconds ago") — and the comment above it calls them complementary,
+for two very different timescales. The code was an `if/else` on whether a
+pattern of life had been fitted. A track with a fitted baseline was therefore
+judged on hour-of-day *alone*, even when it had vanished four seconds earlier
+and its own velocity said exactly where it went.
+
+Over any run short enough that hour-of-day carries no information — which is
+every simulation here and most of MOT — a fitted baseline predicts the middle
+of the entity's path. The gate rejects the reappearance, and every entity comes
+back as a new track.
+
+**Fix:** both cues are evaluated and the better one wins. They are two
+estimates of the same quantity, so the right combination is whichever explains
+the sighting better, not whichever was checked first. Measured across twelve
+seeds, identity retention across a 20-scan outage goes from 0–1 of 4 to **4 of
+4 on every seed**.
+
+## 30. Reacquisition was not one-to-one
+
+**Severity: high.** Defect 1 in this file is "association was not one-to-one".
+Reacquisition is the same problem — each reappearing detection is at most one
+vanished track — and was being solved one detection at a time, each taking
+whichever dormant track scored best for it, in whatever order the detections
+arrived. It fails the same way: it hands one entity's identity to its
+neighbour. Five people walking a corridor through a blackout had their
+identities rotated by one position, every time.
+
+**Fix:** one matching over all reappearing detections and all dormant tracks,
+using the gated minimum-cost matcher that already existed for scoring. That
+matcher moved from `trace::sim` to `trace` — the engine needs it, not only the
+scoring harness, and a core that depends on the simulation layer has the
+dependency backwards.
+
+## 31. The reacquisition score rewarded vagueness
+
+**Severity: medium.** The score was `-distance / uncertainty`, which tends to
+zero — the best score available — as uncertainty grows. The vaguest dormant
+track therefore won every detection it was gated for. Being uncertain is not
+evidence.
+
+**Fix:** a Gaussian log-likelihood with its normalisation term,
+`-½(d/σ)² - log σ`. The `log σ` is what makes a confident near-miss beat a vague
+one, and it is also what makes the two cues of defect 29 comparable at all —
+without a normalisation they are not on the same scale and "the better one
+wins" means nothing.
+
+## 32. The kinematic prediction double-counted the coast
+
+**Severity: low.** It extrapolated `position + velocity × (now − last_seen)`.
+But a track keeps being propagated for several scans after its final hit —
+that is what coasting is — and only freezes when it goes dormant, so its stored
+position is *already* advanced. Extrapolating again from the last sighting
+re-applies the coast the filter had already applied.
+
+**Fix:** extrapolate from `dormant_since_scan`, which is when the state
+actually stopped. The uncertainty still grows with the whole gap since the last
+sighting, because that is how long it has been since anything was confirmed.
+
+## 33. An empty scan was read as evidence of absence
+
+**Severity: high.** A scan with nothing in it is genuinely ambiguous: either
+nothing is there, or nobody is looking. The engine took it as evidence of
+absence and applied a miss to every track. At `p_detection` 0.9 four
+consecutive misses is overwhelming evidence that an entity has gone, so a
+camera estate that dropped out for four scans lost every track it held —
+`max_coast_s` and `dormant_timeout` never came into it, because existence had
+already collapsed.
+
+The engine is never told which sensors are live, and it turns out not to need
+to be. A scene that has been producing detections every scan and abruptly
+produces none has far more likely lost its sensors than every entity at once.
+Silence from everything simultaneously is not evidence about any one thing.
+
+**Fix:** an empty scan following a run of non-empty ones withholds the
+evidential penalty, while time still passes — dormancy and pruning are on
+wall-clock, so an outage cannot hold a track open indefinitely. `ScanReport`
+carries a `coverage_gap` flag, because the two cases are genuinely different
+and only the operator can confirm which it was. The protection lapses once
+silence has persisted long enough to be the more likely explanation.
+
 ## A note on measuring before optimising
 
 Two hypotheses about where the time went were wrong before the third was right.
@@ -645,10 +729,16 @@ Stated plainly, because the simulations make them measurable:
   MOTA penalty there is missed detections. The earlier claim in this file that
   an appearance cue was "the obvious next step" was wrong, and the measurement
   that disproved it is in [VALIDATION.md](VALIDATION.md).
-- **The convergence detector is still quadratic.** Defect 20 bought a factor of
-  twenty in its constant, not a better exponent. At 400 tracks it is 102 ms of
-  a 181 ms scan — 56% of the engine. Gating its pair loop on the spatial index,
-  as the other pairwise detectors already do, is outstanding work.
+- **The velocity estimate needs `speed × heading-hold ≫ position noise`.**
+  Below a ratio of about 5 it is not an estimate, and coasting and
+  reacquisition are only as good as it is. `CityCameraSurveillance` sits at 1.4
+  for a walking pedestrian. This is a modelling constraint rather than a defect
+  — a genuinely twisty target observed by a coarse sensor has no measurable
+  velocity — but any profile must be checked against it before a claim about
+  coasting is worth making. The numbers are in [VALIDATION.md](VALIDATION.md).
+- **A blackout is only inferred, never known.** Defect 33 guesses at sensor
+  availability from whether anything reported. A deployment knows which cameras
+  are down and could simply say so; there is no interface for it to.
 - **Regime identification needs the per-scan motion difference to exceed the
   measurement noise.** Where it does not, the regime posterior correctly falls
   back on the transition prior — correct, but not informative.
