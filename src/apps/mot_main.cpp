@@ -37,11 +37,26 @@ struct ClearMot {
     long id_switches{0};
     Real distance_sum{0.0};
 
-    /// Last track id seen for each ground-truth identity.
+    /// Last track id seen for each ground-truth identity. Per sequence, so a
+    /// plain id is enough here.
     std::map<int, std::string> last_match;
-    /// Frames each ground-truth identity was present / matched.
-    std::map<int, long> gt_frames;
-    std::map<int, long> matched_frames;
+
+    /// Frames each ground-truth identity was present / matched, keyed by
+    /// (sequence, identity).
+    ///
+    /// MOTChallenge numbers its ground-truth identities from 1 within each
+    /// sequence, so person 1 of MOT17-02 and person 1 of MOT17-04 are
+    /// different people wearing the same integer. Pooled on the raw id, the
+    /// 2,388 identities of the MOT17 train split collapse into 188 buckets and
+    /// the OVERALL mostly-tracked and mostly-lost figures describe blended
+    /// pseudo-identities that correspond to nobody. Per-sequence figures were
+    /// never affected; only the pooled ones.
+    std::map<std::pair<int, int>, long> gt_frames;
+    std::map<std::pair<int, int>, long> matched_frames;
+
+    /// Which sequence this accumulator is recording, so the keys above stay
+    /// distinct once several are merged.
+    int seq{0};
 
     Real latency_sum{0.0};
     long frames{0};
@@ -69,8 +84,8 @@ struct ClearMot {
     [[nodiscard]] std::pair<Real, Real> mt_ml() const {
         if (gt_frames.empty()) return {0.0, 0.0};
         long mt = 0, ml = 0;
-        for (const auto& [id, total] : gt_frames) {
-            const auto it = matched_frames.find(id);
+        for (const auto& [key, total] : gt_frames) {
+            const auto it = matched_frames.find(key);
             const Real frac = it == matched_frames.end()
                                   ? 0.0
                                   : static_cast<Real>(it->second) / static_cast<Real>(total);
@@ -140,7 +155,7 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
     }
 
     m.gt_total += static_cast<long>(gt.size());
-    for (const auto& b : gt) ++m.gt_frames[b.id];
+    for (const auto& b : gt) ++m.gt_frames[{m.seq, b.id}];
 
     for (std::size_t i = 0; i < gt.size(); ++i) {
         const int j = gt_to_track[i];
@@ -150,7 +165,7 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
         }
         const auto& track = tracks[static_cast<std::size_t>(j)];
         ++m.true_positives;
-        ++m.matched_frames[gt[i].id];
+        ++m.matched_frames[{m.seq, gt[i].id}];
         m.distance_sum += distance(track.position, gt[i].foot());
 
         const auto it = m.last_match.find(gt[i].id);
@@ -225,8 +240,10 @@ DetectorCeiling detector_ceiling(const MotSequence& seq, Real min_score,
 
 ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
                       bool verbose, MotSequence::Appearance appearance,
-                      Real appearance_weight, bool adaptive_noise) {
+                      Real appearance_weight, bool adaptive_noise,
+                      int seq_index) {
     ClearMot m;
+    m.seq = seq_index;
     const MotSequence seq = load_mot_sequence(dir);
     if (!seq.valid()) {
         std::printf("  %-22s (no det/gt found)\n",
@@ -322,14 +339,17 @@ int main(int argc, char** argv) {
 
     ClearMot overall;
     DetectorCeiling ceiling_all;
+    int seq_index = 0;
     for (const auto& dir : sequences) {
+        ++seq_index;
         const Real w = appearance_weight >= 0.0
                            ? appearance_weight
                            : MotPedestrianPixels(30).appearance_weight;
         const ClearMot m = run_sequence(
             dir, min_score, radius, verbose,
             appearance == MotSequence::Appearance::None ? appearance : appearance,
-            appearance == MotSequence::Appearance::None ? 0.0 : w, adaptive_noise);
+            appearance == MotSequence::Appearance::None ? 0.0 : w, adaptive_noise,
+            seq_index);
         if (m.frames == 0) continue;
         print_result(dir.substr(dir.find_last_of('/') + 1), m);
 
@@ -347,8 +367,8 @@ int main(int argc, char** argv) {
         overall.distance_sum += m.distance_sum;
         overall.latency_sum += m.latency_sum;
         overall.frames += m.frames;
-        for (const auto& [id, n] : m.gt_frames) overall.gt_frames[id] += n;
-        for (const auto& [id, n] : m.matched_frames) overall.matched_frames[id] += n;
+        for (const auto& [key, n] : m.gt_frames) overall.gt_frames[key] += n;
+        for (const auto& [key, n] : m.matched_frames) overall.matched_frames[key] += n;
     }
 
     if (overall.frames > 0) {

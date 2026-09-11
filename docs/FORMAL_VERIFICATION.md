@@ -10,14 +10,15 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Seven did not, and are set out below with the
-evidence. Six are fixed; the seventh is a calibration decision that belongs to
+Ten derivations came back sound. Eight did not, and are set out below with the
+evidence. Seven are fixed; the eighth is a calibration decision that belongs to
 whoever owns the engine, and is reported rather than patched over.
 
-Three of the seven are in the **scorer** rather than the engine — the code that
-decides which track corresponds to which real entity, and what counts as the
-tracker changing its mind. None of them changes how TRACE tracks anything. All
-three change what this repository was reporting about it.
+Four of the eight are in the **scorer** rather than the engine — the code that
+decides which track corresponds to which real entity, what counts as the
+tracker changing its mind, and which ground-truth identity is which. None of
+them changes how TRACE tracks anything. All four change what this repository
+was reporting about it.
 
 ---
 
@@ -487,6 +488,35 @@ Identity switches were 9.3% of the MOTA penalty on MOT17-02-FRCNN as previously
 measured; they are 0.3% of it now. Eliminating every switch would buy 0.2 MOTA
 points.
 
+### 8. Pooled mostly-tracked and mostly-lost merged people across sequences — **fixed**
+
+`src/apps/mot_main.cpp`. Both figures are fractions over ground-truth
+identities: an identity is mostly-tracked if it was matched in at least 80% of
+the frames it appeared in, and mostly-lost below 20%. The per-sequence
+accumulator keyed those frame counts by the raw ground-truth id, and the
+OVERALL accumulator summed them on the same key.
+
+MOTChallenge numbers its identities from 1 within each sequence. Person 1 of
+MOT17-02 and person 1 of MOT17-04 are different people wearing the same
+integer, so the 2,388 identities of the MOT17 train split were being added
+together into **188** buckets — a collapse of nearly thirteen to one. A bucket
+that blends a well-tracked person with an untracked one lands in the middle
+band, neither above 80% nor below 20%, and almost every bucket did:
+
+| MOT17 train, pooled | before | after |
+|---|---|---|
+| Mostly tracked | 6.5% | **30.3%** |
+| Mostly lost | 6.5% | **26.1%** |
+
+Both were understated by about a factor of four, in opposite directions —
+the merge manufactured an implausibly tidy result in which hardly any identity
+was either well tracked or lost. Keying by (sequence, identity) separates them.
+
+Nothing else moves: MOTA, MOTP, recall, precision and identity switches do not
+depend on these maps, and the per-sequence figures were always right, since
+within one sequence the raw id is unique. Only the pooled line was wrong, which
+is why it survived — every sequence in the table above it was correct.
+
 ---
 
 ## Noted in passing, not chased
@@ -531,7 +561,7 @@ million SAT variables from a handful of divisions. They are marked and reported
 rather than dropped, because a suite that hid them would read as more complete
 than it is.
 
-Of the seven findings, exactly one — the existence update — was found by a
+Of the eight findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
 the formula is supposed to compute and comparing. Model checking earned its
 place by settling things reading could not, in both directions. It proved the

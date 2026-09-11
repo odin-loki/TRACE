@@ -30,8 +30,8 @@ supported but switched off here, for reasons measured below.
 | MOTP | 23.0 px |
 | Recall | 59.1% |
 | Precision | 89.7% |
-| Mostly tracked | 6.5% |
-| Mostly lost | 6.5% |
+| Mostly tracked | 30.3% |
+| Mostly lost | 26.1% |
 | Identity switches | 2,445 |
 | Throughput | 5.1 ms/frame, one core |
 
@@ -88,8 +88,17 @@ what the metric is defined to measure. The 27.4 px this document used to report
 was neither — it was a per-frame optimum computed by a broken matcher. Recall
 and precision fall slightly for the same reason.
 
-Mostly-tracked fell from 10.0% to 6.5% and mostly-lost rose from 3.5% to 6.5%.
-Those move in the unflattering direction and they are the honest numbers.
+Mostly-tracked and mostly-lost moved further than anything else, from 10.0%
+and 3.5% to **30.3%** and **26.1%**, and that is a fourth defect rather than a
+consequence of the first three. Both figures are pooled over ground-truth
+identities, and MOTChallenge numbers its identities from 1 within each
+sequence — so person 1 of MOT17-02 and person 1 of MOT17-04 were being added
+together. The 2,388 identities of the train split collapsed into 188 buckets,
+and a bucket blending a well-tracked person with an untracked one lands in the
+middle band that is neither mostly-tracked nor mostly-lost. Almost everything
+ended up in that band, which is why both figures were small. Keying by
+(sequence, identity) separates them again. The per-sequence figures in the
+tables below were never affected; only the pooled ones were.
 
 The simulator figures elsewhere in this document are affected far less, and
 were checked rather than assumed: across all twelve scenarios the fix moves
@@ -164,7 +173,7 @@ for them:
 | MOT20-02 | 72 | 56.0% | 95.1% | 59.5% | 7.0% | 18 |
 | MOT20-03 | 148 | 61.7% | 96.8% | 64.2% | 13.2% | 42 |
 | MOT20-05 | 226 | 62.9% | 96.1% | 66.0% | 9.2% | 70 |
-| **Overall** | **127** | **61.7%** | **96.2%** | **64.6%** | **4.9%** | **43** |
+| **Overall** | **127** | **61.7%** | **96.2%** | **64.6%** | **10.2%** | **44** |
 
 | | |
 |---|---|
