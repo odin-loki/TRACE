@@ -114,10 +114,11 @@ void Track::update_hit(const Observation& obs, Real scan_dt) {
     mrate_ = static_cast<Real>(n_hit_) / std::max(age_, 1);
 }
 
-void Track::update_miss() {
-    const Real L = 1.0 - profile_->p_detection;
+void Track::update_miss(Real p_detect) {
+    const Real pd = p_detect >= 0.0 ? p_detect : profile_->p_detection;
+    const Real L = 1.0 - pd;
     r_ = std::clamp(r_ * L / (r_ * L + (1.0 - r_) + 1e-300), 0.0, 1.0);
-    pi_r_ *= (1.0 - profile_->p_detection * kPossAlpha);
+    pi_r_ *= (1.0 - pd * kPossAlpha);
     ++n_miss_;
 }
 

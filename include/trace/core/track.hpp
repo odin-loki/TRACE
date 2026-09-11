@@ -44,7 +44,9 @@ public:
     // -- Lifecycle ----------------------------------------------------------
     void predict();
     void update_hit(const Observation& obs, Real scan_dt);
-    void update_miss();
+    /// `p_detect` negative means "use the profile's assertion", which is the
+    /// default and what every caller did before the estimate existed.
+    void update_miss(Real p_detect = -1.0);
 
     /// Record that `source` gave this track a detection in `scan`.
     ///

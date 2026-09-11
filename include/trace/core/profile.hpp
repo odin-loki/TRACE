@@ -63,6 +63,14 @@ struct DomainProfile {
     /// should keep it until someone has measured the difference.
     bool adaptive_meas_noise{false};
 
+    /// Learn each sensor's actual detection probability from how often it
+    /// reports the tracks it has been feeding, and use that in the existence
+    /// update instead of `p_detection`.
+    ///
+    /// Off by default, for the same reason as `adaptive_meas_noise`: the
+    /// estimate is sound, and whether acting on it helps depends on the scene.
+    bool adaptive_p_detection{false};
+
     std::array<Real, static_cast<std::size_t>(Modality::Count)> modality_weights{
         0.95, 0.82, 0.75, 0.65, 0.55};
 

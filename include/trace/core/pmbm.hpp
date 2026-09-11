@@ -72,6 +72,38 @@ private:
     std::unordered_map<std::string, State> by_source_;
 };
 
+/// Learns each sensor's actual detection probability, pooled across tracks.
+///
+/// `p_detection` is what decides how much a miss counts against a track, and
+/// like `meas_noise_var` it is asserted by the profile and never checked. A
+/// profile that overstates it kills tracks during any thin patch: at 0.9, four
+/// consecutive misses is overwhelming evidence the entity has gone.
+///
+/// Pooled *per source* rather than per track, deliberately. A per-track
+/// estimate is circular - a track nothing detects would learn that nothing
+/// detects it, conclude its own misses are uninformative, and become immortal.
+/// A sensor's detection rate is a property of the sensor and the geometry, and
+/// one spurious track cannot drag a pooled estimate far.
+class DetectionRateEstimator {
+public:
+    /// One trial: a source that has recently been feeding a track either did
+    /// or did not report it this scan.
+    void record(const std::string& source_id, bool detected);
+
+    /// This source's estimated detection probability, or `fallback` until
+    /// there is enough evidence to say otherwise.
+    [[nodiscard]] Real rate(const std::string& source_id, Real fallback) const;
+
+    [[nodiscard]] std::vector<std::pair<std::string, Real>> rates() const;
+
+private:
+    struct State {
+        Real ema{-1.0};
+        int samples{0};
+    };
+    std::unordered_map<std::string, State> by_source_;
+};
+
 /// Running trust score per sensor. A source whose reports repeatedly fail to
 /// match any track loses influence — the cheapest available defence against a
 /// spoofed or misaligned feed.
@@ -249,6 +281,11 @@ public:
     void predict();
     void update(const std::vector<Observation>& observations, Real timestamp);
 
+    /// What the engine has learned about each sensor's detection probability.
+    [[nodiscard]] std::vector<std::pair<std::string, Real>> detection_rates() const {
+        return detect_rate_.rates();
+    }
+
     /// What the engine has learned about each sensor's actual measurement
     /// noise, as a multiple of what its profile asserts.
     [[nodiscard]] std::vector<std::pair<std::string, Real>> noise_scales() const {
@@ -324,6 +361,9 @@ private:
     ClutterEstimator clutter_;
     SourceCredibility cred_;
     MeasurementNoiseEstimator noise_;
+    DetectionRateEstimator detect_rate_;
+    /// track id -> source -> the scan that source last fed it.
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> feeders_;
     GibbsAssigner gibbs_;
 
     /// Unassigned detections from the previous scan, for two-point initiation.

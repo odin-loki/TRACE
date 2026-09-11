@@ -60,6 +60,53 @@ void ClutterEstimator::update(int n_unassigned) {
 }
 
 // ---------------------------------------------------------------------------
+// DetectionRateEstimator
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr Real kPdDecay = 0.98;
+constexpr int kPdMinSamples = 40;
+/// A sensor that fed a track this recently is assumed to still cover it. Long
+/// enough to survive an ordinary run of misses, short enough that an entity
+/// which has genuinely walked out of shot stops counting against the sensor.
+constexpr int kFeederWindow = 10;
+/// The estimate never says a sensor is hopeless: that would make every miss
+/// uninformative and every track immortal.
+constexpr Real kPdFloor = 0.05;
+constexpr Real kPdCeil = 0.99;
+
+}  // namespace
+
+void DetectionRateEstimator::record(const std::string& source_id, bool detected) {
+    if (source_id.empty()) return;
+    auto& st = by_source_[source_id];
+    const Real x = detected ? 1.0 : 0.0;
+    st.ema = st.ema < 0.0 ? x : kPdDecay * st.ema + (1.0 - kPdDecay) * x;
+    ++st.samples;
+}
+
+Real DetectionRateEstimator::rate(const std::string& source_id,
+                                  Real fallback) const {
+    const auto it = by_source_.find(source_id);
+    if (it == by_source_.end() || it->second.samples < kPdMinSamples ||
+        it->second.ema < 0.0) {
+        return fallback;
+    }
+    return std::clamp(it->second.ema, kPdFloor, kPdCeil);
+}
+
+std::vector<std::pair<std::string, Real>> DetectionRateEstimator::rates() const {
+    std::vector<std::pair<std::string, Real>> out;
+    for (const auto& [id, st] : by_source_) {
+        if (st.samples < kPdMinSamples || st.ema < 0.0) continue;
+        out.emplace_back(id, std::clamp(st.ema, kPdFloor, kPdCeil));
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // MeasurementNoiseEstimator
 // ---------------------------------------------------------------------------
 
@@ -652,6 +699,11 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         if (!coverage_gap_) {
             for (auto& t : tracks_) t->update_miss();
         }
+        // Deliberately not recording detection trials here. A scan with no
+        // detections at all says nothing about any individual sensor's
+        // detection probability - it is the scene, or the estate, not the
+        // sensor - and counting it would drive every estimate towards zero
+        // during exactly the outages the estimate is supposed to survive.
         prune(timestamp);
         return;
     }
@@ -689,10 +741,48 @@ void PmbmManager::update(const std::vector<Observation>& observations,
                     static_cast<int>(assigned.size()));
     const Real cd = clutter_.density(area_.volume());
 
+    // How often does a sensor actually report the tracks it has been feeding?
+    // One trial per (track, recent feeder) pair per scan. Pooled per source in
+    // the estimator, so one spurious track cannot move it far.
+    const auto effective_pd = [&](const std::string& track_id) {
+        if (!profile_->adaptive_p_detection) return -1.0;
+        const auto fit = feeders_.find(track_id);
+        if (fit == feeders_.end()) return -1.0;
+        // The best chance any sensor still covering this track had of seeing
+        // it. Taking the best rather than an average is the conservative
+        // reading of a miss: if one good sensor should have seen it and did
+        // not, that is the informative failure.
+        Real best = -1.0;
+        for (const auto& [src, last] : fit->second) {
+            if (scan_ - last > kFeederWindow) continue;
+            best = std::max(best, detect_rate_.rate(src, profile_->p_detection));
+        }
+        return best;
+    };
+
     for (std::size_t i = 0; i < tracks_.size(); ++i) {
         const auto it = track_hits.find(static_cast<int>(i));
+        const std::string& tid = tracks_[i]->id();
+
+        if (profile_->adaptive_p_detection) {
+            std::set<std::string> hit_by;
+            if (it != track_hits.end()) {
+                for (const Observation* o : it->second) hit_by.insert(o->source_id);
+            }
+            auto& fed = feeders_[tid];
+            for (auto f = fed.begin(); f != fed.end();) {
+                if (scan_ - f->second > kFeederWindow) {
+                    f = fed.erase(f);
+                    continue;
+                }
+                detect_rate_.record(f->first, hit_by.count(f->first) != 0);
+                ++f;
+            }
+            for (const std::string& src : hit_by) fed[src] = scan_;
+        }
+
         if (it == track_hits.end()) {
-            tracks_[i]->update_miss();
+            tracks_[i]->update_miss(effective_pd(tid));
             continue;
         }
 

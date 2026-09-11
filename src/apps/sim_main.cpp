@@ -33,6 +33,7 @@ struct ScenarioSpec {
 /// measures the same thing everywhere rather than in whichever scenario
 /// happened to read it.
 bool g_adaptive_noise = false;
+bool g_adaptive_pd = false;
 
 std::vector<Vec2> line(Vec2 a, Vec2 b, int steps) {
     std::vector<Vec2> out;
@@ -49,6 +50,12 @@ void report(const std::string& name, const Metrics& m, const Engine& eng,
     std::fputs(eng.performance_report().c_str(), stdout);
     // What the engine worked out about its sensors' real measurement noise,
     // when it was asked to. Silent otherwise, which is the default.
+    const auto rates = eng.detection_rates();
+    if (!rates.empty()) {
+        std::printf("  learned p_d   ");
+        for (const auto& [id, r] : rates) std::printf(" %s %.2f", id.c_str(), r);
+        std::printf("   (profile asserts %.2f)\n", eng.config().profile.p_detection);
+    }
     const auto scales = eng.noise_scales();
     if (!scales.empty()) {
         std::printf("  learned noise ");
@@ -73,6 +80,7 @@ void run_transit_hub(std::uint64_t seed, bool verbose) {
     DomainProfile p = IndoorVenue();
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 200, 0, 120};
     s.engine_config.high_value_locations = {Vec2{100, 60}};  // the concourse
     s.engine_config.seed = seed;
@@ -158,6 +166,7 @@ void run_dark_vessel(std::uint64_t seed, bool verbose) {
     const Area basin{0, 3000000, 0, 1200000};
     s.engine_config.profile = Maritime();
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = basin;
     s.engine_config.seed = seed;
 
@@ -234,6 +243,7 @@ void run_anpr_corridor(std::uint64_t seed, bool verbose) {
     p.parallel_vel_cos = 0.95;
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 6000, 0, 800};
     s.engine_config.seed = seed;
 
@@ -303,6 +313,7 @@ void run_warehouse(std::uint64_t seed, bool verbose) {
     wp.loiter_min_s = 300.0;
     s.engine_config.profile = wp;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 120, 0, 80};
     s.engine_config.high_value_locations = {Vec2{110, 40}};  // the loading dock
     s.engine_config.seed = seed;
@@ -385,6 +396,7 @@ void run_evader(std::uint64_t seed, bool verbose) {
     p.sdr_window = 24;
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 2000, 0, 2000};
     s.engine_config.high_value_locations = {Vec2{1000, 1000}};
     s.engine_config.seed = seed;
@@ -457,6 +469,8 @@ void run_wildlife(std::uint64_t seed, bool verbose) {
     s.engine_config.profile = WildlifeTelemetry();
 
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 60000, 0, 60000};
     s.engine_config.high_value_locations = {Vec2{30000, 30000}};  // waterhole
     s.engine_config.seed = seed;
@@ -518,6 +532,7 @@ void run_spoofing(std::uint64_t seed, bool verbose) {
     p.meas_noise_var = 36.0;
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 800, 0, 600};
     s.engine_config.seed = seed;
 
@@ -700,6 +715,8 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
     s.engine_config.profile = p;
 
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 100, 0, 100};
     s.engine_config.high_value_locations = {Vec2{80.0, 50.0}};  // cash-out region
     s.engine_config.seed = seed;
@@ -934,6 +951,7 @@ void run_decoy_split(std::uint64_t seed, bool verbose) {
     p.appearance_sigma = 0.35;
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 400, 0, 400};
     s.engine_config.seed = seed;
 
@@ -1120,6 +1138,7 @@ void run_coordinated_evasion(std::uint64_t seed, bool verbose) {
     p.chokepoint_m = 20.0;
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 1000, 0, 600};
     s.engine_config.seed = seed;
 
@@ -1318,6 +1337,7 @@ void run_weather(std::uint64_t seed, bool verbose) {
     p.model_trans = {{{{0.92, 0.08}}, {{0.25, 0.75}}}};
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 800, 0, 400};
     s.engine_config.seed = seed;
 
@@ -1487,6 +1507,7 @@ void run_sensor_drift(std::uint64_t seed, bool verbose) {
     p.meas_noise_var = 9.0;
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 600, 0, 300};
     s.engine_config.seed = seed;
 
@@ -1644,6 +1665,7 @@ void run_blackout(std::uint64_t seed, bool verbose) {
                       {{0.20, 0.05, 0.75}}}};
     s.engine_config.profile = p;
     s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
+    s.engine_config.profile.adaptive_p_detection = g_adaptive_pd;
     s.engine_config.area = Area{0, 900, 0, 300};
     s.engine_config.seed = seed;
 
@@ -1859,6 +1881,8 @@ int main(int argc, char** argv) {
             seed = std::strtoull(argv[++i], nullptr, 10);
         } else if (a == "--adaptive-noise") {
             g_adaptive_noise = true;
+        } else if (a == "--adaptive-pd") {
+            g_adaptive_pd = true;
         } else if (a == "--appearance" && i + 1 < argc) {
             g_blackout_appearance = std::atof(argv[++i]);
             g_decoy_appearance = g_blackout_appearance;
