@@ -130,52 +130,86 @@ thing that is assumed rather than checked.
 
 ## Defects
 
-### 1. The matcher was not optimal on tall problems — **fixed**
+### 1. The matcher was not optimal — **fixed, in two goes**
 
-`src/core/assignment.cpp`. The Jonker–Volgenant search grows one augmenting
-path per row and needs a free column to terminate on. With more rows than
-columns the later rows have none: `delta` stays infinite, the search breaks
-out, and the potentials it had already shifted stay shifted.
+`src/core/assignment.cpp`. Two independent defects in one function, and the
+second was only found because the first fix was checked against the wrong
+population.
 
-What comes back is still a valid matching of exactly the right **size** —
-every column gets a row — so no caller could detect it. The pairs are simply
-not the cheapest ones. Against exhaustive search over 4000 random matrices per
-shape:
+**(a) Tall matrices.** The Jonker–Volgenant search grows one augmenting path
+per row and needs a free column to terminate on. With more rows than columns
+the later rows have none: `delta` goes infinite, the search breaks out, and the
+potentials it had already shifted stay shifted. Matching is symmetric, so the
+fix is to solve the transpose when rows outnumber columns and swap the two maps
+back.
 
-| shape | sub-optimal, before | mean cost excess (scale of 10) | after |
+**(b) Forbidden pairs.** The same infinite `delta` arises, for the same reason,
+whenever a row has no admissible column — which needs no particular shape at
+all, only a gated-out pair. Worse, when the dead end is reached on the second or
+later iteration of the search, `j0` is sitting on an *occupied* column rather
+than the sentinel, so the guard after the loop does not fire and the
+augmentation runs along a path that never reached a free column, evicting
+whichever row already held that column irrespective of cost.
+
+The fix for (b) is to replace every forbidden pair — non-finite, or finite but
+outside the gate — with a large finite `big_m` before the search, and apply the
+gate afterwards as before. `big_m` exceeds the total of every admissible cost,
+so a matching using one forbidden pair is dearer than any matching using none;
+minimising therefore takes as many admissible pairs as exist first and the
+cheapest such matching second, which is exactly the objective `match`
+documents.
+
+**How (b) was missed, and then found.** The probe that validated (a) drew every
+cost from `U(0, 10)` with the gate at 10, so every pair was admissible and no
+infinity ever entered the search. It reported 0 of 4000 suboptimal at every
+shape, and on that basis the matcher was called exact. It was exact — on
+matrices the engine never builds. `match_points` writes an infinity for every
+pair outside the radius and `reacquire_batch` fills its whole matrix with
+infinity before scoring, so a gated matrix is not an edge case here, it is the
+only case. A separate adversarial audit raised (b) with a two-by-two
+counterexample, which reproduced immediately.
+
+Against exhaustive search, 20,000 random instances per shape:
+
+| | ungated, before (a) | after (a) | gated, before (b) | after (b) |
+|---|---|---|---|---|
+| 2x2 | exact | exact | 6.5% costlier | exact |
+| 3x3 | exact | exact | 10.5% costlier | exact |
+| 4x4 | exact | exact | 10.7% costlier | exact |
+| 4x3 tall | 87% costlier | exact | 2.6% costlier | exact |
+| 6x2 tall | 96% costlier | exact | — | exact |
+| 3x4 wide | exact | exact | 2.5% costlier | exact |
+
+Cardinality was always right, under both defects, which is why neither was
+visible downstream. The minimal case for (b) is two by two:
+`match({{1, inf}, {2, inf}})` returned column 0 to row 1 at cost 2, leaving row
+0 — for whom it costs 1 — unmatched.
+
+Every caller is exposed. Truth-to-track scoring (`sim/scenario.cpp`,
+`apps/mot_main.cpp`) is tall exactly when the tracker is under-reporting, which
+is the regime the metrics exist to measure, and gated on every frame where
+anything falls outside the match radius. Reacquisition (`core/pmbm.cpp`) is
+tall whenever more detections reappear at once than went dormant, and is gated
+by construction — that one is engine behaviour, not scoring.
+
+Measured on MOT17 train, all 21 sequences, the matcher the only thing changing:
+
+| | original | after (a) | after (b) |
 |---|---|---|---|
-| 3x3 square | 0 / 4000 | — | 0 / 4000 |
-| 4x3 tall | 3497 / 4000 | 3.9 | 0 / 4000 |
-| 5x3 tall | 3818 / 4000 | 4.8 | 0 / 4000 |
-| 6x2 tall | 3850 / 4000 | 5.6 | 0 / 4000 |
-| 3x4 wide | 0 / 4000 | — | 0 / 4000 |
-| 3x6 wide | 0 / 4000 | — | 0 / 4000 |
+| MOTA | 48.2% | 50.5% | **51.3%** |
+| MOTP | 27.4 px | 15.7 px | **13.7 px** |
+| Identity switches | 19,156 | 11,621 | **8,686** |
+| Recall / Precision | 60.0 / 90.8 | 60.0 / 90.9 | 59.9 / 90.8 |
 
-Every caller hits the tall case. Truth-to-track scoring
-(`sim/scenario.cpp:58`, `apps/mot_main.cpp:94,168`) is tall exactly when the
-tracker is under-reporting, which is the regime the metrics exist to measure;
-reacquisition (`core/pmbm.cpp:611`) is tall whenever more detections reappear
-at once than there are dormant tracks to claim them, and that one is engine
-behaviour rather than scoring.
+Recall and precision never move, across both fixes. That is the signature of
+the whole class of fault: the number of matched pairs was always right, and
+only which pairs were wrong. Localisation error was overstated by a factor of
+two and identity switches by a factor of 2.2.
 
-Measured on MOT17-02-FRCNN, same detections, the matcher the only change:
-
-| | before | after |
-|---|---|---|
-| MOTA | 38.0% | **42.0%** |
-| MOTP | 40.2 px | **15.5 px** |
-| Identity switches | 947 | **198** |
-| Recall / Precision | 44.1 / 97.8 | 44.1 / 97.8 |
-
-Recall and precision do not move, which is the signature of the fault: the
-number of matched pairs was always right. MOTP and identity switches depend on
-**which** pairs, so localisation error was overstated 2.6x and identity
-switches 4.8x.
-
-Matching is symmetric, so the fix is to solve the transpose when rows outnumber
-columns and swap the two maps back. Proven minimum-cost at 3x2 (`v15`); checked
-against exhaustive search at eight shapes on both sides of square in
-`tests/test_assignment.cpp`.
+The tests now compare against exhaustive search at eight shapes on both sides
+of square, and at seven shapes again with a quarter of entries infinite and
+half the rest above the gate. The gated cases fail 568 times against a build
+with only (a) fixed.
 
 ### 2. Betweenness was normalised to [0,2] — **fixed**
 

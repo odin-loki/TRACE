@@ -26,21 +26,21 @@ supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **50.5%** |
-| MOTP | 15.7 px |
-| Recall | 60.0% |
-| Precision | 90.9% |
-| Mostly tracked | 7.1% |
-| Mostly lost | 6.5% |
-| Identity switches | 11,621 |
-| Throughput | 5.1 ms/frame, one core |
+| **MOTA** | **51.3%** |
+| MOTP | 13.7 px |
+| Recall | 59.9% |
+| Precision | 90.8% |
+| Mostly tracked | 7.6% |
+| Mostly lost | 7.1% |
+| Identity switches | 8,686 |
+| Throughput | 5.2 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
 version of this table reported a different operating point (`--min-score 0`,
 `--radius 120`) than the command printed beside it; that configuration gives
-46.4% MOTA and 111.7% of ceiling — four points of MOTA for one and a half
-points of ceiling recovery, since dropping the score filter buys recall (68.0%)
-at the cost of precision (81.5%).
+47.8% MOTA and 111.5% of ceiling — three and a half points of MOTA for one and
+a half points of ceiling recovery, since dropping the score filter buys recall
+(68.0%) at the cost of precision (81.3%).
 
 ### These numbers moved, and it was the scorer
 
@@ -58,21 +58,27 @@ the figures that depend on **which** pairs did:
 
 | MOT17 train, all 21 sequences | before | after |
 |---|---|---|
-| Recall | 60.0% | 60.0% |
-| Precision | 90.8% | 90.9% |
-| MOTA | 48.2% | **50.5%** |
-| MOTP | 27.4 px | **15.7 px** |
-| Identity switches | 19,156 | **11,621** |
+| Recall | 60.0% | 59.9% |
+| Precision | 90.8% | 90.8% |
+| MOTA | 48.2% | **51.3%** |
+| MOTP | 27.4 px | **13.7 px** |
+| Identity switches | 19,156 | **8,686** |
 
 Recall and precision are count-only and are unchanged, which is the signature
 of the fault and the reason it survived this long: the headline recovery figure
 below, the one this document leans on hardest, was never affected. Localisation
-error was overstated by a factor of 1.7 and identity switches by 1.6.
+error was overstated by a factor of two and identity switches by 2.2.
 
-Mostly-tracked fell from 10.0% to 7.1% and mostly-lost rose from 3.5% to 6.5%.
+Mostly-tracked fell from 10.0% to 7.6% and mostly-lost rose from 3.5% to 7.1%.
 Those move in the unflattering direction and they are the honest numbers: a
 matching that spread tracks across ground-truth identities made each identity
 look better covered than it was.
+
+There were two defects in the matcher, not one, and the second was found only
+because the first fix was checked against matrices the engine never builds —
+every cost admissible, no gating. Both are set out in
+[FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md); the table above is the
+cumulative effect.
 
 The simulator figures elsewhere in this document are affected far less, and
 were checked rather than assumed: across all twelve scenarios the fix moves
@@ -112,20 +118,25 @@ a kinematics-only tracker.
 
 | Detector | MOTA range | Character |
 |---|---|---|
-| **SDP** (strongest) | 54.3 – **75.9%** | Best result: MOT17-04-SDP |
-| **FRCNN** | 42.0 – 63.0% | Precision routinely above 95% |
-| **DPM** (oldest) | 18.5 – 39.8% | Its false positives get promoted to tracks |
+| **SDP** (strongest) | 54.7 – **75.9%** | Best result: MOT17-04-SDP |
+| **FRCNN** | 42.1 – 65.0% | Precision routinely above 95% |
+| **DPM** (oldest) | 19.6 – 40.5% | Its false positives get promoted to tracks |
 
 DPM's range was 4–38% before the source-credibility work; discounting a source
 whose reports disagree with its peers is worth roughly ten MOTA points on the
 sequences where the detector is unreliable, and nothing at all where it is not.
 
 The detection threshold has a shallow optimum and falls away either side of it.
-On MOT17-02-DPM, sweeping it gives 18.1% MOTA at 0.0, 18.5% at the default
-0.15, and 16.1% at 0.30: a little filtering pays for itself, more does not,
-because recall dominates MOTA and beyond that point precision is being bought
-with it. The optimum is shallow — four tenths of a point between 0.0 and 0.15 —
-so the default is a reasonable choice rather than a tuned one. An earlier version of this document reported the same sweep as a
+On MOT17-02-DPM, sweeping it gives 20.9% MOTA at 0.0, 19.6% at the default
+0.15, and 16.4% at 0.30. **The default is no longer the best of the three.**
+Earlier versions of this document reported an optimum at 0.15, and that was
+measured through the broken matcher; with it corrected, filtering nothing beats
+filtering a little by 1.3 points, because recall dominates MOTA and the
+precision the filter buys is not worth the recall it costs. The default has not
+been changed here — moving it is a tuning decision that should be taken across
+all 21 sequences rather than from one — but it is no longer defensible as
+measured, and that is worth saying rather than leaving the old justification in
+place. An earlier version of this document reported the same sweep as a
 monotone loss (20.7% → 12.0%); that no longer reproduces. DPM remains a weak
 detector and no threshold rescues it.
 
@@ -138,11 +149,11 @@ for them:
 
 | Sequence | People/frame | MOTA | Precision | Recall | Mostly lost | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | 62 | **65.2%** | 98.6% | 67.4% | 8.1% | 11 |
-| MOT20-02 | 72 | 56.2% | 95.5% | 59.8% | 5.9% | 18 |
-| MOT20-03 | 148 | 60.8% | 96.7% | 64.2% | 11.8% | 44 |
-| MOT20-05 | 226 | 61.7% | 95.7% | 65.7% | 10.4% | 74 |
-| **Overall** | **127** | **60.8%** | **96.0%** | **64.5%** | **5.4%** | **45** |
+| MOT20-01 | 62 | **65.3%** | 98.6% | 67.4% | 8.1% | 12 |
+| MOT20-02 | 72 | 56.2% | 95.5% | 59.8% | 5.6% | 19 |
+| MOT20-03 | 148 | 60.8% | 96.7% | 64.1% | 11.7% | 42 |
+| MOT20-05 | 226 | 61.7% | 95.7% | 65.7% | 10.4% | 72 |
+| **Overall** | **127** | **60.8%** | **96.0%** | **64.5%** | **5.3%** | **45** |
 
 | | |
 |---|---|
@@ -217,7 +228,7 @@ asserts something the file never said, and it asserted the worst case.
 | MOT20-03 | MOTA | Mostly lost | Recovery of ceiling |
 |---|---|---|---|
 | before | 18.4% | 74.8% | 26% |
-| **after** | **60.8%** | **11.8%** | **117%** |
+| **after** | **60.8%** | **11.7%** | **117%** |
 
 The same two fixes are worth 2.7 points of ceiling recovery on MOT17, and took
 `wildlife` — the sparsest scenario in the suite, and the only one that had ever
@@ -584,28 +595,28 @@ for the mechanism to run at all:
 
 | Descriptor on MOT17-02-FRCNN | MOTA | Identity switches |
 |---|---|---|
-| `--appearance none` | 42.0% | 198 |
-| `--appearance oracle` (profile weight, 0.0) | 42.0% | 198 |
-| `--appearance oracle --appearance-weight 0.15` | **42.1%** | **179** |
-| `--appearance oracle --appearance-weight 0.35` | 42.0% | 211 |
+| `--appearance none` | 42.1% | 192 |
+| `--appearance oracle` (profile weight, 0.0) | 42.1% | 192 |
+| `--appearance oracle --appearance-weight 0.15` | **42.2%** | **167** |
+| `--appearance oracle --appearance-weight 0.35` | 42.0% | 207 |
 
-A *perfect* descriptor, handed the true identity of every detection, removes 19
-identity switches out of 198 and moves MOTA by a tenth of a point. Too much
+A *perfect* descriptor, handed the true identity of every detection, removes 25
+identity switches out of 192 and moves MOTA by a tenth of a point. Too much
 weight on it (0.35) makes matters worse. No reacquisition window or dormancy
 setting changed that.
 
 The arithmetic explains it. On MOT17-02-FRCNN, with 18,581 ground-truth boxes
-and 42.0% MOTA, the penalty decomposes as:
+and 42.1% MOTA, the penalty decomposes as:
 
 | Component | Count | Share of penalty |
 |---|---|---|
-| Missed detections | ~10,390 | **96.4%** |
-| Identity switches | 198 | 1.8% |
-| False positives | ~190 | 1.8% |
+| Missed detections | ~10,390 | **96.6%** |
+| Identity switches | 192 | 1.8% |
+| False positives | ~180 | 1.7% |
 
 Missed detections are capped by the detector — which TRACE already exceeds by
 coasting — so appearance can only address a fiftieth of the penalty.
-Eliminating *every* identity switch would be worth 1.1 MOTA points. And the
+Eliminating *every* identity switch would be worth 1.0 MOTA points. And the
 switches that remain are not the kind appearance fixes: they are fragmentation,
 where a person goes undetected for seconds and their coasted track has drifted
 too far to be recognised as theirs.
@@ -649,7 +660,7 @@ was wrong for this benchmark, and the measurement above is what disproved it.
 ## How to read this against published work
 
 Published MOT17 results using public detections generally sit around 50–60%
-MOTA. TRACE at 50.5% sits at the bottom of that range, and the reason is worth
+MOTA. TRACE at 51.3% sits at the bottom of that range, and the reason is worth
 stating plainly rather than explaining away:
 
 **TRACE has no *learned* appearance model.** Methods at the top of the MOT

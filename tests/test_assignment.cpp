@@ -189,6 +189,68 @@ void test_optimal_at_every_shape() {
     }
 }
 
+void test_optimal_with_gated_pairs() {
+    // Every cost matrix the engine actually builds contains forbidden pairs.
+    // `match_points` writes an infinity for anything outside the radius
+    // (assignment.cpp), and `reacquire_batch` fills with infinity and scores
+    // only the pairs that pass its own gate (pmbm.cpp). The random matrices in
+    // test_optimal_at_every_shape are drawn entirely inside the gate, so they
+    // exercise the one case that never occurs in practice.
+    //
+    // Left as infinities inside the search, a row with no admissible column
+    // made `delta` infinite; the loop then broke out of a shortest-path search
+    // that had never reached a free column and augmented along it anyway,
+    // evicting whichever row already held that column. 6.5% of 2x2 and 10.7%
+    // of 4x4 gated instances came back strictly costlier - always with the
+    // right number of pairs, so nothing downstream could detect it.
+    Rng rng(70104);
+    const std::pair<std::size_t, std::size_t> shapes[] = {
+        {2, 2}, {3, 3}, {4, 4}, {5, 3}, {3, 5}, {6, 4}, {4, 6}};
+    const Real gate = 10.0;
+    for (const auto& [n, m] : shapes) {
+        for (int trial = 0; trial < 300; ++trial) {
+            std::vector<std::vector<Real>> cost(n, std::vector<Real>(m));
+            for (auto& row : cost) {
+                for (auto& v : row) {
+                    // A mix of both ways a pair can be forbidden: a true
+                    // infinity, and a finite cost above the gate.
+                    v = rng.uniform() < 0.25
+                            ? std::numeric_limits<Real>::infinity()
+                            : rng.uniform(0.0, 20.0);
+                }
+            }
+            const Assignment a = match(cost, gate, /*exact_limit*/ 64);
+
+            std::size_t want_n = 0;
+            const Real want_cost = brute_force_min(cost, gate, &want_n);
+            CHECK(a.n_matched == want_n);
+            CHECK_NEAR(a.total_cost, want_cost, 1e-9);
+
+            // And nothing forbidden ever reaches the output.
+            for (std::size_t i = 0; i < n; ++i) {
+                const int j = a.row_to_col[i];
+                if (j < 0) continue;
+                const Real c = cost[i][static_cast<std::size_t>(j)];
+                CHECK(std::isfinite(c));
+                CHECK(c <= gate);
+                CHECK(a.col_to_row[static_cast<std::size_t>(j)] == static_cast<int>(i));
+            }
+        }
+    }
+}
+
+void test_gated_minimal_case() {
+    // The smallest matrix that shows it, worked out by hand. Column 1 is
+    // admissible to nobody, so row 1 has nowhere to go; the right answer is to
+    // leave it unmatched and give column 0 to row 0, which is cheaper there.
+    const Real inf = std::numeric_limits<Real>::infinity();
+    const Assignment a = match({{1.0, inf}, {2.0, inf}}, inf, /*exact_limit*/ 64);
+    CHECK(a.n_matched == 1);
+    CHECK(a.row_to_col[0] == 0);
+    CHECK(a.row_to_col[1] == -1);
+    CHECK_NEAR(a.total_cost, 1.0, 1e-12);
+}
+
 }  // namespace
 
 int main() {
@@ -202,5 +264,7 @@ int main() {
     test_exact_and_greedy_agree_on_easy_problems();
     test_tall_matrix_is_optimal();
     test_optimal_at_every_shape();
+    test_optimal_with_gated_pairs();
+    test_gated_minimal_case();
     return trace::test::summary("test_assignment");
 }

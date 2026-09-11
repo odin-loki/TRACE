@@ -27,17 +27,23 @@
  * Run against the pre-fix source this harness FAILS, which is what makes it a
  * regression test rather than a description.
  *
- * Costs are INTEGERS here, where v04's are doubles. That is not a shortcut and
- * it is not the mistake v04's header warns about. The sentinel only has to
- * behave like an infinity where it takes part in arithmetic, and the arithmetic
- * that can reach it is `minv[j] -= delta` -- which a finite sentinel would
- * wrongly make selectable. Here every cost is finite and inside the gate, so
- * the first pass of the inner loop gives every unused column a finite `minv`,
- * and the sentinel is never decremented. An assertion below states exactly
- * that, so the soundness of the integer encoding is checked rather than
- * assumed. Optimality is a combinatorial property; encoding it over integers
- * instead of IEEE doubles is the difference between a solvable instance and a
- * 4.9-million-variable one.
+ * Costs are INTEGERS here, where v04's are doubles, and the encoding is now
+ * exactly faithful rather than merely adequate. The source itself replaces
+ * every forbidden pair -- non-finite, or finite but outside the gate -- with a
+ * large FINITE `big_m` before the search begins (assignment.cpp), precisely so
+ * that no infinity can enter the arithmetic. So the search this harness models
+ * runs entirely over finite values, and an integer encoding of it is a
+ * translation rather than an approximation. Optimality is a combinatorial
+ * property; encoding it over integers instead of IEEE doubles is the
+ * difference between a solvable instance and a 4.9-million-variable one.
+ *
+ * Both kinds of forbidden pair are generated below, because the matrices the
+ * engine actually builds are full of them and a harness drawn entirely inside
+ * the gate exercises the one case that never occurs in practice. Leaving them
+ * as infinities inside the search was a second defect, independent of the
+ * shape one: a row with no admissible column made `delta` infinite, the search
+ * broke out without having reached a free column, and the augmentation ran
+ * along that path anyway. This harness fails against that version too.
  */
 #include "verif.h"
 
@@ -49,8 +55,8 @@
 /* hungarian_le: assignment.cpp:23-96, verbatim in control flow.
  * Requires n <= m. Writes the column chosen for each row into rtc (length n)
  * and the row chosen for each column into ctr (length m). */
-static int solve_le(const int cost[M][N], int n, int m,
-                    int rtc[M], int ctr[N], int* n_matched, int max_cost) {
+static int solve_le_gated(const int cost[M][N], const int orig[M][N], int n, int m,
+                          int rtc[M], int ctr[N], int* n_matched, int max_cost) {
     int u[M + 1], v[N + 1];   /* rows of the transpose = M, columns = N */
     int p[N + 1], way[N + 1];
     /* u is indexed by row and v, p, way by column, exactly as in
@@ -110,30 +116,56 @@ static int solve_le(const int cost[M][N], int n, int m,
     for (int j = 0; j < m; ++j) {
         if (p[j] < 0) continue;
         const int i = (int)p[j];
-        if (!(cost[i][j] < INF) || cost[i][j] > max_cost) continue;
-        rtc[i] = j; ctr[j] = i; total += cost[i][j]; ++(*n_matched);
+        const int oc = orig[i][j];
+        if (oc < 0 || oc > max_cost) continue;      /* forbidden: dropped */
+        rtc[i] = j; ctr[j] = i; total += oc; ++(*n_matched);
     }
     return total;
 }
 
+/* Is this pair usable at all? Mirrors the source's own test, which is applied
+ * both when building the working matrix and again at the gate. */
+static int admissible(int c, int max_cost) { return c >= 0 && c <= max_cost; }
+
 int main(void) {
-    /* Original problem: N rows by M columns, all costs admissible. */
+    /* N rows by M columns. A cost of -1 stands for a non-finite entry and a
+     * cost above MAXV for one the gate will reject: the two ways a pair can be
+     * forbidden, both generated. */
     int cost[N][M];
     for (int i = 0; i < N; ++i)
         for (int j = 0; j < M; ++j) {
             int c = nondet_int();
-            ASSUME(c >= 0 && c <= MAXV);
+            ASSUME(c >= -1 && c <= MAXV + 2);
             cost[i][j] = c;
         }
     const int max_cost = MAXV;
 
-    /* hungarian(): N > M, so solve the transpose (assignment.cpp:106-120). */
+    /* The working matrix: forbidden pairs become big_m, which exceeds the total
+     * of every admissible cost so a matching using one is dearer than any
+     * matching using none. */
+    int admissible_total = 0;
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < M; ++j)
+            if (admissible(cost[i][j], max_cost)) admissible_total += cost[i][j];
+    const int big_m = admissible_total + 1;
+
+    int wm[N][M];
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < M; ++j)
+            wm[i][j] = admissible(cost[i][j], max_cost) ? cost[i][j] : big_m;
+
+    /* hungarian(): N > M, so solve the transpose. */
     int t[M][N];
     for (int i = 0; i < N; ++i)
-        for (int j = 0; j < M; ++j) t[j][i] = cost[i][j];
+        for (int j = 0; j < M; ++j) t[j][i] = wm[i][j];
 
     int t_rtc[M], t_ctr[N], n_matched = 0;
-    const int total = solve_le(t, M, N, t_rtc, t_ctr, &n_matched, max_cost);
+    /* The gate is applied to the ORIGINAL costs, not the working ones. */
+    int t_orig[M][N];
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < M; ++j) t_orig[j][i] = cost[i][j];
+    const int total = solve_le_gated(t, t_orig, M, N, t_rtc, t_ctr, &n_matched,
+                                     max_cost);
     /* Rows of the transpose are the original columns, so the maps swap:
      * row_to_col == t_ctr, col_to_row == t_rtc. */
     const int* row_to_col = t_ctr;
