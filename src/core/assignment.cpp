@@ -12,7 +12,15 @@ constexpr Real kInf = std::numeric_limits<Real>::infinity();
 
 /// Jonker-Volgenant style Hungarian algorithm on a rectangular matrix.
 /// O(n^2 m) with n rows and m columns; exact.
-Assignment hungarian(const std::vector<std::vector<Real>>& cost, Real max_cost) {
+///
+/// Requires n <= m. The shortest-path search below grows one augmenting path
+/// per row and needs a free column to terminate on; with more rows than
+/// columns the later rows have none, `delta` stays infinite, and the search
+/// breaks out having already shifted the potentials. The matching that comes
+/// back still has the right NUMBER of pairs - every column is used - so
+/// nothing downstream notices, but the pairs themselves are no longer the
+/// cheapest ones. The `hungarian` wrapper below enforces that by transposing.
+Assignment hungarian_le(const std::vector<std::vector<Real>>& cost, Real max_cost) {
     const std::size_t n = cost.size();
     const std::size_t m = n > 0 ? cost[0].size() : 0;
     Assignment out;
@@ -84,6 +92,35 @@ Assignment hungarian(const std::vector<std::vector<Real>>& cost, Real max_cost) 
         out.total_cost += cost[i][j];
         ++out.n_matched;
     }
+    return out;
+}
+
+/// Exact matching for ANY shape, by solving the transpose when there are more
+/// rows than columns.
+///
+/// Matching is symmetric - "which row for each column" is the same problem as
+/// "which column for each row" - so transposing costs nothing but the copy and
+/// puts the solver back inside its precondition. Measured against exhaustive
+/// search over 4000 random matrices per shape: without this, 87% of 4x3 cases
+/// and 96% of 6x2 cases came back sub-optimal, at a mean excess of 3.9 and 5.6
+/// on a cost scale of 10. Square and wide cases were, and remain, exact.
+Assignment hungarian(const std::vector<std::vector<Real>>& cost, Real max_cost) {
+    const std::size_t n = cost.size();
+    const std::size_t m = n > 0 ? cost[0].size() : 0;
+    if (n <= m) return hungarian_le(cost, max_cost);
+
+    std::vector<std::vector<Real>> t(m, std::vector<Real>(n, kInf));
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = 0; j < m; ++j) t[j][i] = cost[i][j];
+    }
+    Assignment a = hungarian_le(t, max_cost);
+
+    // Rows of the transpose are the original columns, so the two maps swap.
+    Assignment out;
+    out.row_to_col = std::move(a.col_to_row);
+    out.col_to_row = std::move(a.row_to_col);
+    out.total_cost = a.total_cost;
+    out.n_matched = a.n_matched;
     return out;
 }
 

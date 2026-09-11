@@ -3,7 +3,15 @@
 // whose answer can be worked out by hand.
 #include "trace/core/assignment.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <functional>
+#include <limits>
+#include <utility>
+#include <vector>
+
+#include "trace/core/rng.hpp"
 
 #include "test_harness.hpp"
 
@@ -94,6 +102,93 @@ void test_exact_and_greedy_agree_on_easy_problems() {
     }
 }
 
+
+/// Exhaustive search over every gated matching: maximum cardinality first,
+/// cheapest total among those. That is the objective `match` claims - it pairs
+/// everything it can, then minimises what the pairing costs - so it is the
+/// objective the solver has to be checked against.
+///
+/// A column may go unmatched, which is not a detail: where columns outnumber
+/// rows some column MUST, and a reference that insisted on a full matching
+/// would report every wide problem as unsolvable rather than checking it.
+Real brute_force_min(const std::vector<std::vector<Real>>& cost, Real max_cost,
+                     std::size_t* out_matched = nullptr) {
+    const std::size_t n = cost.size(), m = cost[0].size();
+    std::vector<int> used(n, 0);
+    std::size_t best_n = 0;
+    Real best = 0.0;
+    const std::function<void(std::size_t, std::size_t, Real)> rec =
+        [&](std::size_t j, std::size_t cnt, Real acc) {
+            if (j == m) {
+                if (cnt > best_n || (cnt == best_n && acc < best)) {
+                    best_n = cnt;
+                    best = acc;
+                }
+                return;
+            }
+            rec(j + 1, cnt, acc);                      // leave column j unmatched
+            for (std::size_t i = 0; i < n; ++i) {
+                if (used[i] || !std::isfinite(cost[i][j]) || cost[i][j] > max_cost) continue;
+                used[i] = 1;
+                rec(j + 1, cnt + 1, acc + cost[i][j]);
+                used[i] = 0;
+            }
+        };
+    rec(0, 0, 0.0);
+    if (out_matched != nullptr) *out_matched = best_n;
+    return best;
+}
+
+void test_tall_matrix_is_optimal() {
+    // More rows than columns. The Jonker-Volgenant search needs a free column
+    // to terminate each augmenting path on, so with rows in excess it used to
+    // break out mid-search having already shifted the potentials, and returned
+    // a matching of the right SIZE built from the wrong PAIRS. Every column
+    // was still used, so no caller could detect it.
+    //
+    // This is not a corner case. Truth-to-track scoring is tall exactly when
+    // the tracker is under-reporting, which is the regime the metrics exist to
+    // measure, and reacquisition is tall whenever more detections reappear at
+    // once than there are dormant tracks to claim them.
+    const std::vector<std::vector<Real>> cost{
+        {8.0, 2.0, 7.0},
+        {3.0, 9.0, 1.0},
+        {6.0, 4.0, 5.0},
+        {2.0, 7.0, 8.0},
+    };
+    const Assignment a = match(cost, 100.0, /*exact_limit*/ 64);
+    CHECK(a.n_matched == 3);
+    CHECK_NEAR(a.total_cost, brute_force_min(cost, 100.0), 1e-9);
+
+    // And the maps still agree with each other after the transpose.
+    for (std::size_t j = 0; j < 3; ++j) {
+        const int i = a.col_to_row[j];
+        CHECK(i >= 0);
+        CHECK(a.row_to_col[static_cast<std::size_t>(i)] == static_cast<int>(j));
+    }
+}
+
+void test_optimal_at_every_shape() {
+    // Against exhaustive search, over shapes on both sides of the square.
+    Rng rng(20240117);
+    const std::pair<std::size_t, std::size_t> shapes[] = {
+        {2, 2}, {3, 3}, {4, 3}, {5, 2}, {6, 3}, {3, 4}, {2, 5}, {3, 6}};
+    for (const auto& [n, m] : shapes) {
+        for (int trial = 0; trial < 200; ++trial) {
+            std::vector<std::vector<Real>> cost(n, std::vector<Real>(m));
+            for (auto& row : cost) {
+                for (auto& v : row) v = rng.uniform(0.0, 10.0);
+            }
+            const Assignment a = match(cost, 10.0, /*exact_limit*/ 64);
+            std::size_t want_n = 0;
+            const Real want_cost = brute_force_min(cost, 10.0, &want_n);
+            CHECK(want_n == std::min(n, m));
+            CHECK(a.n_matched == want_n);
+            CHECK_NEAR(a.total_cost, want_cost, 1e-9);
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -105,5 +200,7 @@ int main() {
     test_rectangular();
     test_large_problem_stays_one_to_one();
     test_exact_and_greedy_agree_on_easy_problems();
+    test_tall_matrix_is_optimal();
+    test_optimal_at_every_shape();
     return trace::test::summary("test_assignment");
 }
