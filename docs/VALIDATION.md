@@ -242,7 +242,7 @@ against it before any claim about coasting or reacquisition is worth making.
 
 ---
 
-## Learning what a sensor's noise actually is
+## Learning what a sensor is actually like
 
 The clutter rate is learned from unassigned detections. `meas_noise_var` beside
 it is asserted by the profile and never checked, which costs most exactly when
@@ -292,6 +292,42 @@ dominated by where the track was *guessed* to be. Feeding those in tells the
 estimator the sensor is noisy when what is uncertain is the prediction; in
 `warehouse` that cost sixteen points on its own. Innovations are now sampled
 only from tracks whose prediction is one scan old.
+
+### The same question asked of `p_detection`
+
+`p_detection` decides how much a miss counts against a track, and it was
+asserted the same way. The evidence for it is equally available: how often does
+a sensor report the tracks it has recently been feeding?
+`--adaptive-pd` switches it on.
+
+| Scenario (median of 7 seeds) | Asserted | Learned |
+|---|---|---|
+| weather | 108.9% | **121.1%** |
+| warehouse | 118.8% | 118.8% |
+| anpr-corridor | 107.1% | 107.1% |
+| transit-hub | 118.7% | 118.7% |
+| blackout | 119.7% | 119.5% |
+| dark-vessel | 101.8% | 101.5% |
+| wildlife | 98.1% | 97.3% |
+
+A better shape than the noise estimate: neutral almost everywhere, and a large
+win where conditions genuinely change. MOT17-02-FRCNN is identical in every
+figure. Ghost rates are flat or slightly better except on `weather`, where they
+go from 0.04 to 0.46 per scan — the cost of keeping tracks alive through
+degradation. With both estimates on, `weather` reaches 122.1%.
+
+It is pooled **per source, not per track**, and that is the whole design. A
+per-track estimate is circular: a track nothing detects would learn that nothing
+detects it, conclude its own misses were uninformative, and become immortal. It
+is also floored, so the estimate never says a sensor is hopeless.
+
+**What the estimates look like is informative about the sensors, not just the
+engine.** Wide-area sensors come out close to their asserted value — `wildlife`'s
+collars at 0.51 against 0.45, `blackout`'s cameras at 0.59–0.77 against 0.70.
+Point sensors sit near the floor, because a gate reader stops covering a track
+that walks away and the estimator cannot tell that from a miss. That is a real
+limit of the measurement, and it is exactly why the scenarios full of gate
+readers come out unchanged rather than improved.
 
 ### And one that caught me
 
@@ -632,10 +668,15 @@ detector" above.
 - **Nothing above 226 people per frame has been measured on real data**, and at
   that density one core manages 12 frames per second. Synthetically the engine
   has now been measured to 1365 tracks.
-- **`p_detection` is asserted, not estimated.** `meas_noise_var` can now be
-  learned (`adaptive_meas_noise`, off by default — see above); `p_detection`
-  cannot, and it is the field that decides how much a miss counts against a
-  track.
+- **Both sensor estimates ship off.** `adaptive_meas_noise` and
+  `adaptive_p_detection` are measured above and are opt-in; for a deployment
+  whose conditions vary they are likely worth turning on, and for one tuned
+  against fixed assumptions they are not free.
+- **A point sensor's detection rate cannot be estimated this way.** The
+  estimator cannot distinguish "the reader missed it" from "the entity walked
+  out of the reader's few metres of coverage", so gate and ANPR sources sit at
+  the floor. Knowing each sensor's footprint would fix it; the engine is not
+  told footprints.
 - **Sensor availability is inferred, not known.** A coverage gap is guessed at
   from whether anything reported at all. A real deployment knows which cameras
   are down; there is no interface for it to say so.

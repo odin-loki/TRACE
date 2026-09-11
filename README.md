@@ -312,12 +312,15 @@ decayed.
   a genuinely twisty target seen by a coarse sensor has no measurable velocity —
   but a profile has to be checked against it before any claim about coasting is
   worth making. `CityCameraSurveillance` sits at 1.4 for a walking pedestrian.
-- **`p_detection` is asserted, not estimated.** `meas_noise_var` can now be
-  learned from the residuals (`adaptive_meas_noise`), though it ships off — it
-  helps where conditions change under a fixed profile and costs where
-  detections are dense, and both are measured in docs/VALIDATION.md.
-  `p_detection` has no such estimate, and it is what decides how much a miss
-  counts against a track.
+- **The two sensor estimates ship off.** `meas_noise_var` and `p_detection` can
+  both be learned from evidence the engine already has (`adaptive_meas_noise`,
+  `adaptive_p_detection`). On the scenario where conditions change under a
+  fixed profile they take recovery from 108.9% to 122.1%; elsewhere they are
+  neutral or slightly negative. Both trades are measured in
+  docs/VALIDATION.md rather than assumed.
+- **A point sensor's detection rate cannot be estimated this way.** The engine
+  is not told sensor footprints, so it cannot distinguish "the reader missed
+  it" from "the entity walked out of coverage".
 - **Sensor availability is inferred, not known.** A coverage gap is guessed at
   from whether anything reported at all. A real deployment knows which cameras
   are down and has no way to say so.

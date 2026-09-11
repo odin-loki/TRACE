@@ -261,13 +261,17 @@ Worth noting why it survives a mismatch this large: the one quantity the engine
 *learns* rather than asserts — the clutter rate — is the one that moves most, as
 the false-alarm rate rises eightfold.
 
-`meas_noise_var` can be learned too, from the innovations the engine already
-computes: `--adaptive-noise` takes fog-phase recovery from 108.6% to 112.4%
-(median of nine seeds) and leaves clear conditions untouched. It ships off
-because it costs elsewhere — see
-[VALIDATION.md](VALIDATION.md#learning-what-a-sensors-noise-actually-is) for
-the trade and for the two things it had to get right before it was safe at all.
-`p_detection` has no such estimate.
+Both of the asserted quantities can be learned instead, from evidence the
+engine already has. `--adaptive-noise` learns measurement noise from the
+innovations; `--adaptive-pd` learns detection probability from how often a
+sensor reports the tracks it has been feeding. On this scenario they take
+recovery from 108.9% to 112.4% and 121.1% respectively, and to 122.1% together,
+while leaving clear conditions untouched.
+
+Both ship off, because elsewhere they are neutral or slightly negative — see
+[VALIDATION.md](VALIDATION.md) for the trade, for the two things the noise
+estimate had to get right before it was safe, and for why a *point* sensor's
+detection rate cannot be estimated this way at all.
 *Result: 83.7% detection overall, 109% of what the sensors produced (median of
 twelve seeds, 106–111%); fog-phase recovery median 104%, range 100–112%.*
 
@@ -318,9 +322,10 @@ worth taking from this list rather than any individual entry on it.
 - **MOT20 tuning.** All four sequences now replay, on the shared pedestrian
   profile; none has been tuned for. At 200+ people per frame it is the natural
   scalability test.
-- **Estimating `p_detection`** the way the clutter rate and now
-  `meas_noise_var` are. It is what decides how much a miss counts against a
-  track, and a profile that overstates it kills tracks during any outage.
+- **Telling the engine each sensor's footprint.** It would fix the one thing
+  the detection-rate estimate cannot do — distinguish "the reader missed it"
+  from "the entity walked out of its coverage" — and would let a coverage gap
+  be known rather than inferred.
 
 ---
 
