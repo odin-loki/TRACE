@@ -69,7 +69,7 @@ identity switches across three travellers.
 
 ---
 
-## 2–14. The scenario suite — `trace_sim`
+## 2–15. The scenario suite — `trace_sim`
 
 ```bash
 ./trace_sim --list        # descriptions and what each stresses
@@ -280,6 +280,43 @@ detection rate cannot be estimated this way at all.
 *Result: 83.7% detection overall, 109% of what the sensors produced (median of
 twelve seeds, 106–111%); fog-phase recovery median 104%, range 100–112%.*
 
+### 15. `metro` — position observed only at stations
+Nine stations, three lines, six travellers, turnstile taps and nothing at all in
+between. It inverts the usual problem twice.
+
+Between stations there is no observation for scans at a time, so a traveller in
+a tunnel is not missing — nobody is looking. And at a station two travellers tap
+at the **same coordinate**: position, which settles almost every association
+elsewhere in this suite, carries no information at the only moments anything is
+observed. What is left is timing and which way each of them goes next, which is
+topology rather than geometry.
+
+**The finding is about junctions.** The `RoadNetwork` constraint was costing
+recovery rather than buying it, and rebuilding the same network without
+junctions says why:
+
+| | Constraint on | Off | Cost of constraining |
+|---|---|---|---|
+| Three disjoint lines, no junctions | 95.4% | 99.9% | 4.5 |
+| The same network, four junctions | 76.0% | 90.8% | **14.8** |
+
+At a junction every branch is admissible, and projecting to the *nearest* is the
+one thing that is wrong — it collapses a belief that should span both branches
+onto whichever the particle cloud sat closest to. `RoadNetwork` now finds its
+junctions (three or more segment ends meeting, so a plain corner is not one) and
+leaves positions and headings alone within one tolerance of them; past the
+junction each particle is pulled onto whichever branch it actually drifted
+towards, so the multi-modality survives where it matters. Over seven seeds that
+strictly dominates both alternatives — 85.9% recovery at 1.83 ghosts/scan,
+against 81.7% at 0.94 with junctions projected and 81.7% at 2.01 with no
+constraint at all.
+
+Run `--no-constraint` to drop the topology, `--no-coverage` to stop telling the
+engine what its turnstiles can see.
+*Result: 23.8% detection, **84% of what the sensors produced** (median of nine
+seeds, 80–90%) — the lowest in the suite, and the one scenario where the engine
+reports materially less than its sensors offered.*
+
 ### 10. `sensor-drift` — a camera whose mount slowly slips
 One sensor's reports acquire a growing systematic offset while its peers stay
 sound. The case `SourceCredibility` exists for, and which nothing tested until
@@ -304,9 +341,7 @@ worth taking from this list rather than any individual entry on it.
   measures cost to 1365 tracks (674 ms/scan, about 1.5 scans/second on one
   core); beyond that needs partitioning the area across workers, which is not
   implemented.
-- **Metro network.** Turnstile taps only: purely topological observation with no
-  metric position at all. Forces the question of what the filter means when
-  "distance" is graph hops.
+- ~~**Metro network.**~~ Implemented; see scenario 15.
 - **Multi-floor building.** Genuine 3-D, where two entities one metre apart
   vertically are on different floors and cannot interact. The only sketch here
   that is architectural rather than a file: `Vec2` is assumed throughout.
@@ -327,10 +362,9 @@ worth taking from this list rather than any individual entry on it.
 - **MOT20 tuning.** All four sequences now replay, on the shared pedestrian
   profile; none has been tuned for. At 200+ people per frame it is the natural
   scalability test.
-- **A topological domain.** Turnstile taps or service hops, where "distance" is
-  graph edges and there is no metric position at all. The `MotionConstraint`
-  hook is the natural place to express it, and it is the last sketch here that
-  is a file rather than an architecture.
+- **Lateral movement on a service graph.** `metro` covers the topological case
+  for physical movement; the same shape with "position" as a service embedding
+  is the security-domain version, and would reuse the junction work directly.
 
 ---
 

@@ -1,7 +1,7 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Thirty-six substantive defects were
-found — eleven inherited from `reference/aria_intel.py`, twenty-five introduced
+The C++23 port is not a transliteration. Thirty-seven substantive defects were
+found — eleven inherited from `reference/aria_intel.py`, twenty-six introduced
 or exposed by the port itself — while getting the simulations, then real
 MOTChallenge data, and finally the engine's own cost profile to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
@@ -725,20 +725,56 @@ existed, the real drops stopped being found while the artefacts continued to
 be. A scenario that tests a detector has to be at least as carefully checked as
 the detector.
 
+## 37. The road constraint projected at junctions
+
+**Severity: medium.** A `MotionConstraint` confines a track to a road or rail
+network, and defect 20's write-up records it earning its place on
+`anpr-corridor`. The `metro` scenario shows the other half of the picture.
+
+Away from a junction the network has one answer to "which way is it going
+here". At a junction every branch is admissible, and projecting to the
+*nearest* is the single worst thing available: it collapses a belief that ought
+to span both branches onto whichever the particle cloud happened to sit closest
+to, and where that is the wrong branch the track is lost.
+
+Rebuilding the same metro network with three disjoint lines isolates it — the
+cost of constraining goes from 4.5 points of recovery to 14.8 when the four
+junctions are restored.
+
+**Fix:** `RoadNetwork` finds its junctions, being points where three or more
+segment ends meet, and leaves positions and headings alone within one tolerance
+of them. Past the junction each particle is pulled onto whichever branch it
+actually drifted towards, so the multi-modality survives where it matters.
+Across seven seeds this strictly dominates both alternatives: 85.9% recovery at
+1.83 ghosts per scan, against 81.7% at 0.94 with junctions projected and 81.7%
+at 2.01 with no constraint at all.
+
+**What it does not cover:** the `grid` factory's streets cross without sharing
+endpoints, so this detection finds no junctions in a grid. A crossing is a
+junction.
+
 ## A note on what "it helped" means
 
 Not a defect — a near miss, recorded because the machinery for avoiding it was
 already in this file and it very nearly failed anyway.
+
+It happened twice more after that heading was written, which is the point.
 
 `meas_noise_var` is now optionally learned from the engine's own innovations.
 Measuring the fix for one problem, the `wildlife` scenario appeared to gain
 **eighteen points** of recovery with the estimate switched on. That was on its
 default seed. The median over nine seeds is a loss of two and a half.
 
+Then the `metro` scenario: on its default seed the engine with no motion
+constraint at all looked better than the constrained one by **fifteen points**,
+which would have argued for throwing the constraint away. The median over seven
+seeds says the two tie, and that the unconstrained version carries twice the
+ghosts.
+
 The convention that catches this — medians over seeds rather than single runs —
 is recorded under "A note on test thresholds" below, and was written after three
 tests turned out to have been fitted to whichever seed was in front of them. It
-did not prevent the same mistake being made again while concentrating on
+did not prevent the same mistake being made again, twice, while concentrating on
 something else; it only caught it afterwards. A convention is worth having
 precisely because judgement under concentration is not reliable.
 

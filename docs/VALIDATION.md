@@ -242,6 +242,45 @@ against it before any claim about coasting or reacquisition is worth making.
 
 ---
 
+## When the network helps and when it lies
+
+A `MotionConstraint` confines a track to a road, a rail line or a corridor, and
+`anpr-corridor` shows it earning its place: it cut the ghost rate from 7.87 to
+4.75 per scan and is what makes a tail detectable at all. The `metro` scenario
+shows where the same idea goes wrong.
+
+Away from a junction the network has one answer to "which way is it going
+here", and projecting to that answer beats free space. At a junction every
+branch is admissible, and projecting to the **nearest** is the single worst
+thing available: it collapses a belief that ought to span both branches onto
+whichever the particle cloud happened to sit closest to, and where that is the
+wrong branch the track is lost.
+
+Rebuilding the same metro network with three disjoint lines isolates it:
+
+| | Constraint on | Off | Cost of constraining |
+|---|---|---|---|
+| No junctions | 95.4% | 99.9% | 4.5 |
+| Four junctions | 76.0% | 90.8% | **14.8** |
+
+`RoadNetwork` now finds junctions — three or more segment ends meeting, so a
+plain corner is not one — and leaves positions and headings alone within one
+tolerance of them. Measured over seven seeds it strictly dominates both
+alternatives:
+
+| Metro, median of 7 seeds | Recovery | Ghosts/scan |
+|---|---|---|
+| junctions projected like any other point | 81.7% | 0.94 |
+| **junction-aware** | **85.9%** | 1.83 |
+| no constraint at all | 81.7% | 2.01 |
+
+`anpr-corridor`, whose network is a polyline, is unchanged to a decimal. The
+`grid` factory is untouched too, and that is a limitation rather than a
+reassurance: its streets *cross* without sharing endpoints, and a crossing is a
+junction that this detection does not find.
+
+---
+
 ## Learning what a sensor is actually like
 
 The clutter rate is learned from unassigned detections. `meas_noise_var` beside
@@ -600,16 +639,26 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 | dark-vessel | 76.0% | 77.2% | **102%** | 98 – 105% |
 | sensor-drift | 98.5% | 97.5% | 99% | 98 – 100% |
 | wildlife | 46.0% | 44.3% | 97% | 89 – 107% |
+| metro | 27.9% | 23.8% | **84%** | 80 – 90% |
 
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
-Eleven of the thirteen recover more than their sensors produced, which is what a
+Eleven of the fourteen recover more than their sensors produced, which is what a
 tracker is for. The two that do not are the two with the least to work with in
 opposite directions: `sensor-drift`'s sensors detect 98% of everything, so
 there are almost no gaps left to coast through, and `wildlife` has four animals
 reporting every four hours — its spread crosses 100% and the median sits just
 below it.
+
+**`metro` at 84% is the one real shortfall in the suite**, and unlike
+`dark-vessel`'s former 70% it is not an artefact. Position is observed only at
+turnstiles and is identical for two travellers standing at one, so the two cues
+that carry almost every other scenario — where something is, and how far it is
+from everything else — are both absent at exactly the moments anything is
+observed. The junction work below recovers part of it; what remains would need
+the filter to represent which *branch* an entity is on as a discrete state,
+rather than inferring it from a position that is only occasionally available.
 
 This changed the assessment of three scenarios materially. `anpr-corridor` had
 been documented as the weakest of the seven on a 20% detection rate; the
