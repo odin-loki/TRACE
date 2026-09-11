@@ -56,6 +56,7 @@ private:
         Real separation{0.0};
     };
     std::map<std::pair<std::string, std::string>, std::deque<SepSample>> sep_history_;
+    int scans_since_prune_{0};
 
     /// One track's pattern-of-life forecast across the warning horizon.
     ///

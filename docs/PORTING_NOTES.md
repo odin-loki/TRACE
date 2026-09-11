@@ -1,7 +1,7 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Twenty-six substantive defects were
-found — eleven inherited from `reference/aria_intel.py`, fifteen introduced or
+The C++23 port is not a transliteration. Twenty-eight substantive defects were
+found — eleven inherited from `reference/aria_intel.py`, seventeen introduced or
 exposed by the port itself — while getting the simulations, then real
 MOTChallenge data, and finally the engine's own cost profile to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
@@ -17,7 +17,7 @@ glaring the moment you count identity switches.
 
 **Measure the input's own ceiling.** Three scenarios were documented as
 tracking weaknesses until the sensors were asked what they had actually
-produced. `anpr-corridor` recovers 104% of the detections its readers emit; it
+produced. `anpr-corridor` recovers 107% of the detections its readers emit; it
 was never failing. See [VALIDATION.md](VALIDATION.md).
 
 **Distrust a tidy explanation for a bad number.** `dark-vessel`'s shortfall had
@@ -286,6 +286,9 @@ effectively never fired and hubs fell through to the catch-all role.
 **Fix:** betweenness is compared against the population's upper quartile, like
 speed.
 
+**And it was still wrong, in three more ways** — see defect 27. Fixing one
+absolute threshold in a classifier full of them only moves the failure.
+
 ## 16. The merge discriminator mistook two sensors for two entities
 
 **Severity: medium — a direct consequence of fixing #13.** Duplicate-track
@@ -380,11 +383,8 @@ scan latency from **875 ms to 73 ms**, and overall cost from **n^1.82 to
 n^1.14** — from approaching quadratic to effectively linear.
 
 **What it did not fix.** Twenty times the constant, not a better exponent: the
-loop is still over pairs. Re-measured once entities stopped teleporting through
-their routes (defect 24), the detector is 43 ms at 270 tracks and 102 ms at 400
-— 56% of the whole engine, and the reason overall cost now measures n^1.23
-rather than n^1.14. Gating the pair loop on the spatial index, as the other
-pairwise detectors already do, is the outstanding work.
+loop is still over pairs, and the spatial-index gate added alongside this fix
+turned out to be inert. See defect 28.
 
 `tests/test_scaling.cpp` now guards the exponent, because this is precisely the
 class of defect that passes every correctness test.
@@ -429,7 +429,7 @@ genuine shortfall in the suite and explained as an information limit of vessel
 speed against scan period, is 105%. The arithmetic in that explanation was
 correct and had nothing to do with the result it was explaining. Several
 scenarios got *harder*, because entities now traverse their full routes:
-`anpr-corridor` 111% → 104%, and the 21×11 maze from 83.3% detection with zero
+`anpr-corridor` 111% → 107%, and the 21×11 maze from 83.3% detection with zero
 identity switches to 78.2% with five.
 
 **How it was found:** by asking why a scenario's role classifier could not
@@ -476,7 +476,7 @@ it. With peers present the mechanism is untouched: `sensor-drift` still
 discounts the drifting camera to 0.434 against a sound neighbour's 0.605 and
 flags it against consensus. Worth +2.7 points of ceiling recovery on MOT17 by
 itself, and it took `wildlife` — one collar per animal, so no peers ever — from
-88% recovery to 107%.
+88% recovery to 97%, a median over twelve seeds.
 
 ## 25. An absent detection score was read as a low one
 
@@ -507,6 +507,86 @@ between sequences, so the numbers never actually went wrong.
 
 **Fix:** the bounds are computed once at load and stored on the sequence. Same
 output, no dependence on call order, and half the sorting work.
+
+## 27. The relative classifier was still three-quarters absolute
+
+**Severity: medium.** Defect 15 fixed one absolute threshold. The rest stayed,
+and the `mule-network` scenario — money mules in a behaviour space, where none
+of the domain constants mean anything — showed what they cost: the classifier
+recovered no ground-truth role, and this was documented as "role inference does
+not transfer without recalibration". That diagnosis was wrong. Four separate
+faults:
+
+- **"Fast" was `max(1.5 × median, courier_speed_thresh)`**, and the absolute
+  floor in that `max` vetoed the relative test. Couriers running at five times
+  the population median were not fast, because the floor had been set from
+  their *true* speed while the classifier sees their *estimated* speed, which
+  is always lower — a turning entity's smoothed velocity is. Any absolute floor
+  has that failure mode; it is only ever calibrated against a quantity nobody
+  measures. It is now membership of a fast mode, if the population has one,
+  found by an Otsu-style split. That keeps what the floor was for — in a
+  population where nothing moves, nobody is a courier — with no number per
+  domain, because a quantile always returns a threshold but a mode split can
+  decline to.
+- **The sedentary roles tested "slower than the median"**, which excludes half
+  of any population by construction, and excludes the wrong half: a
+  near-stationary track's velocity estimate is dominated by measurement noise,
+  so the most static entities in a scene routinely measure *above* the median.
+  In `mule-network` the collection accounts, four times slower than retail in
+  truth, measured faster. They now test the complement of the courier test.
+- **Contact counts were absolute.** Now relative to the population median, over
+  the settled tracks only — a scene under churn carries fragments born at rest,
+  and including them drags every distribution towards zero, which is how a
+  scene full of couriers ends up with no fast mode at all.
+- **The handler threshold was computed over everyone**, couriers included. A
+  courier cannot be a handler, but was setting the bar a handler had to clear —
+  and in any network where the couriers do the moving they are also the
+  bridges, since a node shuttling between two otherwise separate neighbourhoods
+  is the definition of one. Comparing a quantity across roles that are mutually
+  exclusive by construction is the error.
+
+**Result:** mules come out as `COURIER` and retail accounts as `ASSET` from
+behaviour alone. Collection accounts split `HANDLER`/`ASSET`, and that one is
+not a threshold problem: the scenario was written expecting them to be the
+hubs, and the contact graph says the mules are. The classifier reports the
+graph it was given.
+
+`courier_contact_n` and `handler_contact_max` are gone from `DomainProfile`.
+Dead fields that look like they do something are the trap defect 19 was.
+
+## 28. The convergence detector's gate was wider than the world
+
+**Severity: medium.** Defect 20 hoisted the forecast out of the pair loop and
+cut the detector from 751 ms to 34 ms at 270 tracks. It also gated the pair
+enumeration on the spatial index, which looked like the quadratic term dealt
+with. It was not: re-measured once entities stopped teleporting (defect 22),
+the detector was 102 ms of a 181 ms scan at 400 tracks — 56% of the engine, and
+still growing quadratically.
+
+The gate's radius was `rv_threshold_m + 4 × courier_speed_thresh ×
+rv_warning_horizon_s` — four times the domain's speed scale, for both parties,
+over the entire warning horizon. In any dense scene that is wider than the
+scene, so the index returned every pair and the gate did nothing. A gate whose
+radius exceeds the area of regard is not a gate, and it reads like one.
+
+Two fixes, both cheap:
+
+- **Bound each pair by its own speeds.** Two tracks cannot converge faster than
+  the sum of their speeds, so a pair separated by more than
+  `rv_threshold + (speed_a + speed_b) × horizon` cannot meet within the horizon
+  whatever either does. Two norms per pair, and applied *before* anything that
+  allocates — which the separation history does, twice, for every pair on every
+  scan.
+- **Age out the separation history.** It kept a deque for every pair of tracks
+  that had ever been near another, which over a long run is every pair that has
+  ever existed. Swept every `kMaxSepHistory` scans rather than every scan: an
+  entry cannot go stale faster than the history window, and sweeping the whole
+  map each scan cost 12 ms of a 126 ms scan — worse than the leak.
+
+At 400 tracks: the detector falls from **102 ms to 53 ms**, total scan latency
+from **181 ms to 125 ms**, and overall cost from **n^1.23 to n^1.13**. The
+capability is unchanged — `transit-hub` still gives its first convergence
+warning at the same 15 s lead time, and `evader` is bit-identical.
 
 ## A note on measuring before optimising
 

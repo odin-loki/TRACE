@@ -192,18 +192,17 @@ wrong. Measured, it was **n^1.82** — and the gate had nothing to do with it.
 
 | Tracks | Median ms/scan | Tracking only | µs per track (tracking) |
 |---|---|---|---|
-| 10 | 1.9 | 1.6 | 159 |
-| 40 | 8.2 | 6.1 | 152 |
-| 120 | 30.3 | 18.9 | 158 |
-| 270 | 92.4 | 51.7 | 191 |
-| 400 | 181.1 | 69.3 | 173 |
+| 10 | 2.0 | 1.5 | 149 |
+| 40 | 7.9 | 6.0 | 151 |
+| 120 | 28.0 | 18.6 | 155 |
+| 270 | 74.6 | 44.4 | 165 |
+| 400 | 125.3 | 67.2 | 168 |
 
-**Cost grows as about n^1.23 over the full range — effectively linear.**
-Tracking alone is flat at 152–191 µs per track from 10 tracks to 400, which is
-the part that had to be linear and is. All of the growth is in the detector
-pipeline, and it is not linear: subtracting the tracking column leaves 11 ms of
-detector work at 120 tracks, 41 ms at 270 and 112 ms at 400 — closer to
-quadratic than linear, and increasingly so.
+**Cost grows as about n^1.12 over the full range — effectively linear.**
+Tracking alone is flat at 149–168 µs per track from 10 tracks to 400, which is
+the part that had to be linear and is. What growth remains is in the detector
+pipeline. Wall-clock figures move a few percent between runs on the same
+machine; the exponent does not.
 
 Getting there needed one measurement and two wrong guesses. The obvious
 suspects — the all-pairs detector loops, and a betweenness implementation that
@@ -228,23 +227,32 @@ entities no matter how many were offered, because `kMaxTracks` was a file-scope
 constant. It is now a profile field, and the per-stage breakdown is part of
 every report.
 
-**It is still the dominant term, and it is still quadratic.** Hoisting the
-forecast out of the pair loop bought a factor of twenty in the constant, not a
-better exponent — the loop is over pairs and remains so. At 400 tracks
-`RendezvousWarner` is 102 ms of a 181 ms scan, 56% of the whole engine:
+**And it was still the dominant term afterwards, because its gate was inert.**
+Hoisting the forecast bought a factor of twenty in the constant, not a better
+exponent. The same fix gated the pair enumeration on the spatial index, which
+looked like the quadratic term dealt with — but the gate's radius was four
+times the domain's speed scale, for both parties, over the whole warning
+horizon. In any dense scene that is wider than the scene, so the index returned
+every pair. A gate whose radius exceeds the area of regard is not a gate, and
+it reads exactly like one.
 
-| Stage at 400 tracks | ms/scan | Share |
+Each pair's own speeds give a far tighter bound — two tracks cannot converge
+faster than the sum of their speeds — and it costs two norms to apply, so it is
+applied before anything that allocates:
+
+| Stage at 400 tracks | Before | After |
 |---|---|---|
-| **RendezvousWarner** | **102.1** | **56.4%** |
-| score + forecast | 38.4 | 21.2% |
-| track + associate | 26.8 | 14.8% |
-| everything else combined | 13.8 | 7.6% |
+| **RendezvousWarner** | **102.1 ms** (56.4%) | **54.7 ms** (43.6%) |
+| score + forecast | 38.4 ms | 38.3 ms |
+| track + associate | 26.8 ms | 27.0 ms |
+| everything else combined | 13.8 ms | 5.3 ms |
+| **total scan** | **181.1 ms** | **125.3 ms** |
 
-Gating the pair loop on the spatial index, as the other pairwise detectors
-already do, is the obvious next move; it has not been done.
+The capability is unchanged: `transit-hub` still raises its first convergence
+warning at the same 15 s lead time, and `evader` is bit-identical.
 
 **What this means in practice.** At 400 simultaneous tracks the engine runs at
-about 5.5 scans per second on one core, and at 226 people per frame on MOT20-05
+about 8 scans per second on one core, and at 226 people per frame on MOT20-05
 at 12 frames per second. Comfortable for a 1 Hz camera estate, not for 25 fps
 without partitioning the area across workers. Above 400 tracks has not been
 measured.
@@ -345,25 +353,31 @@ simulations: how much of what the *sensors actually produced* did TRACE recover?
 Every scenario now reports it, and the sensors' own detection ledger is kept
 strictly separate from anything the engine can see.
 
-| Scenario | Sensors produced | TRACE reported | Recovery |
-|---|---|---|---|
-| evader | 71.5% | 96.3% | **135%** |
-| warehouse | 49.0% | 61.5% | **126%** |
-| transit-hub | 81.7% | 97.9% | **120%** |
-| spoofing | 85.9% | 98.4% | **115%** |
-| wildlife | 45.0% | 48.3% | **107%** |
-| mule-network | 92.0% | 98.7% | **107%** |
-| dark-vessel | 76.8% | 80.3% | **105%** |
-| anpr-corridor | 19.9% | 20.8% | **104%** |
-| sensor-drift | 98.1% | 97.3% | 99% |
+Medians over twelve seeds, with the spread, because a single run of any of
+these is a draw from a high-variance process and reporting one is how a
+document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
+
+| Scenario | Sensors produced | TRACE reported | Recovery | Spread over 12 seeds |
+|---|---|---|---|---|
+| evader | 70.1% | 94.8% | **134%** | 131 – 138% |
+| transit-hub | 81.5% | 97.7% | **120%** | 118 – 121% |
+| spoofing | 84.8% | 98.0% | **116%** | 112 – 118% |
+| warehouse | 48.0% | 55.4% | **115%** | 101 – 127% |
+| mule-network | 91.8% | 98.8% | **107%** | 106 – 108% |
+| anpr-corridor | 19.9% | 21.3% | **107%** | 95 – 124% |
+| dark-vessel | 76.0% | 77.2% | **102%** | 98 – 105% |
+| sensor-drift | 98.5% | 97.5% | 99% | 98 – 100% |
+| wildlife | 46.0% | 44.3% | 97% | 89 – 107% |
 
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
-Every scenario but one now recovers more than its sensors produced, which is
-what a tracker is for. `sensor-drift` sits just under, and appropriately: its
-sensors detect 98% of everything, so there are almost no gaps left to coast
-through.
+Seven of the nine recover more than their sensors produced, which is what a
+tracker is for. The two that do not are the two with the least to work with in
+opposite directions: `sensor-drift`'s sensors detect 98% of everything, so
+there are almost no gaps left to coast through, and `wildlife` has four animals
+reporting every four hours — its spread crosses 100% and the median sits just
+below it.
 
 This changed the assessment of three scenarios materially. `anpr-corridor` had
 been documented as the weakest of the seven on a 20% detection rate; the
@@ -410,8 +424,8 @@ every corner. Two things are worth taking from it:
 
 - **The scenarios got harder, not easier.** Entities now traverse their full
   routes, so there is more ground to cover and more handoffs to get wrong.
-  `anpr-corridor` fell from 111% recovery to 104%, and `wildlife` from 94% to
-  88% before later fixes took it to 107%; the maze, at its larger 21x11
+  `anpr-corridor` fell from 111% recovery to 107%, and `wildlife` from 94% to
+  88% before later fixes took it to 97%; the maze, at its larger 21x11
   configuration, went from 83.3% detection and zero identity switches to 78.2%
   and five. Those are the honest numbers for a harder problem, and they are
   reported here rather than the flattering ones.

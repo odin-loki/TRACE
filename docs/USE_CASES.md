@@ -137,22 +137,34 @@ transaction graph, a rail network — and `MotionConstraint` is the hook for it.
 interface with a different projection.
 
 **The caveat for Tier 3, now measured rather than guessed.** The
-`mule-network` scenario implements the transaction-space case, and the result
-is mixed in a specific way:
+`mule-network` scenario implements the transaction-space case:
 
-- **Tracking transfers.** The engine recovers 104% of available detections in a
-  purely behavioural space, with no notion of what the axes mean.
+- **Tracking transfers.** The engine recovers 107% of available detections in a
+  purely behavioural space, with no notion of what the axes mean, and that
+  figure is the tightest in the suite across seeds (106–108%).
 - **The behavioural detectors transfer.** `BRUSH_PASS` fires on direct
   transfers between accounts.
-- **Role inference does not transfer.** The classifier's thresholds are
-  calibrated against a physical contact network; in behaviour space it does not
-  recover the ground-truth roles without recalibration.
+- **Role inference transfers, once the classifier stops using absolute
+  thresholds.** Mules come out as `COURIER` and ordinary accounts as `ASSET`
+  from behaviour alone, with nothing in the engine told what a mule is. This
+  was documented here as a failure to transfer, and the diagnosis was wrong:
+  the classifier's thresholds needed to be relative to the population rather
+  than recalibrated per domain, and the scenario itself had made the quantity
+  the classifier consumes unobservable. See
+  [VALIDATION.md](VALIDATION.md) and [SIMULATIONS.md](SIMULATIONS.md).
 
-The MOU motion model also assumes continuous movement with inertia — good for
+What genuinely does not transfer is an assumption about *topology*. Collection
+accounts come out split between `HANDLER` and `ASSET` because betweenness
+measures who lies between others, and in this network the mules are the bridges
+— each joins one collection account to its own cash-out profile. The classifier
+reports the graph it was given; the scenario's premise about which nodes were
+hubs was what was wrong.
+
+The MOU motion model still assumes continuous movement with inertia — good for
 things that move through space, questionable for things that jump
-discontinuously through an abstract one. Expect to recalibrate the role
-thresholds and possibly replace `MotionModel`; the tracking and association
-layers carry over as they stand.
+discontinuously through an abstract one. Expect to consider replacing
+`MotionModel`; the tracking, association and role layers carry over as they
+stand.
 
 ---
 

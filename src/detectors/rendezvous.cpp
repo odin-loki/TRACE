@@ -231,11 +231,29 @@ std::vector<RendezvousWarning> RendezvousWarner::rendezvous(
     const Real reach = p.rv_threshold_m +
                        p.courier_speed_thresh * 4.0 * p.rv_warning_horizon_s;
 
+    // That bound uses four times the domain's speed scale for both parties
+    // over the whole horizon, which in a dense scene is wider than the scene:
+    // the index then returns every pair and the gate does nothing. Measured at
+    // 400 tracks this detector was still 56% of the engine. Each pair's own
+    // speeds give a far tighter bound, and it costs two norms to apply - so
+    // apply it before anything that allocates, which the separation history
+    // does, twice, for every pair on every scan.
+    std::vector<Real> speeds(tracks.size());
+    for (std::size_t i = 0; i < tracks.size(); ++i) {
+        speeds[i] = tracks[i]->speed_mps(p.scan_dt_s);
+    }
+
     for (const auto& [i, j] : ctx.near_pairs(reach, tracks.size())) {
         {
             const Track& a = *tracks[i];
             const Track& b = *tracks[j];
             const Real sep = distance(a.position(), b.position());
+
+            // Closing at their combined speed is the fastest they can converge.
+            const Real closing_reach =
+                p.rv_threshold_m +
+                (speeds[i] + speeds[j]) * p.rv_warning_horizon_s;
+            if (sep > closing_reach) continue;
 
             auto& hist = sep_history_[pair_key(a.id(), b.id())];
             hist.push_back(SepSample{ctx.timestamp, sep});
@@ -273,6 +291,25 @@ std::vector<RendezvousWarning> RendezvousWarner::rendezvous(
               [](const RendezvousWarning& x, const RendezvousWarning& y) {
                   return x.eta_s < y.eta_s;
               });
+    // A pair that has stopped being reported stops being a pair. Without this
+    // the history keeps a deque for every pair of tracks that has ever been
+    // near another, which in a long run is every pair that has ever existed.
+    //
+    // Swept periodically rather than every scan: an entry cannot go stale in
+    // less than the history window anyway, and walking the whole map each scan
+    // cost more than the memory it reclaimed - 12 ms of a 126 ms scan at 400
+    // tracks, which is worse than the leak.
+    if (++scans_since_prune_ >= static_cast<int>(kMaxSepHistory)) {
+        scans_since_prune_ = 0;
+        const Real stale_before =
+            ctx.timestamp - static_cast<Real>(kMaxSepHistory) * p.scan_dt_s;
+        for (auto it = sep_history_.begin(); it != sep_history_.end();) {
+            it = (it->second.empty() || it->second.back().timestamp < stale_before)
+                     ? sep_history_.erase(it)
+                     : std::next(it);
+        }
+    }
+
     return out;
 }
 

@@ -101,7 +101,7 @@ docs/VALIDATION.md](docs/VALIDATION.md).
 The same question asked of the simulations — how much of what the *sensors*
 produced did the engine recover? — reframed three of them. `anpr-corridor` had
 been the weakest scenario on a 20% detection rate; its readers only ever produce
-a detection in 19.9% of truth-scans, and TRACE recovers 104% of that.
+a detection in 19.9% of truth-scans, and TRACE recovers 107% of that.
 
 ```bash
 ./scripts/fetch_mot.sh ./data/mot        # ~30 MB, annotations only
@@ -223,22 +223,23 @@ Measured on one core of the development container (AVX-512), Release build.
 
 | Tracks | Median ms/scan | Tracking only | µs per track |
 |---|---|---|---|
-| 10 | 1.9 | 1.6 | 159 |
-| 120 | 30.3 | 18.9 | 158 |
-| 270 | 92.4 | 51.7 | 191 |
-| 400 | 181.1 | 69.3 | 173 |
+| 10 | 2.0 | 1.5 | 149 |
+| 120 | 28.0 | 18.6 | 155 |
+| 270 | 74.6 | 44.4 | 165 |
+| 400 | 125.3 | 67.2 | 168 |
 
-**Cost grows as about n^1.23 — effectively linear**, and tracking alone is flat
-at 152–191 µs per track from 10 tracks to 400. It was n^1.82 until the
+**Cost grows as about n^1.12 — effectively linear**, and tracking alone is flat
+at 149–168 µs per track from 10 tracks to 400. It was n^1.82 until the
 convergence detector stopped rebuilding each track's pattern-of-life forecast
-once per pair; that one change cut scan latency at 270 tracks from 875 ms to
-73 ms. It bought a factor of twenty in the constant and not a better exponent,
-though: the loop is still over pairs, and at 400 tracks that detector is 56% of
-the whole engine. Every report carries a per-stage timing breakdown, because the
-cost profile is not obvious from reading the code — see
+once per pair. That bought a factor of twenty in the constant and not a better
+exponent — the spatial-index gate added with it had a radius wider than the
+scene, so it returned every pair and did nothing. Bounding each pair by its own
+two speeds took that detector from 56% of the engine to 44% and the exponent to
+n^1.12. Every report carries a per-stage timing breakdown, because the cost
+profile is not obvious from reading the code — see
 [docs/VALIDATION.md](docs/VALIDATION.md).
 
-At 400 simultaneous tracks that is about 5.5 scans/second on one core, and 12
+At 400 simultaneous tracks that is about 8 scans/second on one core, and 12
 frames/second at MOT20-05's 226 people per frame: fine for a 1 Hz camera estate,
 not for 25 fps without partitioning across workers.
 

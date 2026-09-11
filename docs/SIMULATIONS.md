@@ -83,14 +83,14 @@ cross the space. Stresses dense co-location and short-range convergence
 prediction. The pattern-of-life cross-predictor is the only one of the three
 methods that can see the meeting coming while both parties are still walking
 ordinary routes.
-*Result: 97.9% detection, 0.85 m error, 120% of what the sensors produced.*
+*Result: 97.7% detection, 0.85 m error, 120% of what the sensors produced.*
 
 ### 3. `dark-vessel` — a ship switches off its transponder mid-transit
 Hourly satellite AIS over a 400 × 300 km box; one vessel goes silent for 25
 scans and comes back. Stresses long scan periods, existence decay over a real
 gap, and pattern-of-life reacquisition. This is the scenario that exposed the
 SI-units defect — it ran at 15% detection until the motion models were fixed.
-*Result: 80.3% detection, 1 identity switch, 105% of what the sensors
+*Result: 77% detection, 1 identity switch, 102% of what the sensors
 produced, reacquired after resurfacing. Long documented at 70% recovery and
 explained as a hard limit of vessel speed against scan period; that was a
 simulator defect, not physics. See [VALIDATION.md](VALIDATION.md).*
@@ -102,7 +102,7 @@ readers. That constraint cut the ghost rate from 7.87 to 4.75 per scan and is
 what makes the tail detectable at all — `PARALLEL_ROUTE` fires only with it.
 
 Long documented as the weakest scenario on a 20% detection rate; the readers
-cover about a fifth of the corridor, and TRACE recovers **104% of what they
+cover about a fifth of the corridor, and TRACE recovers **107% of what they
 actually produce**. See "Reading a detection rate" below.
 
 ### 5. `warehouse` — BLE-tagged pallets and forklifts with door readers
@@ -117,8 +117,7 @@ winding-number test and counter-surveillance escalation. Also the scenario that
 proved the SDR window must scale with the domain: at a fixed 12 samples the test
 was mathematically incapable of reaching threshold on any loop taking longer
 than 12 scans.
-*Result: 96.3% detection, 0.08 ghosts/scan, 135% of what the sensors
-produced.*
+*Result: 95% detection, 0.08 ghosts/scan, 134% of what the sensors produced.*
 
 ### 7. `wildlife` — GPS collars reporting every four hours for twenty days
 Animals looping between den sites and a waterhole. Stresses extreme sparsity,
@@ -126,14 +125,17 @@ single-sighting track birth, and pattern-of-life on thin data. The thinnest
 input in the suite, and the scenario most improved by not discounting a lone
 sensor: with one collar per animal there are no peers to judge it against, and
 the engine had been steadily disbelieving its only source.
-*Result: 48.3% detection, 107% of what the sensors produced, up from 88%.*
+*Result: 44% detection, **97% of what the sensors produced** — median over
+twelve seeds, spread 89–107%. Four animals reporting every four hours is the
+thinnest input here, and the widest spread: a single run of this scenario says
+little.*
 
 ### 8. `spoofing` — a fabricated track reported by a single source
 One entity is reported by several independent sensors; another is reported by
 one, confidently and consistently. Stresses Dempster–Shafer credibility fusion
 and the possibility/necessity pair, which is where a claim no other source
 corroborates is supposed to show up.
-*Result: 98.4% detection, 115% of what the sensors produced, 0 identity
+*Result: 98% detection, 116% of what the sensors produced, 0 identity
 switches.*
 
 ### 9. `mule-network` — accounts in a behavioural space, not a physical one
@@ -145,7 +147,8 @@ collection accounts and their own cash-out profiles, among eight ordinary
 retail accounts. Nothing in the engine is told what any of it means.
 
 Stresses whether the kinematic and behavioural layers mean anything outside a
-metric space. They do: 107% recovery, and the role classifier recovers mules as
+metric space. They do: 107% recovery (spread 106–108% over twelve seeds, the
+tightest in the suite), and the role classifier recovers mules as
 `COURIER` (64% of assignments) and retail accounts as `ASSET` (81%) from
 behaviour alone.
 
@@ -160,14 +163,14 @@ graph it was given, and the graph disagrees with the scenario's premise.
 This scenario is also what turned up the `World::step` waypoint defect, because
 its units are not metres — the step function's hardcoded 1.4 m/s fallback came
 to 5,040 units per scan here, which was too absurd to explain away.
-*Result: 98.7% detection, 0.33 unit error, 107% of what the sensors produced.*
+*Result: 98.8% detection, 0.33 unit error, 107% of what the sensors produced.*
 
 ### 10. `sensor-drift` — a camera whose mount slowly slips
 One sensor's reports acquire a growing systematic offset while its peers stay
 sound. The case `SourceCredibility` exists for, and which nothing tested until
 it was written; testing it found the mechanism inert, and fixing that is worth
 roughly ten MOTA points on MOT17's weakest detector.
-*Result: 97.3% detection, 99% of what the sensors produced.*
+*Result: 97.5% detection, 99% of what the sensors produced.*
 
 ---
 
@@ -232,7 +235,7 @@ sensor detected the entity at all, by coasting through the gap.
 
 This reframed three scenarios. `anpr-corridor` was documented as the weakest of
 the seven on a 20% detection rate; its readers, 400 m apart, only ever produce a
-detection in 19.9% of truth-scans, and TRACE recovers 104% of that. The same
+detection in 19.9% of truth-scans, and TRACE recovers 107% of that. The same
 applies to `warehouse` and `wildlife`.
 
 `dark-vessel` was documented here as the one genuine shortfall at 70%, with a
