@@ -77,8 +77,8 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **48.1%** | **109.6%** |
-| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **59.8%** | **114.7%** |
+| MOT17 train, 21 sequences | 336,891 | **48.1%** | **109.7%** |
+| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **59.9%** | **114.8%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
@@ -223,20 +223,24 @@ Measured on one core of the development container (AVX-512), Release build.
 
 | Tracks | Median ms/scan | Tracking only | µs per track |
 |---|---|---|---|
-| 10 | 2.2 | 1.5 | 220 |
-| 120 | 22.3 | 16.4 | 186 |
-| 270 | 72.7 | 39.9 | 269 |
-| 400 | 135.3 | 76.8 | 338 |
+| 10 | 1.9 | 1.6 | 159 |
+| 120 | 30.3 | 18.9 | 158 |
+| 270 | 92.4 | 51.7 | 191 |
+| 400 | 181.1 | 69.3 | 173 |
 
-**Cost grows as about n^1.14 — effectively linear**, and tracking alone is flat
-at ~145 µs per track. It was n^1.82 until the convergence detector stopped
-rebuilding each track's pattern-of-life forecast once per pair; that one change
-cut scan latency at 270 tracks from 875 ms to 73 ms. Every report carries a
-per-stage timing breakdown, because the cost profile is not obvious from
-reading the code — see [docs/VALIDATION.md](docs/VALIDATION.md).
+**Cost grows as about n^1.23 — effectively linear**, and tracking alone is flat
+at 152–191 µs per track from 10 tracks to 400. It was n^1.82 until the
+convergence detector stopped rebuilding each track's pattern-of-life forecast
+once per pair; that one change cut scan latency at 270 tracks from 875 ms to
+73 ms. It bought a factor of twenty in the constant and not a better exponent,
+though: the loop is still over pairs, and at 400 tracks that detector is 56% of
+the whole engine. Every report carries a per-stage timing breakdown, because the
+cost profile is not obvious from reading the code — see
+[docs/VALIDATION.md](docs/VALIDATION.md).
 
-At 400 simultaneous tracks that is about 7 scans/second on one core: fine for a
-1 Hz camera estate, not for 25 fps without partitioning across workers.
+At 400 simultaneous tracks that is about 5.5 scans/second on one core, and 12
+frames/second at MOT20-05's 226 people per frame: fine for a 1 Hz camera estate,
+not for 25 fps without partitioning across workers.
 
 Backends:
 - **xsimd** (vendored, on by default) vectorises particle propagation — 8 lanes

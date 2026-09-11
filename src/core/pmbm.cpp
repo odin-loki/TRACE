@@ -200,7 +200,12 @@ void SourceCredibility::note_source(const std::string& source_id) {
 }
 
 Real SourceCredibility::get(const std::string& source_id) const {
-    if (seen_sources_.size() < 2) return kCredDefault;
+    // No adjustment, rather than the default prior. kCredDefault is 0.80 - a
+    // reasonable opening guess about a source that has peers to be compared
+    // against, and a flat 20% penalty when it has none. The score multiplies
+    // into the birth gate, so that penalty is not cosmetic: it is the
+    // difference between a detection founding a track and being discarded.
+    if (seen_sources_.size() < 2) return 1.0;
     const auto it = scores_.find(source_id);
     return it != scores_.end() ? it->second : kCredDefault;
 }

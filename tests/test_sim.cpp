@@ -4,6 +4,7 @@
 #include "trace/sim/maze.hpp"
 #include "trace/sim/scenario.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <set>
 
@@ -156,6 +157,68 @@ void test_world_follows_waypoints_without_overshoot() {
                 w.position.x, w.position.y);
 }
 
+void test_world_survives_repeated_waypoints() {
+    // Concatenating two path segments repeats the shared endpoint, which is how
+    // every route in the scenario suite is built. A repeated waypoint used to
+    // zero the entity's velocity - Vec2::unit() of a zero delta is {0,0} - after
+    // which the step function fell through to a hardcoded 1.4 m/s walking pace.
+    // In a domain whose units are not metres that default is arbitrary, and at
+    // an hourly scan period it came to thousands of units per step: the entity
+    // tore through its whole route and then stood still for the rest of the run.
+    World world(1);
+    Entity e;
+    e.id = "shuttle";
+    e.position = Vec2{0, 0};
+    e.velocity = Vec2{2.0, 0.0};                  // 2 m/s
+    e.waypoints = {Vec2{0, 0},   Vec2{20, 0},     // segment one
+                   Vec2{20, 0},  Vec2{0, 0},      // segment two, repeated join
+                   Vec2{0, 0},   Vec2{20, 0}};
+    world.add(std::move(e));
+
+    // The route is 60 m at 2 m/s, so 25 steps leaves it still under way.
+    Vec2 previous = world.entities()[0].position;
+    Real max_step = 0.0;
+    for (int i = 0; i < 25; ++i) {
+        world.step(1.0);
+        const Vec2 now = world.entities()[0].position;
+        max_step = std::max(max_step, distance(previous, now));
+        previous = now;
+    }
+    // Never further in one second than 2 m/s allows, whatever the route does.
+    std::printf("  repeated-waypoint shuttle: largest step %.3f m (budget 2.0)\n",
+                max_step);
+    CHECK(max_step <= 2.0 + 1e-6);
+    // Still moving, rather than having torn through the route and stopped.
+    CHECK(world.entities()[0].velocity.norm() > 1e-6);
+    // And it is past the repeated join rather than stuck on it: 50 m of a
+    // 60 m route in 25 seconds puts it on the third leg.
+    std::printf("  repeated-waypoint shuttle: at waypoint %zu after 25 s\n",
+                world.entities()[0].waypoint_index);
+    CHECK(world.entities()[0].waypoint_index >= 4);
+}
+
+void test_world_travels_at_its_configured_speed() {
+    // Reaching a waypoint mid-scan used to cost the remainder of that scan, so
+    // a route with many short legs moved an entity far slower than its own
+    // velocity said. Over a long route the two must agree closely.
+    World world(1);
+    Entity e;
+    e.id = "runner";
+    e.position = Vec2{0, 0};
+    e.velocity = Vec2{3.0, 0.0};                  // 3 m/s
+    for (int i = 1; i <= 40; ++i) {               // 40 legs of 5 m
+        e.waypoints.push_back(Vec2{static_cast<Real>(5 * i), 0.0});
+    }
+    world.add(std::move(e));
+
+    for (int i = 0; i < 50; ++i) world.step(1.0);
+    const Real travelled = world.entities()[0].position.x;
+    std::printf("  runner covered %.1f m in 50 s at 3 m/s (expected 150)\n",
+                travelled);
+    CHECK(travelled > 149.0);
+    CHECK(travelled <= 150.0 + 1e-6);
+}
+
 void test_scoring_counts_switches_and_ghosts() {
     Metrics m;
     std::vector<Entity> truth(1);
@@ -291,6 +354,8 @@ int main() {
     test_disabled_sensor_is_silent();
     test_wide_area_silencing();
     test_world_follows_waypoints_without_overshoot();
+    test_world_survives_repeated_waypoints();
+    test_world_travels_at_its_configured_speed();
     test_scoring_counts_switches_and_ghosts();
     test_end_to_end_maze_run();
     return trace::test::summary("test_sim");

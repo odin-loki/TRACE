@@ -28,11 +28,11 @@ supported but switched off here, for reasons measured below.
 |---|---|
 | **MOTA** | **48.1%** |
 | MOTP | 27.4 px |
-| Recall | 59.6% |
-| Precision | 91.0% |
-| Mostly tracked | 10.0% |
+| Recall | 59.7% |
+| Precision | 91.1% |
+| Mostly tracked | 11.2% |
 | Mostly lost | 3.5% |
-| Identity switches | 18,962 |
+| Identity switches | 19,230 |
 | Throughput | 5.8 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
@@ -49,8 +49,8 @@ detection it was handed — gives:
 | | |
 |---|---|
 | Detector ceiling, recall | **54.4%** |
-| TRACE, recall | **59.6%** |
-| **TRACE recovered** | **109.6% of the recall the detections allow** |
+| TRACE, recall | **59.7%** |
+| **TRACE recovered** | **109.7% of the recall the detections allow** |
 
 No tracker consuming these detections can exceed 54.4% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
@@ -94,17 +94,17 @@ for them:
 
 | Sequence | People/frame | MOTA | Precision | Recall | Mostly lost | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | 62 | 55.7% | 98.6% | 67.4% | 1.4% | 12 |
-| MOT20-02 | 72 | 51.2% | 95.5% | 59.8% | 3.0% | 20 |
-| MOT20-03 | 148 | 60.7% | 96.7% | 64.1% | 11.5% | 50 |
+| MOT20-01 | 62 | 55.9% | 98.6% | 67.4% | 2.7% | 13 |
+| MOT20-02 | 72 | 51.2% | 95.5% | 59.7% | 3.3% | 20 |
+| MOT20-03 | 148 | 60.8% | 96.7% | 64.1% | 12.0% | 50 |
 | MOT20-05 | 226 | **61.6%** | 95.7% | 65.7% | 10.2% | 83 |
-| **Overall** | **127** | **59.8%** | **96.0%** | **64.4%** | **5.3%** | **51** |
+| **Overall** | **127** | **59.9%** | **96.0%** | **64.5%** | **5.0%** | **52** |
 
 | | |
 |---|---|
 | Detector ceiling, recall | 56.2% |
-| TRACE, recall | 64.4% |
-| **TRACE recovered** | **114.7% of the recall the detections allow** |
+| TRACE, recall | 64.5% |
+| **TRACE recovered** | **114.8% of the recall the detections allow** |
 
 **MOT20 scores higher than MOT17**, on the same profile, and recovers more of
 its ceiling. That is not the expected direction and the reason is the
@@ -166,7 +166,7 @@ asserts something the file never said, and it asserted the worst case.
 | MOT20-03 | MOTA | Mostly lost | Recovery of ceiling |
 |---|---|---|---|
 | before | 18.4% | 74.8% | 26% |
-| **after** | **60.7%** | **11.5%** | **117%** |
+| **after** | **60.8%** | **12.0%** | **117%** |
 
 The same two fixes are worth 2.7 points of ceiling recovery on MOT17, and took
 `wildlife` — the sparsest scenario in the suite, and the only one that had ever
@@ -190,17 +190,20 @@ An earlier version of this document claimed latency scaled "close to linearly
 … because the chi-square gate keeps the association matrix sparse". That was
 wrong. Measured, it was **n^1.82** — and the gate had nothing to do with it.
 
-| Tracks | Median ms/scan | Tracking only | µs per track |
+| Tracks | Median ms/scan | Tracking only | µs per track (tracking) |
 |---|---|---|---|
-| 10 | 2.2 | 1.5 | 220 |
-| 40 | 6.4 | 5.3 | 161 |
-| 120 | 22.3 | 16.4 | 186 |
-| 270 | 72.7 | 39.9 | 269 |
-| 400 | 135.3 | 76.8 | 338 |
+| 10 | 1.9 | 1.6 | 159 |
+| 40 | 8.2 | 6.1 | 152 |
+| 120 | 30.3 | 18.9 | 158 |
+| 270 | 92.4 | 51.7 | 191 |
+| 400 | 181.1 | 69.3 | 173 |
 
-**Cost now grows as about n^1.14 — effectively linear.** Tracking alone is flat
-at ~145 µs per track across the whole range; the residual growth is in the
-detector pipeline.
+**Cost grows as about n^1.23 over the full range — effectively linear.**
+Tracking alone is flat at 152–191 µs per track from 10 tracks to 400, which is
+the part that had to be linear and is. All of the growth is in the detector
+pipeline, and it is not linear: subtracting the tracking column leaves 11 ms of
+detector work at 120 tracks, 41 ms at 270 and 112 ms at 400 — closer to
+quadratic than linear, and increasingly so.
 
 Getting there needed one measurement and two wrong guesses. The obvious
 suspects — the all-pairs detector loops, and a betweenness implementation that
@@ -209,10 +212,10 @@ timing to `ScanReport` found the real cost immediately:
 
 | Stage at 270 tracks | Before | After |
 |---|---|---|
-| **RendezvousWarner** | **751 ms** | **34 ms** |
+| **RendezvousWarner** | **751 ms** | **43 ms** |
 | score + forecast | 26 ms | 26 ms |
-| track + associate | 13 ms | 13 ms |
-| everything else combined | 2 ms | 2 ms |
+| track + associate | 13 ms | 16 ms |
+| everything else combined | 2 ms | 3 ms |
 
 The convergence detector was rebuilding each track's pattern-of-life forecast
 *inside* its pair loop, so every track's forecast was recomputed once for every
@@ -225,10 +228,26 @@ entities no matter how many were offered, because `kMaxTracks` was a file-scope
 constant. It is now a profile field, and the per-stage breakdown is part of
 every report.
 
+**It is still the dominant term, and it is still quadratic.** Hoisting the
+forecast out of the pair loop bought a factor of twenty in the constant, not a
+better exponent — the loop is over pairs and remains so. At 400 tracks
+`RendezvousWarner` is 102 ms of a 181 ms scan, 56% of the whole engine:
+
+| Stage at 400 tracks | ms/scan | Share |
+|---|---|---|
+| **RendezvousWarner** | **102.1** | **56.4%** |
+| score + forecast | 38.4 | 21.2% |
+| track + associate | 26.8 | 14.8% |
+| everything else combined | 13.8 | 7.6% |
+
+Gating the pair loop on the spatial index, as the other pairwise detectors
+already do, is the obvious next move; it has not been done.
+
 **What this means in practice.** At 400 simultaneous tracks the engine runs at
-about 7 scans per second on one core: comfortable for a 1 Hz camera estate,
-not for 25 fps without partitioning the area across workers. Above 400 has not
-been measured.
+about 5.5 scans per second on one core, and at 226 people per frame on MOT20-05
+at 12 frames per second. Comfortable for a 1 Hz camera estate, not for 25 fps
+without partitioning the area across workers. Above 400 tracks has not been
+measured.
 
 ---
 

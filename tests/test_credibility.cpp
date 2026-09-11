@@ -6,6 +6,7 @@
 #include "trace/core/engine.hpp"
 
 #include <cstdio>
+#include <vector>
 
 #include "test_harness.hpp"
 
@@ -128,6 +129,73 @@ void test_credibility_stays_in_range() {
     }
 }
 
+void test_a_lone_source_is_not_discounted() {
+    // Credibility is a relative judgement, and with one source there is nothing
+    // to be relative to. The only signal left is the fit-to-track test this
+    // file exists to distrust, and in a dense scene it falls steadily for a
+    // reason that is not the sensor's fault - ambiguous association. Because
+    // the score multiplies into the birth gate, that decay used to switch track
+    // birth off part-way through a long sequence: MOT20-03 went from 45 tracks
+    // to 10 while its detector went on supplying 80 detections a frame.
+    SourceCredibility cred;
+    cred.note_source("ONLY_SENSOR");
+    for (int i = 0; i < 500; ++i) {
+        // Five hundred scans of the worst possible evidence.
+        cred.update("ONLY_SENSOR", -1e3, -5.0);
+    }
+    const Real lone = cred.get("ONLY_SENSOR");
+    std::printf("  lone source after 500 bad fits: %.3f\n", lone);
+    CHECK(lone >= 1.0);
+
+    // The moment a peer exists, judgement resumes - the mechanism is suspended
+    // for want of a comparison, not disabled.
+    cred.note_source("SECOND_SENSOR");
+    const Real judged = cred.get("ONLY_SENSOR");
+    std::printf("  same source once a peer exists: %.3f\n", judged);
+    CHECK(judged < 0.2);
+}
+
+void test_birth_survives_a_long_single_source_run() {
+    // The end-to-end form of the above: one sensor, one crowd, long enough for
+    // any decay to bite. Track count must not collapse while detections hold.
+    EngineConfig cfg;
+    cfg.profile = CityCameraSurveillance();
+    cfg.profile.scan_dt_s = 1.0;
+    cfg.area = Area{0, 400, 0, 400};
+    cfg.seed = 7;
+    Engine engine(cfg);
+
+    Rng rng(21);
+    const int kEntities = 30;
+    std::vector<Vec2> truth;
+    for (int i = 0; i < kEntities; ++i) {
+        truth.push_back(Vec2{10.0 + 12.0 * (i % 10), 40.0 + 30.0 * (i / 10)});
+    }
+
+    int early = 0;
+    int late = 0;
+    for (int scan = 0; scan < 900; ++scan) {
+        std::vector<Observation> obs;
+        for (int i = 0; i < kEntities; ++i) {
+            truth[i].x += 1.2;
+            if (truth[i].x > 390.0) truth[i].x = 10.0;
+            obs.emplace_back("o" + std::to_string(scan) + "_" + std::to_string(i),
+                             static_cast<Real>(scan),
+                             Vec2{truth[i].x + rng.normal() * 0.5,
+                                  truth[i].y + rng.normal() * 0.5},
+                             Modality::GEOINT, 0.3, "ONE_CAMERA");
+        }
+        const ScanReport r = engine.ingest(obs, static_cast<Real>(scan));
+        if (scan == 150) early = r.n_tracks;
+        if (scan == 880) late = r.n_tracks;
+    }
+
+    std::printf("  single-source run: %d tracks at scan 150, %d at scan 880\n",
+                early, late);
+    CHECK(early > kEntities / 2);
+    CHECK(late >= early * 3 / 4);
+}
+
 }  // namespace
 
 int main() {
@@ -135,5 +203,7 @@ int main() {
     test_sound_estate_flags_nobody();
     test_two_sensors_record_a_conflict_but_blame_nobody();
     test_credibility_stays_in_range();
+    test_a_lone_source_is_not_discounted();
+    test_birth_survives_a_long_single_source_run();
     return trace::test::summary("test_credibility");
 }

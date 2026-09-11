@@ -139,7 +139,8 @@ public:
 
     /// Trust in a source, as a multiplier in [0,1].
     ///
-    /// Returns the neutral default whenever only one source has ever reported.
+    /// Returns 1.0 - no adjustment at all - whenever only one source has ever
+    /// reported.
     /// Credibility is a *relative* judgement and the class says so twice over:
     /// the fit-to-track test is circular, and peer disagreement - the one test
     /// that is not - needs peers. With a single sensor the only input is the

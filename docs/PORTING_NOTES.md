@@ -1,14 +1,14 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Twenty-one substantive defects were
-found — eleven inherited from `reference/aria_intel.py`, ten introduced or
+The C++23 port is not a transliteration. Twenty-six substantive defects were
+found — eleven inherited from `reference/aria_intel.py`, fifteen introduced or
 exposed by the port itself — while getting the simulations, then real
 MOTChallenge data, and finally the engine's own cost profile to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
 changed — partly as a changelog, partly because several are easy traps to fall
 back into.
 
-Two recurring themes, both about measurement:
+Three recurring themes, all about measurement:
 
 **Choose metrics that can fail.** The reference reported peak track counts but
 never identity continuity or false-track rates. Four of the seven inherited
@@ -17,8 +17,17 @@ glaring the moment you count identity switches.
 
 **Measure the input's own ceiling.** Three scenarios were documented as
 tracking weaknesses until the sensors were asked what they had actually
-produced. `anpr-corridor` recovers 111% of the detections its readers emit; it
+produced. `anpr-corridor` recovers 104% of the detections its readers emit; it
 was never failing. See [VALIDATION.md](VALIDATION.md).
+
+**Distrust a tidy explanation for a bad number.** `dark-vessel`'s shortfall had
+one — a vessel travels 21.6 km between hourly scans against a 13 km prediction
+uncertainty, so the information is not there. The arithmetic was correct, the
+conclusion was wrong, and having an explanation is what stopped anyone looking
+for four more defects sitting underneath it (22, 24, 25 below). Three of the
+five defects found after that point were found by watching a *ratio* that
+should have been stable and was not — detections offered against tracks held,
+or estimated speed against the speed the scenario specified.
 
 ---
 
@@ -370,6 +379,13 @@ pair. Measured at 270 tracks: the detector fell from **751 ms to 34 ms**, total
 scan latency from **875 ms to 73 ms**, and overall cost from **n^1.82 to
 n^1.14** — from approaching quadratic to effectively linear.
 
+**What it did not fix.** Twenty times the constant, not a better exponent: the
+loop is still over pairs. Re-measured once entities stopped teleporting through
+their routes (defect 24), the detector is 43 ms at 270 tracks and 102 ms at 400
+— 56% of the whole engine, and the reason overall cost now measures n^1.23
+rather than n^1.14. Gating the pair loop on the spatial index, as the other
+pairwise detectors already do, is the outstanding work.
+
 `tests/test_scaling.cpp` now guards the exponent, because this is precisely the
 class of defect that passes every correctness test.
 
@@ -382,6 +398,115 @@ making it cubic — and it built two dense n-by-n matrices every scan to do it.
 **Fix:** adjacency lists throughout. This turned out *not* to be the bottleneck
 (0.5 ms of a 135 ms scan at 400 tracks), which is itself the lesson: the
 profiler found the real cost in one measurement after two wrong guesses.
+
+## 22. A repeated waypoint stopped an entity dead, then teleported it
+
+**Severity: high — and it corrupted ground truth, not the engine.**
+`World::step` moved an entity toward its next waypoint, stopped there for the
+rest of the scan, and set a heading from the waypoint after it. `Vec2::unit()`
+of a zero-length delta is `{0, 0}`, so a *repeated* waypoint zeroed the
+velocity. Concatenating two path segments repeats the shared endpoint, which is
+how every route in `sim_main.cpp` is built.
+
+With velocity zero, the step function fell through to its `speed = 1.4` default
+— a walking pace, and a number that means nothing in knots or in the abstract
+units of `mule-network`, where at an hourly scan period it worked out at 5,040
+units per step. The entity tore through its entire remaining route in a handful
+of scans and then stood still, because a route with no waypoints left is a
+stationary entity. In `mule-network`, 626 of 1,038 sampled truth states had a
+velocity of exactly zero and another 286 were at the 1.4 m/s fallback; only 126
+were at the speed the scenario specified.
+
+**Fix:** spend the scan's travel budget along the route waypoint by waypoint,
+so arriving mid-scan no longer costs the remainder of it and a repeated
+waypoint costs nothing; latch cruise speed once rather than re-deriving it from
+a heading vector that is rewritten at every corner. Following consecutive
+segments stays exactly on the route, so this still cannot cut a corner — which
+was the reason for the original stop-at-each-waypoint rule.
+
+**What it invalidated.** `dark-vessel`'s 70% recovery, documented as the one
+genuine shortfall in the suite and explained as an information limit of vessel
+speed against scan period, is 105%. The arithmetic in that explanation was
+correct and had nothing to do with the result it was explaining. Several
+scenarios got *harder*, because entities now traverse their full routes:
+`anpr-corridor` 111% → 104%, and the 21×11 maze from 83.3% detection with zero
+identity switches to 78.2% with five.
+
+**How it was found:** by asking why a scenario's role classifier could not
+separate fast entities from slow ones, and eventually printing the ground truth
+rather than the estimate.
+
+## 23. Contact graphs grew for ever, in two places
+
+**Severity: medium.** `NetworkAnalyser::adjacency_` accumulated edge weight
+every scan and never decayed it or released a dead track;
+`NetworkRoleDetector::contacts_` was a lifetime `std::set` per track. In any
+scene that runs long enough every track ends up adjacent to every other, at
+which point betweenness is uniformly zero and the network says nothing — and it
+gets there far sooner when transient tracks are present, since each leaves a
+permanent mark on whatever it appeared next to. Both also leaked, keeping a row
+for every track that had ever existed.
+
+**Fix:** both age out on the profile's own `dormant_timeout`, which already
+means "how long an unobserved thing goes on being believed in" — exactly the
+semantics of a contact memory, and a different timescale from
+`handler_stable_scans`, which says how long until a track's behaviour counts as
+settled. Conflating the two cost accuracy in both directions.
+
+## 24. Credibility discounted the only sensor there was
+
+**Severity: high.** `SourceCredibility` multiplies into the birth gate. Defect
+17 in this file already established that its fit-to-track test is circular — a
+sensor steering a track fits it however wrong it is — and that peer
+disagreement is the only test that is not. What nobody asked was what happens
+when there are no peers. MOT has one source, so the only signal available was
+the circular one, and in a dense scene it falls steadily for a reason that is
+not the sensor's fault: ambiguous association. The score fell from 0.80 to 0.42
+over MOT20-03, and track birth shut off. The track count fell from 45 to 10
+while the detector went on supplying 80 detections a frame.
+
+Compounding it, the score returned for a lone source was `kCredDefault` = 0.80
+— a reasonable opening guess about a source that has peers to be compared
+against, and a flat 20% penalty when it has none.
+
+**Fix:** with fewer than two sources, `get()` returns 1.0. No adjustment,
+rather than a default one. Credibility is a relative judgement and there is
+nothing to compare a lone sensor against — nor anything left if you disbelieve
+it. With peers present the mechanism is untouched: `sensor-drift` still
+discounts the drifting camera to 0.434 against a sound neighbour's 0.605 and
+flags it against consensus. Worth +2.7 points of ceiling recovery on MOT17 by
+itself, and it took `wildlife` — one collar per animal, so no peers ever — from
+88% recovery to 107%.
+
+## 25. An absent detection score was read as a low one
+
+**Severity: high.** MOT20 ships its `det.txt` score column unset: every
+sequence carries exactly two distinct values in it, 175,303 of MOT20-03's
+177,347 rows being exactly 0, where every MOT17 sequence carries hundreds. Two
+values is a validity bit, not a confidence. Normalising it produced 0.0, which
+mapped to the 0.3 confidence floor, which after the modality weight is 0.285
+against a birth threshold of 0.25. The whole benchmark balanced on that 0.035 —
+and any credibility multiplier below 0.877 pushed it under.
+
+The same scale was also being thresholded: at the default `--min-score 0.15`,
+96% of MOT20's detections were discarded and MOT20-03 scored 0.7% MOTA.
+
+**Fix:** where the column takes two or fewer distinct values it drives neither
+confidence nor filtering. MOT20-03 goes from 18.4% MOTA and 74.8% mostly-lost
+to 60.8% and 12.0%, recovering 117% of its detector ceiling rather than 26%.
+
+## 26. A percentile cache keyed on `this`
+
+**Severity: low — latent.** `MotSequence::score_percentile` memoised its sorted
+score distribution in a function-local `static thread_local` keyed on the
+object's address. An address is not an identity: sequences are replayed one at
+a time from the same stack slot, so the second sequence and every one after it
+would have normalised against the first one's scores. The interleaved
+detector-ceiling pass happened to use a different object and reset the cache
+between sequences, so the numbers never actually went wrong.
+
+**Fix:** the bounds are computed once at load and stored on the sequence. Same
+output, no dependence on call order, and half the sorting work.
 
 ## A note on measuring before optimising
 
@@ -440,14 +565,10 @@ Stated plainly, because the simulations make them measurable:
   MOTA penalty there is missed detections. The earlier claim in this file that
   an appearance cue was "the obvious next step" was wrong, and the measurement
   that disproved it is in [VALIDATION.md](VALIDATION.md).
-- **Role inference does not transfer to a new domain without calibration.** The
-  behaviour-space scenario tracks well (104% of available detections) and its
-  behavioural detectors fire, but the classifier does not recover ground-truth
-  roles. Its thresholds are calibrated against a physical contact network.
-- **Maritime sampling at 12 knots hourly.** A vessel moves 21.6 km between
-  scans against a one-scan prediction uncertainty of ~13 km. `dark-vessel`
-  recovers 70% of available detections, the only genuine shortfall among the
-  scenarios, and it is an information limit rather than a tuning problem.
+- **The convergence detector is still quadratic.** Defect 20 bought a factor of
+  twenty in its constant, not a better exponent. At 400 tracks it is 102 ms of
+  a 181 ms scan — 56% of the engine. Gating its pair loop on the spatial index,
+  as the other pairwise detectors already do, is outstanding work.
 - **Regime identification needs the per-scan motion difference to exceed the
   measurement noise.** Where it does not, the regime posterior correctly falls
   back on the transition prior — correct, but not informative.
