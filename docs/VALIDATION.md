@@ -372,9 +372,23 @@ remain are not the kind appearance fixes: they are fragmentation, where a person
 goes undetected for seconds and their coasted track has drifted too far to be
 recognised as theirs.
 
-**The mechanism does work where descriptors are discriminative.** Six entities
-converging on one point, milling within measurement noise of each other, then
-dispersing along swapped paths:
+**The mechanism does work where descriptors are discriminative**, and the
+`decoy-split` scenario is the cleanest case: a subject hands off to a lookalike
+who then leaves along the subject's original heading at the subject's speed.
+
+| Descriptor quality | Followed the subject | Followed the decoy |
+|---|---|---|
+| none | 9 of 12 seeds | **3 of 12** |
+| 0.5 | **12 of 12** | 0 |
+
+A *modest* descriptor closes a gap that a *perfect* one could not touch on MOT,
+and the reason is the whole lesson: a mechanism is worth what the failure mode
+it addresses is worth. MOT's penalty is 89% missed detections, which appearance
+cannot help. `decoy-split`'s single error is a confusion, which is the only
+thing appearance addresses.
+
+The same holds for six entities converging on one point, milling within
+measurement noise of each other, then dispersing along swapped paths:
 
 Mean over seven seeds, because a single run of this is noisy:
 
@@ -446,6 +460,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 | spoofing | 84.8% | 98.0% | **116%** | 112 – 118% |
 | warehouse | 48.0% | 55.4% | **115%** | 101 – 127% |
 | mule-network | 91.8% | 98.8% | **107%** | 106 – 108% |
+| decoy-split | 92.0% | 98.8% | **107%** | 106 – 109% |
 | anpr-corridor | 19.9% | 21.3% | **107%** | 95 – 124% |
 | dark-vessel | 76.0% | 77.2% | **102%** | 98 – 105% |
 | sensor-drift | 98.5% | 97.5% | 99% | 98 – 100% |
@@ -454,7 +469,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
-Eight of the ten recover more than their sensors produced, which is what a
+Nine of the eleven recover more than their sensors produced, which is what a
 tracker is for. The two that do not are the two with the least to work with in
 opposite directions: `sensor-drift`'s sensors detect 98% of everything, so
 there are almost no gaps left to coast through, and `wildlife` has four animals

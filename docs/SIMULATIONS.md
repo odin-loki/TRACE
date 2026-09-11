@@ -69,7 +69,7 @@ identity switches across three travellers.
 
 ---
 
-## 2–11. The scenario suite — `trace_sim`
+## 2–12. The scenario suite — `trace_sim`
 
 ```bash
 ./trace_sim --list        # descriptions and what each stresses
@@ -186,6 +186,33 @@ switches, 120% of what the sensors produced (median of twelve seeds, 119–122%)
 Kinematics alone carries it: the median without descriptors is 15 of 15 across
 seeds, ranging 11–15, and at Q=0.9 every seed keeps every identity — so
 appearance buys the variance rather than the median.*
+
+### 12. `decoy-split` — a subject hands off to a lookalike
+The classic counter-surveillance manoeuvre. A subject walks a route; a decoy
+waits at a meeting point; they stand together for several scans; then the decoy
+leaves along the subject's original heading, at the subject's speed, while the
+subject turns away. Afterwards the decoy is the one doing everything the subject
+was doing.
+
+This is the case an appearance model exists for, and the measurement is the
+point:
+
+| Descriptor quality | Followed the subject | Followed the decoy |
+|---|---|---|
+| none | 9 of 12 seeds | **3 of 12** |
+| 0.5 | **12 of 12** | 0 |
+| 0.9 | **12 of 12** | 0 |
+
+Kinematics gets it right three times in four and fails the fourth. A *modest*
+descriptor closes the gap completely.
+
+Set against [VALIDATION.md](VALIDATION.md)'s finding that a **perfect** oracle
+descriptor moves MOTA not at all on MOTChallenge, the pair says something worth
+knowing: a mechanism is worth exactly what the failure mode it addresses is
+worth. MOT's errors are missed detections, which appearance cannot help;
+this scenario's single error is a confusion, which is all appearance addresses.
+*Result: 98.8% detection, 107% of what the sensors produced (median of twelve
+seeds, 106–109%).*
 
 ### 10. `sensor-drift` — a camera whose mount slowly slips
 One sensor's reports acquire a growing systematic offset while its peers stay
