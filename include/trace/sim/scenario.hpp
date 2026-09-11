@@ -92,6 +92,15 @@ struct Scenario {
     std::function<void(const Scenario&, int, const ScanReport&, const Metrics&)>
         on_report;
 
+    /// Which entities the sensors actually detected on the scan being reported.
+    ///
+    /// The sensors' own ledger, which the engine never sees. Every claim in
+    /// this repository about what the engine recovered is a ratio against this,
+    /// and a scenario whose conditions change part-way through needs it per
+    /// scan rather than summed over the run - an average across good conditions
+    /// and bad hides exactly the thing such a scenario measures.
+    DetectionLedger last_ledger;
+
     explicit Scenario(std::uint64_t seed = 20260910) : world(seed), rng(seed ^ 0xBEEF) {}
 
     Rng rng;

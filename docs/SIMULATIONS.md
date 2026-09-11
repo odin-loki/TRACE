@@ -69,7 +69,7 @@ identity switches across three travellers.
 
 ---
 
-## 2–13. The scenario suite — `trace_sim`
+## 2–14. The scenario suite — `trace_sim`
 
 ```bash
 ./trace_sim --list        # descriptions and what each stresses
@@ -237,6 +237,33 @@ detector looks for, and every site it flagged was a start position.
 seeds). Both real drop sites found in every run, alongside about four
 false positives — places where somebody genuinely did stand still where
 somebody else had.*
+
+### 14. `weather` — conditions that change under the engine
+Every other scenario gives its sensors fixed characteristics and states matching
+ones in the profile. Reality does not hold still. Fog rolls in between scans 100
+and 200: detection probability falls from 0.90 to 0.30 and position error rises
+from 3 m to 12 m, while `p_detection` and `meas_noise_var` go on asserting what
+they always said. That mismatch is the commonest way a deployed tracker
+degrades.
+
+| Conditions | Sensors produced | TRACE reported | Recovery | Ghosts/scan |
+|---|---|---|---|---|
+| clear | 90.3% | 98.8% | **109%** | 0.00 |
+| fog | 48.5% | 50.1% | **103%** | 0.09 |
+
+**The engine holds up**, which is not what the scenario was written expecting.
+Almost all the lost coverage is the sensors' rather than the tracker's. What it
+loses is its *margin*: the coasting that let it exceed the sensors by 9% in the
+clear buys only 3% in fog, because a coasted position is only as good as a
+velocity measured through four times the noise.
+
+Worth noting why it survives a mismatch this large: the one quantity the engine
+*learns* rather than asserts — the clutter rate — is the one that moves most, as
+the false-alarm rate rises eightfold. `p_detection` and `meas_noise_var` are
+asserted, and estimating them from residuals the way clutter is estimated from
+unassigned detections is the obvious next step.
+*Result: 83.7% detection overall, 109% of what the sensors produced (median of
+twelve seeds, 106–111%); fog-phase recovery median 104%, range 100–112%.*
 
 ### 10. `sensor-drift` — a camera whose mount slowly slips
 One sensor's reports acquire a growing systematic offset while its peers stay

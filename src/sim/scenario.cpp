@@ -135,6 +135,7 @@ Metrics run(Scenario& scenario, Engine& engine) {
         score_scan(m, truth.entities, report.targets, scenario.match_radius_m);
         m.latencies_ms.push_back(report.latency_ms);
 
+        scenario.last_ledger = ledger;
         if (scenario.on_report) scenario.on_report(scenario, scan, report, m);
     }
     return m;

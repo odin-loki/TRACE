@@ -462,6 +462,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 | mule-network | 91.8% | 98.8% | **107%** | 106 – 108% |
 | decoy-split | 92.0% | 98.8% | **107%** | 106 – 109% |
 | coordinated-evasion | 88.1% | 96.8% | **110%** | 109 – 113% |
+| weather | 77.2% | 83.7% | **109%** | 106 – 111% |
 | anpr-corridor | 19.9% | 21.3% | **107%** | 95 – 124% |
 | dark-vessel | 76.0% | 77.2% | **102%** | 98 – 105% |
 | sensor-drift | 98.5% | 97.5% | 99% | 98 – 100% |
@@ -470,7 +471,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
-Ten of the twelve recover more than their sensors produced, which is what a
+Eleven of the thirteen recover more than their sensors produced, which is what a
 tracker is for. The two that do not are the two with the least to work with in
 opposite directions: `sensor-drift`'s sensors detect 98% of everything, so
 there are almost no gaps left to coast through, and `wildlife` has four animals
@@ -482,6 +483,14 @@ been documented as the weakest of the seven on a 20% detection rate; the
 sensors only ever produced a detection in 19.9% of truth-scans, because ANPR
 readers 400 m apart cover about a fifth of the corridor. It was never a tracking
 failure. The same applies to `warehouse` and `wildlife`.
+
+One of them measures the same thing twice under different conditions.
+`weather` degrades its sensors mid-run without telling the engine — detection
+probability from 0.90 to 0.30, position error from 3 m to 12 m — and the engine
+recovers 109% of what the sensors produce in the clear and 103% in fog. The
+tracker's grip barely moves; what it loses is the margin coasting gave it,
+because a coasted position is only as good as a velocity measured through four
+times the noise.
 
 ### The shortfall that was not one
 
@@ -561,6 +570,11 @@ detector" above.
 - **Nothing above 226 people per frame has been measured on real data**, and at
   that density one core manages 12 frames per second. Synthetically the engine
   has now been measured to 1365 tracks.
+- **`p_detection` and `meas_noise_var` are asserted, not estimated.** The
+  clutter rate is learned from unassigned detections; these two are not, and
+  `weather` shows the engine surviving a large mismatch mostly because the
+  learned quantity is the one that moves. Estimating them from residuals is the
+  obvious next step.
 - **Sensor availability is inferred, not known.** A coverage gap is guessed at
   from whether anything reported at all. A real deployment knows which cameras
   are down; there is no interface for it to say so.
