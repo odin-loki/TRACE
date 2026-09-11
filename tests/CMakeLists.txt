@@ -12,7 +12,8 @@ set(TRACE_TESTS
     test_assignment
     test_appearance
     test_credibility
-    test_scaling)
+    test_scaling
+    test_network)
 
 foreach(t IN LISTS TRACE_TESTS)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${t}.cpp")

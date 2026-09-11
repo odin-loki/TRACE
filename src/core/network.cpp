@@ -72,7 +72,22 @@ std::vector<Real> betweenness_centrality(
     }
 
     // Normalise to [0,1] for an undirected graph.
-    const Real denom = std::max(static_cast<Real>((n - 1) * (n - 2)) / 2.0, 1.0);
+    //
+    // Two divisions, not one. The accumulation above runs the outer loop over
+    // every source s, so on an undirected graph each unordered pair {s,t} is
+    // counted twice - once walking out from s, once from t - and the raw score
+    // must be halved before it means anything. What is left is then divided by
+    // the (n-1)(n-2)/2 unordered pairs a vertex could lie between. The two
+    // halvings cancel, leaving (n-1)(n-2).
+    //
+    // Dividing by the pair count alone, as this did, left every score at twice
+    // its normalised value: the hub of a star scored 2.0 at every size, not the
+    // 1.0 a star's hub is the definition of. Nothing downstream broke, because
+    // the only two consumers are scale-free - the role classifier thresholds
+    // against the upper quartile of these same values, and the recurrence test
+    // asks only whether a score is above zero - but NetworkReport publishes the
+    // number, and it was not the number the field is named for.
+    const Real denom = std::max(static_cast<Real>((n - 1) * (n - 2)), 1.0);
     for (auto& v : bc) v /= denom;
     return bc;
 }
