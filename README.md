@@ -77,8 +77,8 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **51.3%** | **110.1%** |
-| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **60.8%** | **114.9%** |
+| MOT17 train, 21 sequences | 336,891 | **51.6%** | **108.7%** |
+| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **61.7%** | **115.1%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector

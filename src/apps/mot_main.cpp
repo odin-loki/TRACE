@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <vector>
@@ -91,13 +92,58 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
     tr_pts.reserve(tracks.size());
     for (const auto& t : tracks) tr_pts.push_back(t.position);
 
-    const Assignment a = match_points(gt_pts, tr_pts, match_radius);
+    // CLEAR-MOT matches in two passes, and the order is the whole point.
+    //
+    // First, every correspondence from the previous frame that is STILL valid
+    // is kept: if ground-truth g was matched to hypothesis h last frame and h
+    // is still within the radius of g now, that pairing stands. Only what is
+    // left over goes to the optimal matcher.
+    //
+    // Without the first pass a fresh optimum is computed every frame, and two
+    // hypotheses that fit two ground-truth identities about equally well are
+    // free to swap between them whenever the arithmetic tips - which scores
+    // two identity switches for a scene in which nothing happened. The metric
+    // is supposed to count the tracker changing its mind, not the scorer
+    // changing its mind. Bernardin & Stiefelhagen specify the continuity pass
+    // for exactly this reason.
+    std::vector<int> gt_to_track(gt.size(), -1);
+    std::vector<char> gt_taken(gt.size(), 0), tr_taken(tracks.size(), 0);
+
+    std::unordered_map<std::string, std::size_t> by_id;
+    by_id.reserve(tracks.size());
+    for (std::size_t j = 0; j < tracks.size(); ++j) by_id[tracks[j].track_id] = j;
+
+    for (std::size_t i = 0; i < gt.size(); ++i) {
+        const auto prev = m.last_match.find(gt[i].id);
+        if (prev == m.last_match.end()) continue;
+        const auto hit = by_id.find(prev->second);
+        if (hit == by_id.end() || tr_taken[hit->second]) continue;
+        if (distance(tracks[hit->second].position, gt[i].foot()) > match_radius) continue;
+        gt_to_track[i] = static_cast<int>(hit->second);
+        gt_taken[i] = 1;
+        tr_taken[hit->second] = 1;
+    }
+
+    // Second pass: optimal matching over whatever the first pass left free.
+    std::vector<std::size_t> free_gt, free_tr;
+    std::vector<Vec2> free_gt_pts, free_tr_pts;
+    for (std::size_t i = 0; i < gt.size(); ++i) {
+        if (!gt_taken[i]) { free_gt.push_back(i); free_gt_pts.push_back(gt_pts[i]); }
+    }
+    for (std::size_t j = 0; j < tracks.size(); ++j) {
+        if (!tr_taken[j]) { free_tr.push_back(j); free_tr_pts.push_back(tr_pts[j]); }
+    }
+    const Assignment a = match_points(free_gt_pts, free_tr_pts, match_radius);
+    for (std::size_t k = 0; k < free_gt.size(); ++k) {
+        const int c = a.row_to_col[k];
+        if (c >= 0) gt_to_track[free_gt[k]] = static_cast<int>(free_tr[static_cast<std::size_t>(c)]);
+    }
 
     m.gt_total += static_cast<long>(gt.size());
     for (const auto& b : gt) ++m.gt_frames[b.id];
 
     for (std::size_t i = 0; i < gt.size(); ++i) {
-        const int j = a.row_to_col[i];
+        const int j = gt_to_track[i];
         if (j < 0) {
             ++m.false_negatives;
             continue;
@@ -116,8 +162,12 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
         }
     }
 
+    std::vector<char> matched_track(tracks.size(), 0);
+    for (std::size_t i = 0; i < gt.size(); ++i) {
+        if (gt_to_track[i] >= 0) matched_track[static_cast<std::size_t>(gt_to_track[i])] = 1;
+    }
     for (std::size_t j = 0; j < tracks.size(); ++j) {
-        if (a.col_to_row[j] < 0) ++m.false_positives;
+        if (!matched_track[j]) ++m.false_positives;
     }
 }
 

@@ -10,9 +10,14 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Six did not, and are set out below with the
-evidence. Five are fixed; the sixth is a calibration decision that belongs to
+Ten derivations came back sound. Seven did not, and are set out below with the
+evidence. Six are fixed; the seventh is a calibration decision that belongs to
 whoever owns the engine, and is reported rather than patched over.
+
+Three of the seven are in the **scorer** rather than the engine — the code that
+decides which track corresponds to which real entity, and what counts as the
+tracker changing its mind. None of them changes how TRACE tracks anything. All
+three change what this repository was reporting about it.
 
 ---
 
@@ -203,8 +208,8 @@ Measured on MOT17 train, all 21 sequences, the matcher the only thing changing:
 
 Recall and precision never move, across both fixes. That is the signature of
 the whole class of fault: the number of matched pairs was always right, and
-only which pairs were wrong. Localisation error was overstated by a factor of
-two and identity switches by a factor of 2.2.
+only which pairs were wrong. (Finding 7 moves these figures again, and MOTP
+further; the table in VALIDATION.md carries the final ones.)
 
 The tests now compare against exhaustive search at eight shapes on both sides
 of square, and at seven shapes again with a quarter of entries infinite and
@@ -435,6 +440,53 @@ Whether to switch it on is therefore a domain judgement, which is why it is a
 flag. The defect was that the flag did not do what its name said; it now does,
 and the trade-off it exposes is a real one rather than an artefact.
 
+### 7. Identity switches were counted without match continuity — **fixed**
+
+`src/apps/mot_main.cpp`. CLEAR-MOT matches hypotheses to ground truth in two
+passes, and the order is the whole point. A correspondence from the previous
+frame that is **still valid** — the same hypothesis, still within the match
+radius of the same ground-truth identity — is kept; only what is left over goes
+to the optimal matcher.
+
+The scorer ran one pass. A fresh optimum was computed every frame, which means
+two hypotheses fitting two ground-truth identities about equally well were free
+to swap between them whenever the arithmetic tipped by a pixel. Each swap
+scored two identity switches for a scene in which nothing had happened. The
+metric is supposed to count the *tracker* changing its mind, not the scorer
+changing its mind.
+
+Restoring the continuity pass takes MOT17's identity-switch total from 8,686 to
+**2,445** — and this is on top of the two matcher fixes above, so against the
+original scorer it is 19,156 to 2,445, a factor of 7.8.
+
+Two figures move in the unflattering direction, and both are correct:
+
+| MOT17 train | one-pass | two-pass |
+|---|---|---|
+| MOTA | 51.3% | 51.6% |
+| MOTP | 13.7 px | **23.0 px** |
+| Recall | 59.9% | 59.1% |
+| Precision | 90.8% | 89.7% |
+| Identity switches | 8,686 | **2,445** |
+
+MOTP rises because it now averages over the correspondences actually
+maintained, rather than over the best pairing available in each frame in
+isolation. Keeping a correspondence that has drifted to 40 px instead of
+re-matching to a hypothesis 10 px away is precisely what CLEAR-MOT is defined
+to measure, and a scorer free to re-optimise every frame reports a localisation
+error no tracker achieved. Recall and precision fall slightly for the same
+reason: a maintained correspondence occupies a hypothesis that a fresh optimum
+would have spent elsewhere.
+
+The detector-ceiling pass is deliberately left one-pass. It asks what a perfect
+echo of the detections would score, and an echo has no identity to maintain, so
+a per-frame optimum is the right question there.
+
+This one changes the case against appearance descriptors rather than making it.
+Identity switches were 9.3% of the MOTA penalty on MOT17-02-FRCNN as previously
+measured; they are 0.3% of it now. Eliminating every switch would buy 0.2 MOTA
+points.
+
 ---
 
 ## Noted in passing, not chased
@@ -479,7 +531,7 @@ million SAT variables from a handful of divisions. They are marked and reported
 rather than dropped, because a suite that hid them would read as more complete
 than it is.
 
-Of the six findings, exactly one — the existence update — was found by a
+Of the seven findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
 the formula is supposed to compute and comparing. Model checking earned its
 place by settling things reading could not, in both directions. It proved the
