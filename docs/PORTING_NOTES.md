@@ -749,9 +749,12 @@ Across seven seeds this strictly dominates both alternatives: 85.9% recovery at
 1.83 ghosts per scan, against 81.7% at 0.94 with junctions projected and 81.7%
 at 2.01 with no constraint at all.
 
-**What it does not cover:** the `grid` factory's streets cross without sharing
-endpoints, so this detection finds no junctions in a grid. A crossing is a
-junction.
+Junctions are found three ways, because a network has three kinds: three or
+more segment ends meeting (the metro case), a crossing where two streets share
+no endpoint (the city-grid case, which shared-endpoint detection alone misses
+entirely), and a T where one street ends on the interior of another (which
+both of the others miss). Only endpoint-meets-endpoint is excluded, being a
+plain corner. A 3x2 grid is eight junctions and four corners.
 
 ## A note on what "it helped" means
 

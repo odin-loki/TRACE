@@ -274,10 +274,17 @@ alternatives:
 | **junction-aware** | **85.9%** | 1.83 |
 | no constraint at all | 81.7% | 2.01 |
 
-`anpr-corridor`, whose network is a polyline, is unchanged to a decimal. The
-`grid` factory is untouched too, and that is a limitation rather than a
-reassurance: its streets *cross* without sharing endpoints, and a crossing is a
-junction that this detection does not find.
+Junctions are found three ways, because a network has three kinds. Three or
+more segment *ends* meeting is the metro case. A *crossing*, where two streets
+pass through each other sharing no endpoint, is the city-grid case — and
+looking only at shared endpoints found no junctions at all in a grid, which is
+the one layout where nearly every point of interest is one. A *T*, where one
+street ends on the interior of another, is missed by both of those tests and is
+a three-way junction all the same. Only an endpoint meeting an endpoint is
+excluded: that is a plain corner, where the network still has a single answer.
+A 3×2 grid comes out at eight junctions and four corners, which is right.
+
+`anpr-corridor`, whose network is a polyline, is unchanged to a decimal.
 
 ---
 

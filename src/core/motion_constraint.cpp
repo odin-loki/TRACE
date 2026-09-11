@@ -66,6 +66,15 @@ Real RoadNetwork::distance_to(Vec2 position) const {
 void RoadNetwork::find_junctions() {
     junctions_.clear();
     if (segments_.size() < 2) return;
+    constexpr Real kSame = 1e-6;
+
+    const auto remember = [&](Vec2 p) {
+        for (const Vec2& j : junctions_) {
+            if (distance(j, p) <= kSame) return;
+        }
+        junctions_.push_back(p);
+    };
+
     // Endpoints that three or more segment ends meet at. Two ends meeting is
     // just a corner - the network still has one answer for which way to go.
     std::vector<Vec2> ends;
@@ -74,18 +83,46 @@ void RoadNetwork::find_junctions() {
         ends.push_back(s.a);
         ends.push_back(s.b);
     }
-    constexpr Real kSame = 1e-6;
     for (std::size_t i = 0; i < ends.size(); ++i) {
         int n = 0;
         for (const Vec2& e : ends) {
             if (distance(ends[i], e) <= kSame) ++n;
         }
-        if (n < 3) continue;
-        bool already = false;
-        for (const Vec2& j : junctions_) {
-            if (distance(j, ends[i]) <= kSame) already = true;
+        if (n >= 3) remember(ends[i]);
+    }
+
+    // And crossings, which are junctions that share no endpoint. A grid of
+    // streets is built from full-width and full-height lines that cross
+    // without meeting end to end, so looking only at shared endpoints finds no
+    // junctions in a city grid at all - which is the one layout where almost
+    // every point of interest is a junction.
+    //
+    // O(n^2) in segments, once, at construction.
+    for (std::size_t i = 0; i < segments_.size(); ++i) {
+        for (std::size_t k = i + 1; k < segments_.size(); ++k) {
+            const Vec2 p = segments_[i].a;
+            const Vec2 r = segments_[i].b - p;
+            const Vec2 q = segments_[k].a;
+            const Vec2 sd = segments_[k].b - q;
+            const Real denom = r.x * sd.y - r.y * sd.x;
+            if (std::abs(denom) < 1e-12) continue;        // parallel
+            const Vec2 qp = q - p;
+            const Real t = (qp.x * sd.y - qp.y * sd.x) / denom;
+            const Real u = (qp.x * r.y - qp.y * r.x) / denom;
+            // Inside both segments, and strictly inside at least one. A
+            // crossing is a four-way junction and a T - one street ending on
+            // the interior of another - is a three-way one; both qualify.
+            // Only an endpoint meeting an endpoint is excluded, because that
+            // is a plain corner where the network still has a single answer,
+            // and the endpoint test above already counts those properly.
+            constexpr Real kEdge = 1e-9;
+            if (t < -kEdge || t > 1.0 + kEdge) continue;
+            if (u < -kEdge || u > 1.0 + kEdge) continue;
+            const bool t_interior = t > kEdge && t < 1.0 - kEdge;
+            const bool u_interior = u > kEdge && u < 1.0 - kEdge;
+            if (!t_interior && !u_interior) continue;
+            remember(Vec2{p.x + r.x * t, p.y + r.y * t});
         }
-        if (!already) junctions_.push_back(ends[i]);
     }
 }
 

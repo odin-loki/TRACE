@@ -140,6 +140,25 @@ void test_junctions_are_found_and_left_unprojected() {
     std::printf("  polyline corner: %zu junction(s) found\n",
                 corner.junctions().size());
     CHECK(corner.junctions().empty());
+
+    // A crossing is a junction even though the two streets share no endpoint.
+    // A city grid is built entirely of these, so looking only at shared
+    // endpoints would find no junctions in the one layout where nearly every
+    // point of interest is one.
+    // A 3x2 grid is four vertical streets crossing three horizontal ones:
+    // twelve meeting points, of which the four corners are plain corners and
+    // the other eight are junctions - four crossings and four T-junctions
+    // where an edge street ends on another.
+    const RoadNetwork g = RoadNetwork::grid(Area{0, 300, 0, 200}, 3, 2, 10.0);
+    std::printf("  3x2 grid: %zu junction(s) found (expected 8)\n",
+                g.junctions().size());
+    CHECK(g.junctions().size() == 8);
+    for (const Vec2& j : g.junctions()) {
+        CHECK(g.at_junction(j));
+        // A crossing leaves a straddling cloud alone, like any other junction.
+        CHECK(distance(g.project_unconditional(j + Vec2{0.0, 3.0}),
+                       j + Vec2{0.0, 3.0}) < 1e-9);
+    }
 }
 
 int main() {
