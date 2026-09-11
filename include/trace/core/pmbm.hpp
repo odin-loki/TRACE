@@ -9,6 +9,7 @@
 #include <cmath>
 #include <deque>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -136,7 +137,26 @@ public:
     };
     [[nodiscard]] std::vector<Orphaned> orphaned_sources(Real min_rate = 0.5) const;
 
+    /// Trust in a source, as a multiplier in [0,1].
+    ///
+    /// Returns the neutral default whenever only one source has ever reported.
+    /// Credibility is a *relative* judgement and the class says so twice over:
+    /// the fit-to-track test is circular, and peer disagreement - the one test
+    /// that is not - needs peers. With a single sensor the only input is the
+    /// circular one, and in a dense scene it falls steadily for a reason that
+    /// has nothing to do with the sensor: ambiguous association is not the
+    /// sensor's fault. Since the score multiplies into the birth gate, that
+    /// decay shut track birth off completely part-way through MOT20's longer
+    /// sequences - the track count fell from 45 to 10 while the detector went
+    /// on supplying 80 detections a frame. Discounting the only source there
+    /// is cannot be right in any case: there is nothing to compare it against,
+    /// and nothing left if you disbelieve it.
     [[nodiscard]] Real get(const std::string& source_id) const;
+
+    /// Note that a source reported this scan, whether or not it was assigned.
+    /// Establishes how many sources exist, which is what makes the scores
+    /// above comparable to anything.
+    void note_source(const std::string& source_id);
 
 private:
     struct ResidualState {
@@ -145,6 +165,7 @@ private:
         Real noise{1.0};
     };
     std::unordered_map<std::string, Real> scores_;
+    std::set<std::string> seen_sources_;
     struct AssignState {
         int total{0};
         int unassigned{0};

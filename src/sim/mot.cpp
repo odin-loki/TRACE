@@ -1,6 +1,7 @@
 #include "trace/sim/mot.hpp"
 
 #include <algorithm>
+#include <set>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -132,7 +133,15 @@ std::vector<Observation> MotSequence::observations_for(int frame, Real timestamp
 
     int n = 0;
     for (const auto& b : it->second) {
-        const Real norm = std::clamp((b.score - lo) / span, 0.0, 1.0);
+        // An absent score is not a low score. Where the column is a validity
+        // flag rather than a confidence, deriving confidence from it asserts
+        // something the file never said - and it asserted the worst case:
+        // every MOT20 detection came through at the 0.3 confidence floor,
+        // which after the modality weight is 0.285 against a birth threshold
+        // of 0.25. The entire sequence balanced on that 0.035, and any
+        // credibility multiplier below 0.877 shut track birth off outright.
+        const Real norm =
+            scores_informative ? std::clamp((b.score - lo) / span, 0.0, 1.0) : 1.0;
         if (scores_informative && norm < min_score) continue;
         // Confidence floors at 0.3: a detection that survives the threshold is
         // still worth something, and zero-confidence observations are ignored
@@ -175,6 +184,17 @@ std::vector<Entity> MotSequence::truth_for(int frame) const {
     return out;
 }
 
+std::size_t MotSequence::distinct_scores() const {
+    std::set<Real> values;
+    for (const auto& [f, boxes] : detections) {
+        for (const auto& b : boxes) {
+            values.insert(b.score);
+            if (values.size() > 2) return values.size();   // enough to decide
+        }
+    }
+    return values.size();
+}
+
 Real MotSequence::score_percentile(Real q) const {
     std::vector<Real> sorted;
     for (const auto& [f, boxes] : detections) {
@@ -215,7 +235,8 @@ MotSequence load_mot_sequence(const std::string& directory) {
     // detections are the only ones in scope.
     seq.score_lo = seq.score_percentile(0.02);
     seq.score_hi = seq.score_percentile(0.98);
-    seq.scores_informative = (seq.score_hi - seq.score_lo) > 1e-6;
+    seq.scores_informative =
+        seq.distinct_scores() > 2 && (seq.score_hi - seq.score_lo) > 1e-6;
     return seq;
 }
 

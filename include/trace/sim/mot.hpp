@@ -74,12 +74,12 @@ struct MotSequence {
     Real score_lo{0.0};
     Real score_hi{1.0};
 
-    /// Whether the score column carries usable information at all. MOT20's
-    /// public detections ship with it unset - 175,303 of MOT20-03's 177,347
-    /// rows are scored exactly 0 - so its 2nd and 98th percentiles coincide
-    /// and every detection normalises to the same value. A score threshold
-    /// against that scale is not a strict filter, it is an arbitrary one, and
-    /// at the default it discarded 96% of MOT20's detections.
+    /// Whether the score column is a confidence at all, or just a flag. Every
+    /// MOT20 sequence carries exactly two distinct values in it - MOT20-03 has
+    /// 175,303 rows at 0 and 2,044 at 1 - where every MOT17 sequence carries
+    /// hundreds. Two values is a validity bit, and thresholding a validity bit
+    /// is not a strict filter but an arbitrary one: at the default it threw
+    /// away 96% of MOT20's detections and left MOTA at 0.7% on MOT20-03.
     bool scores_informative{true};
 
     [[nodiscard]] bool valid() const { return length > 0 && !detections.empty(); }
@@ -129,6 +129,9 @@ struct MotSequence {
     /// sequence after the first silently normalised against the first one's
     /// score distribution.
     [[nodiscard]] Real score_percentile(Real q) const;
+
+    /// How many distinct values the score column takes.
+    [[nodiscard]] std::size_t distinct_scores() const;
 };
 
 /// Load a sequence directory (one containing det/, gt/ and seqinfo.ini).

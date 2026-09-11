@@ -195,7 +195,12 @@ std::vector<SourceCredibility::Orphaned> SourceCredibility::orphaned_sources(
     return out;
 }
 
+void SourceCredibility::note_source(const std::string& source_id) {
+    if (!source_id.empty()) seen_sources_.insert(source_id);
+}
+
 Real SourceCredibility::get(const std::string& source_id) const {
+    if (seen_sources_.size() < 2) return kCredDefault;
     const auto it = scores_.find(source_id);
     return it != scores_.end() ? it->second : kCredDefault;
 }
@@ -492,6 +497,7 @@ void PmbmManager::update(const std::vector<Observation>& observations,
     valid.reserve(observations.size());
     for (const auto& o : observations) {
         if (o.has_position()) valid.push_back(&o);
+        cred_.note_source(o.source_id);
     }
 
     if (valid.empty()) {
@@ -545,7 +551,6 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         // independent scans. Counting each one separately would let a track
         // watched by four cameras become four times as certain as the same
         // track watched by one.
-        const Observation& primary = *it->second.front();
         const Real L = profile_->p_detection;
         const Real r = tracks_[i]->existence();
         tracks_[i]->set_existence(
