@@ -60,6 +60,51 @@ void ClutterEstimator::update(int n_unassigned) {
 }
 
 // ---------------------------------------------------------------------------
+// MeasurementNoiseEstimator
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Expected normalised innovation squared for a consistent 2-D filter.
+constexpr Real kNisTarget = 2.0;
+constexpr Real kNisDecay = 0.97;
+/// One gross outlier - a detection that belongs to something else entirely -
+/// must not move the estimate far, so a single sample is capped.
+constexpr Real kNisSampleCap = kNisTarget * 25.0;
+/// Enough samples that the mean means something before anything is changed.
+constexpr int kNisMinSamples = 40;
+constexpr Real kNoiseScaleMin = 0.25;
+constexpr Real kNoiseScaleMax = 16.0;
+
+}  // namespace
+
+void MeasurementNoiseEstimator::observe(const std::string& source_id, Real nis) {
+    if (source_id.empty() || !std::isfinite(nis) || nis < 0.0) return;
+    auto& st = by_source_[source_id];
+    st.mean_nis = kNisDecay * st.mean_nis +
+                  (1.0 - kNisDecay) * std::min(nis, kNisSampleCap);
+    ++st.samples;
+}
+
+Real MeasurementNoiseEstimator::scale(const std::string& source_id) const {
+    const auto it = by_source_.find(source_id);
+    if (it == by_source_.end() || it->second.samples < kNisMinSamples) return 1.0;
+    return std::clamp(it->second.mean_nis / kNisTarget, kNoiseScaleMin,
+                      kNoiseScaleMax);
+}
+
+std::vector<std::pair<std::string, Real>> MeasurementNoiseEstimator::scales() const {
+    std::vector<std::pair<std::string, Real>> out;
+    for (const auto& [id, st] : by_source_) {
+        if (st.samples < kNisMinSamples) continue;
+        out.emplace_back(id, std::clamp(st.mean_nis / kNisTarget, kNoiseScaleMin,
+                                        kNoiseScaleMax));
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // SourceCredibility
 // ---------------------------------------------------------------------------
 
@@ -195,6 +240,14 @@ std::vector<SourceCredibility::Orphaned> SourceCredibility::orphaned_sources(
         return x.unassigned_rate > y.unassigned_rate;
     });
     return out;
+}
+
+Vec2 SourceCredibility::mean_residual(const std::string& source_id) const {
+    const auto it = residuals_.find(source_id);
+    // Below a handful of samples the mean is noise itself, and subtracting it
+    // would remove real signal.
+    if (it == residuals_.end() || it->second.n < 8) return Vec2{0.0, 0.0};
+    return it->second.mean;
 }
 
 void SourceCredibility::note_source(const std::string& source_id) {
@@ -692,9 +745,34 @@ void PmbmManager::update(const std::vector<Observation>& observations,
             // Fit to the assigned track: weak, and circular for a sensor that
             // has been steering that track, but it still catches a gross
             // outlier where no peer evidence exists at all.
-            const Real obs_ll =
-                -0.5 * tracks_[i]->filter().mahalanobis_sq(*o->position);
+            const Real nis = tracks_[i]->filter().mahalanobis_sq(*o->position);
+            const Real obs_ll = -0.5 * nis;
             cred_.update(o->source_id, obs_ll, kCredLoglikThreshold);
+            // The same residual says something else as well: how far the
+            // sensor's actual error is from the profile's claim about it. But
+            // only its *spread* does. Measured about zero, a sensor whose mount
+            // has drifted reads as a noisy one and has its association gate
+            // widened, which is precisely the response that lets its wrong
+            // detections keep hold of tracks - on the sensor-drift scenario
+            // that cost twelve points of recovery. Measured about the source's
+            // own estimated offset, bias goes to the credibility machinery
+            // where it belongs and only spread reaches this.
+            //
+            // And only from a track whose prediction is one scan old. After a
+            // long coast the residual is dominated by where the track was
+            // guessed to be, not by where the sensor said it was, and feeding
+            // those in tells the estimator the sensor is noisy when what is
+            // actually uncertain is the prediction. In the warehouse scenario -
+            // patchy readers, long dormancy - that cost sixteen points of
+            // recovery on its own. A sensor's noise is measured on a target
+            // that is being tracked well.
+            const bool prediction_is_fresh =
+                timestamp - tracks_[i]->last_seen() <= profile_->scan_dt_s * 1.5;
+            if (profile_->adaptive_meas_noise && prediction_is_fresh) {
+                const Vec2 centred = *o->position - cred_.mean_residual(o->source_id);
+                noise_.observe(o->source_id,
+                               tracks_[i]->filter().mahalanobis_sq(centred));
+            }
             // The residual's direction is the durable evidence: noise cancels
             // over many samples, a miscalibration does not.
             cred_.note_residual(o->source_id,
@@ -702,6 +780,9 @@ void PmbmManager::update(const std::vector<Observation>& observations,
                                 profile_->pos_noise_m);
             Observation adjusted = *o;
             adjusted.confidence = o->confidence * cred_.get(o->source_id);
+            if (profile_->adaptive_meas_noise) {
+                tracks_[i]->filter().set_noise_scale(noise_.scale(o->source_id));
+            }
             tracks_[i]->update_hit(adjusted, profile_->scan_dt_s);
         }
         for (const Observation* o : it->second) {

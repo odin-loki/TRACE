@@ -184,7 +184,8 @@ void ParticleFilter::predict() {
 void ParticleFilter::update(Vec2 obs, Real r_scale) {
     if (!initialised_) return;
 
-    const Real var = std::max(profile_->meas_noise_var * r_scale, 1e-9);
+    const Real var =
+        std::max(profile_->meas_noise_var * noise_scale_ * r_scale, 1e-9);
     const Real inv_2var = 1.0 / (2.0 * var);
 
     // Work in log space, then shift by the max before exponentiating: a track
@@ -373,7 +374,7 @@ void ParticleFilter::ensure_cache() const {
     }
     P_c_ = Mat2{pxx, pxy, pyy};
 
-    const Real r = profile_ ? profile_->meas_noise_var : 25.0;
+    const Real r = (profile_ ? profile_->meas_noise_var : 25.0) * noise_scale_;
     S_c_ = Mat2{pxx + r, pxy, pyy + r};
     S_inv_c_ = S_c_.inverse();
     cache_valid_ = true;

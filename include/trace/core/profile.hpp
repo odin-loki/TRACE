@@ -55,6 +55,14 @@ struct DomainProfile {
     Real pos_noise_m{5.0};     ///< 1-sigma position measurement noise
     Real meas_noise_var{25.0}; ///< R diagonal used by the filter's likelihood
 
+    /// Learn how wrong `meas_noise_var` is, per sensor, from the normalised
+    /// innovations the engine already computes, and scale it accordingly.
+    ///
+    /// Off by default: the estimate is sound but it changes the association
+    /// gate, and a profile that has been tuned against a fixed assumption
+    /// should keep it until someone has measured the difference.
+    bool adaptive_meas_noise{false};
+
     std::array<Real, static_cast<std::size_t>(Modality::Count)> modality_weights{
         0.95, 0.82, 0.75, 0.65, 0.55};
 

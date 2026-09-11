@@ -52,6 +52,20 @@ public:
     /// measurement noise for a low-confidence source.
     void update(Vec2 obs, Real r_scale = 1.0);
 
+    /// Multiplier on the profile's assumed measurement variance for this track.
+    ///
+    /// Affects both the update weighting and the innovation covariance, and it
+    /// has to be both: scaling only the weighting would leave the association
+    /// gate as tight as ever, and the gate is what rejects true detections when
+    /// a sensor degrades. Scaling both also closes the loop - the normalised
+    /// innovation the estimate is driven by is itself measured against the
+    /// scaled covariance - so the estimate settles instead of running away.
+    void set_noise_scale(Real s) {
+        noise_scale_ = std::max(s, 1e-6);
+        cache_valid_ = false;
+    }
+    [[nodiscard]] Real noise_scale() const { return noise_scale_; }
+
     /// Reweight against an implied velocity from two consecutive detections.
     void update_trajectory(Vec2 obs_curr, Vec2 obs_prev, Real dt = -1.0);
 
@@ -104,6 +118,7 @@ private:
     std::vector<int>  model_idx_;
 
     std::array<Real, kNumModels> mu_{};
+    Real noise_scale_{1.0};
     bool initialised_{false};
 
     mutable bool cache_valid_{false};

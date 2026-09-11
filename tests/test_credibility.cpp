@@ -196,6 +196,65 @@ void test_birth_survives_a_long_single_source_run() {
     CHECK(late >= early * 3 / 4);
 }
 
+/// Run one source against a moving target and return what the engine decides
+/// its measurement noise is, as a multiple of what the profile asserts.
+Real learned_noise_scale(Real bias_m, Real noise_multiple) {
+    EngineConfig cfg;
+    cfg.profile = CityCameraSurveillance();
+    cfg.profile.scan_dt_s = 1.0;
+    cfg.profile.pos_noise_m = 2.0;
+    cfg.profile.meas_noise_var = 4.0;
+    cfg.profile.adaptive_meas_noise = true;
+    cfg.profile.mou_models = {{motion("walking", 45.0, 1.5),
+                               motion("standing", 8.0, 0.10)}};
+    cfg.profile.model_trans = {{{{0.92, 0.08}}, {{0.20, 0.80}}}};
+    cfg.area = Area{0, 4000, 0, 400};
+    cfg.seed = 4;
+    Engine eng(cfg);
+
+    Rng rng(88);
+    Vec2 truth{60.0, 200.0};
+    const Real sigma = 2.0 * noise_multiple;
+    for (int scan = 0; scan < 400; ++scan) {
+        truth.x += 1.5;
+        std::vector<Observation> obs{
+            {"o" + std::to_string(scan), static_cast<Real>(scan),
+             Vec2{truth.x + bias_m + rng.normal() * sigma,
+                  truth.y + rng.normal() * sigma},
+             Modality::GEOINT, 0.9, "ONE_SENSOR"}};
+        eng.ingest(obs, static_cast<Real>(scan));
+    }
+    for (const auto& [id, sc] : eng.noise_scales()) {
+        if (id == "ONE_SENSOR") return sc;
+    }
+    return -1.0;
+}
+
+void test_bias_is_not_mistaken_for_noise() {
+    // Bias and noise are different moments of the same residual and call for
+    // opposite responses: a biased sensor should be distrusted, a noisy one
+    // merely believed less precisely. Measured about zero rather than about the
+    // source's own offset, a sensor whose mount has drifted reads as a noisy
+    // one and gets its association gate *widened* - the one response that helps
+    // its wrong detections keep hold of tracks. On the sensor-drift scenario
+    // that cost twelve points of recovery.
+    const Real sound = learned_noise_scale(0.0, 1.0);
+    const Real biased = learned_noise_scale(12.0, 1.0);
+    const Real noisy = learned_noise_scale(0.0, 3.0);
+
+    std::printf("  learned noise scale: sound %.2f, biased-by-6-sigma %.2f, "
+                "genuinely-noisy %.2f\n", sound, biased, noisy);
+
+    CHECK(sound > 0.0);          // the estimator ran at all
+    // A sound sensor is left alone: the profile's assumption is right.
+    CHECK(sound < 2.0);
+    // A biased sensor is not called noisy. Its offset is six times the assumed
+    // noise, so measuring spread about zero would inflate this enormously.
+    CHECK(biased < 2.5);
+    // A genuinely noisy one is caught.
+    CHECK(noisy > sound * 1.5);
+}
+
 }  // namespace
 
 int main() {
@@ -205,5 +264,6 @@ int main() {
     test_credibility_stays_in_range();
     test_a_lone_source_is_not_discounted();
     test_birth_survives_a_long_single_source_run();
+    test_bias_is_not_mistaken_for_noise();
     return trace::test::summary("test_credibility");
 }

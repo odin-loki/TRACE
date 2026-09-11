@@ -175,7 +175,7 @@ DetectorCeiling detector_ceiling(const MotSequence& seq, Real min_score,
 
 ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
                       bool verbose, MotSequence::Appearance appearance,
-                      Real appearance_weight) {
+                      Real appearance_weight, bool adaptive_noise) {
     ClearMot m;
     const MotSequence seq = load_mot_sequence(dir);
     if (!seq.valid()) {
@@ -187,6 +187,7 @@ ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
     EngineConfig cfg;
     cfg.profile = MotPedestrianPixels(seq.frame_rate);
     cfg.profile.appearance_weight = appearance_weight;
+    cfg.profile.adaptive_meas_noise = adaptive_noise;
     cfg.area = seq.area();
     cfg.seed = 20260910;
     Engine engine(cfg);
@@ -222,6 +223,7 @@ int main(int argc, char** argv) {
             "usage: trace_mot <MOT sequence or split directory> [options]\n"
             "\n"
             "  --min-score F   drop detections below this normalised score (default 0.15)\n"
+            "  --adaptive-noise  learn each sensor's measurement noise from residuals\n"
             "  --radius PX     match radius in pixels                      (default 100)\n"
             "  --verbose       per-frame progress\n"
             "  --appearance M  none | geometry | oracle   (default geometry)\n"
@@ -238,12 +240,15 @@ int main(int argc, char** argv) {
 
     const std::string root = argv[1];
     Real min_score = 0.15;
+    bool adaptive_noise = false;
     Real radius = 100.0;
     bool verbose = false;
     auto appearance = MotSequence::Appearance::Geometry;
     Real appearance_weight = -1.0;  // negative: use the profile's own default
     for (int i = 2; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--min-score") == 0 && i + 1 < argc) {
+        if (std::strcmp(argv[i], "--adaptive-noise") == 0) {
+            adaptive_noise = true;
+        } else if (std::strcmp(argv[i], "--min-score") == 0 && i + 1 < argc) {
             min_score = std::atof(argv[++i]);
         } else if (std::strcmp(argv[i], "--radius") == 0 && i + 1 < argc) {
             radius = std::atof(argv[++i]);
@@ -274,7 +279,7 @@ int main(int argc, char** argv) {
         const ClearMot m = run_sequence(
             dir, min_score, radius, verbose,
             appearance == MotSequence::Appearance::None ? appearance : appearance,
-            appearance == MotSequence::Appearance::None ? 0.0 : w);
+            appearance == MotSequence::Appearance::None ? 0.0 : w, adaptive_noise);
         if (m.frames == 0) continue;
         print_result(dir.substr(dir.find_last_of('/') + 1), m);
 

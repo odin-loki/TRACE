@@ -38,6 +38,40 @@ private:
     std::deque<int> window_;
 };
 
+/// Learns how wrong the profile's assumed measurement variance is, per sensor.
+///
+/// `meas_noise_var` is asserted by the profile and never checked, while the
+/// clutter rate beside it is learned from unassigned detections. The asymmetry
+/// costs most exactly when it matters: conditions change under a deployment -
+/// fog, rain, dusk - and the profile goes on asserting what it always did.
+///
+/// The evidence is already being computed. The normalised innovation squared,
+/// `d' S^-1 d` for a detection against the track it was assigned to, has
+/// expectation equal to the measurement dimension - 2 here - when the filter's
+/// assumptions are right. Persistently above that means the sensor is noisier
+/// than claimed, and the ratio is how much. Because the scale feeds back into
+/// `S`, the loop settles rather than running away.
+class MeasurementNoiseEstimator {
+public:
+    /// Record one detection's normalised innovation against its assigned track.
+    void observe(const std::string& source_id, Real nis);
+
+    /// Multiplier on `meas_noise_var` for this source, 1.0 until there is
+    /// enough evidence to say otherwise.
+    [[nodiscard]] Real scale(const std::string& source_id) const;
+
+    /// What the estimator currently believes, for reporting. Empty until a
+    /// source has produced enough samples.
+    [[nodiscard]] std::vector<std::pair<std::string, Real>> scales() const;
+
+private:
+    struct State {
+        Real mean_nis{2.0};
+        int samples{0};
+    };
+    std::unordered_map<std::string, State> by_source_;
+};
+
 /// Running trust score per sensor. A source whose reports repeatedly fail to
 /// match any track loses influence — the cheapest available defence against a
 /// spoofed or misaligned feed.
@@ -138,6 +172,17 @@ public:
     };
     [[nodiscard]] std::vector<Orphaned> orphaned_sources(Real min_rate = 0.5) const;
 
+    /// This source's running mean residual - its estimated systematic offset.
+    ///
+    /// Separating it out matters because bias and noise are different moments
+    /// of the same residual and call for opposite responses. A biased sensor
+    /// should be *distrusted*; a noisy one should merely be believed less
+    /// precisely. Anything measuring spread has to measure it about this, or a
+    /// drifting mount reads as a noisy one and gets its association gate
+    /// widened - which is the one response that helps its wrong detections
+    /// keep hold of tracks.
+    [[nodiscard]] Vec2 mean_residual(const std::string& source_id) const;
+
     /// Trust in a source, as a multiplier in [0,1].
     ///
     /// Returns 1.0 - no adjustment at all - whenever only one source has ever
@@ -203,6 +248,12 @@ public:
 
     void predict();
     void update(const std::vector<Observation>& observations, Real timestamp);
+
+    /// What the engine has learned about each sensor's actual measurement
+    /// noise, as a multiple of what its profile asserts.
+    [[nodiscard]] std::vector<std::pair<std::string, Real>> noise_scales() const {
+        return noise_.scales();
+    }
 
     /// True when the most recent scan carried no detections at all in a scene
     /// that had been producing them steadily. See `coverage_gap` in ScanReport.
@@ -272,6 +323,7 @@ private:
 
     ClutterEstimator clutter_;
     SourceCredibility cred_;
+    MeasurementNoiseEstimator noise_;
     GibbsAssigner gibbs_;
 
     /// Unassigned detections from the previous scan, for two-point initiation.

@@ -29,6 +29,11 @@ struct ScenarioSpec {
 };
 
 /// Straight-line waypoint helper.
+/// Set by --adaptive-noise. Applied to every scenario's profile, so the switch
+/// measures the same thing everywhere rather than in whichever scenario
+/// happened to read it.
+bool g_adaptive_noise = false;
+
 std::vector<Vec2> line(Vec2 a, Vec2 b, int steps) {
     std::vector<Vec2> out;
     for (int i = 0; i <= steps; ++i) {
@@ -42,6 +47,16 @@ void report(const std::string& name, const Metrics& m, const Engine& eng,
             const std::string& note) {
     std::printf("\n--- %s ---\n%s", name.c_str(), m.summary().c_str());
     std::fputs(eng.performance_report().c_str(), stdout);
+    // What the engine worked out about its sensors' real measurement noise,
+    // when it was asked to. Silent otherwise, which is the default.
+    const auto scales = eng.noise_scales();
+    if (!scales.empty()) {
+        std::printf("  learned noise ");
+        for (const auto& [id, sc] : scales) {
+            std::printf(" %s x%.1f", id.c_str(), sc);
+        }
+        std::printf("   (multiple of what the profile asserts)\n");
+    }
     if (!note.empty()) std::printf("  %s\n", note.c_str());
 }
 
@@ -57,6 +72,7 @@ void run_transit_hub(std::uint64_t seed, bool verbose) {
 
     DomainProfile p = IndoorVenue();
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 200, 0, 120};
     s.engine_config.high_value_locations = {Vec2{100, 60}};  // the concourse
     s.engine_config.seed = seed;
@@ -141,6 +157,7 @@ void run_dark_vessel(std::uint64_t seed, bool verbose) {
     // per hourly scan, so 120 scans is 2,600 km of transit.
     const Area basin{0, 3000000, 0, 1200000};
     s.engine_config.profile = Maritime();
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = basin;
     s.engine_config.seed = seed;
 
@@ -216,6 +233,7 @@ void run_anpr_corridor(std::uint64_t seed, bool verbose) {
     p.parallel_route_m = 60.0;
     p.parallel_vel_cos = 0.95;
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 6000, 0, 800};
     s.engine_config.seed = seed;
 
@@ -284,6 +302,7 @@ void run_warehouse(std::uint64_t seed, bool verbose) {
     // minutes long, so a five-minute threshold is what fits inside it.
     wp.loiter_min_s = 300.0;
     s.engine_config.profile = wp;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 120, 0, 80};
     s.engine_config.high_value_locations = {Vec2{110, 40}};  // the loading dock
     s.engine_config.seed = seed;
@@ -365,6 +384,7 @@ void run_evader(std::uint64_t seed, bool verbose) {
     // winding window has to span a lap or the test can never reach threshold.
     p.sdr_window = 24;
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 2000, 0, 2000};
     s.engine_config.high_value_locations = {Vec2{1000, 1000}};
     s.engine_config.seed = seed;
@@ -435,6 +455,8 @@ void run_wildlife(std::uint64_t seed, bool verbose) {
     s.match_radius_m = 2000.0;
 
     s.engine_config.profile = WildlifeTelemetry();
+
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 60000, 0, 60000};
     s.engine_config.high_value_locations = {Vec2{30000, 30000}};  // waterhole
     s.engine_config.seed = seed;
@@ -495,6 +517,7 @@ void run_spoofing(std::uint64_t seed, bool verbose) {
     p.pos_noise_m = 3.0;
     p.meas_noise_var = 36.0;
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 800, 0, 600};
     s.engine_config.seed = seed;
 
@@ -675,6 +698,8 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
                       {{0.05, 0.05, 0.05, 0.85}}}};
 
     s.engine_config.profile = p;
+
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 100, 0, 100};
     s.engine_config.high_value_locations = {Vec2{80.0, 50.0}};  // cash-out region
     s.engine_config.seed = seed;
@@ -908,6 +933,7 @@ void run_decoy_split(std::uint64_t seed, bool verbose) {
     p.appearance_weight = quality > 0.0 ? 0.6 : 0.0;
     p.appearance_sigma = 0.35;
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 400, 0, 400};
     s.engine_config.seed = seed;
 
@@ -1093,6 +1119,7 @@ void run_coordinated_evasion(std::uint64_t seed, bool verbose) {
     p.dead_drop_max_s = 30.0 * 120;      // and within an hour
     p.chokepoint_m = 20.0;
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 1000, 0, 600};
     s.engine_config.seed = seed;
 
@@ -1290,6 +1317,7 @@ void run_weather(std::uint64_t seed, bool verbose) {
                      motion("standing",  8.0, 0.10)}};
     p.model_trans = {{{{0.92, 0.08}}, {{0.25, 0.75}}}};
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 800, 0, 400};
     s.engine_config.seed = seed;
 
@@ -1337,13 +1365,16 @@ void run_weather(std::uint64_t seed, bool verbose) {
     Engine eng(s.engine_config);
 
     struct Phase { int truth_scans{0}; int sensor_scans{0}; int track_scans{0};
-                   int ghosts{0}; int reports{0}; };
+                   int ghosts{0}; int reports{0}; Real peak_noise_scale{0.0}; };
     Phase clear, foul;
 
     s.on_report = [&](const Scenario& sc, int scan, const ScanReport& r,
                       const Metrics&) {
         Phase& ph = severity(scan) > 0.05 ? foul : clear;
         ++ph.reports;
+        for (const auto& [id, sc] : eng.noise_scales()) {
+            ph.peak_noise_scale = std::max(ph.peak_noise_scale, sc);
+        }
         std::set<std::string> matched;
         for (const auto& e : sc.world.entities()) {
             if (!e.active) continue;
@@ -1368,6 +1399,26 @@ void run_weather(std::uint64_t seed, bool verbose) {
     const Metrics m = run(s, eng);
 
     const auto pct = [](int a, int b) { return b > 0 ? 100.0 * a / b : 0.0; };
+
+    // What the estimator learned, at its peak in each phase. Reporting the
+    // value at the end of the run would report roughly 1.0 whatever happened,
+    // because the run ends in clear conditions and the estimate has correctly
+    // decayed back - which is the behaviour wanted and a useless summary of it.
+    char learned[260];
+    if (p.adaptive_meas_noise) {
+        std::snprintf(learned, sizeof(learned),
+                      "\n  meas_noise_var learned from the residuals, peak multiple of\n"
+                      "  what the profile asserts: x%.1f in the clear, x%.1f in fog\n"
+                      "  (the true ratio at worst fog is x16, and it decays back to\n"
+                      "  about x1 once conditions clear)",
+                      clear.peak_noise_scale, foul.peak_noise_scale);
+    } else {
+        std::snprintf(learned, sizeof(learned),
+                      "\n  meas_noise_var is asserted here, not estimated. Run with\n"
+                      "  --adaptive-noise to learn it from the residuals instead:\n"
+                      "  it recovers 110%% of the sensors in fog against 103%%, at a\n"
+                      "  ghost rate of 0.26 per scan against 0.09.");
+    }
     char note[1000];
     std::snprintf(note, sizeof(note),
                   "fog between scans 100 and 200: detection probability falls from\n"
@@ -1382,10 +1433,7 @@ void run_weather(std::uint64_t seed, bool verbose) {
                   "  exceed the sensors by 9%% in the clear buys only 3%% in fog,\n"
                   "  because a coasted position is only as good as a velocity measured\n"
                   "  through four times the noise.\n"
-                  "  It survives a mismatch this large because the clutter rate is\n"
-                  "  learned rather than asserted. p_detection and meas_noise_var are\n"
-                  "  asserted, and estimating them from residuals the way clutter is\n"
-                  "  estimated from unassigned detections is the obvious next step.",
+                  "%s",
                   pct(clear.sensor_scans, clear.truth_scans),
                   pct(clear.track_scans, clear.truth_scans),
                   pct(clear.track_scans, std::max(clear.sensor_scans, 1)),
@@ -1393,7 +1441,8 @@ void run_weather(std::uint64_t seed, bool verbose) {
                   pct(foul.sensor_scans, foul.truth_scans),
                   pct(foul.track_scans, foul.truth_scans),
                   pct(foul.track_scans, std::max(foul.sensor_scans, 1)),
-                  foul.reports > 0 ? static_cast<Real>(foul.ghosts) / foul.reports : 0.0);
+                  foul.reports > 0 ? static_cast<Real>(foul.ghosts) / foul.reports : 0.0,
+                  learned);
     report("weather", m, eng, note);
 }
 
@@ -1437,6 +1486,7 @@ void run_sensor_drift(std::uint64_t seed, bool verbose) {
     p.pos_noise_m = 1.5;
     p.meas_noise_var = 9.0;
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 600, 0, 300};
     s.engine_config.seed = seed;
 
@@ -1593,6 +1643,7 @@ void run_blackout(std::uint64_t seed, bool verbose) {
                       {{0.15, 0.80, 0.05}},
                       {{0.20, 0.05, 0.75}}}};
     s.engine_config.profile = p;
+    s.engine_config.profile.adaptive_meas_noise = g_adaptive_noise;
     s.engine_config.area = Area{0, 900, 0, 300};
     s.engine_config.seed = seed;
 
@@ -1806,6 +1857,8 @@ int main(int argc, char** argv) {
             for (const auto& [name, spec] : registry()) to_run.push_back(name);
         } else if (a == "--seed" && i + 1 < argc) {
             seed = std::strtoull(argv[++i], nullptr, 10);
+        } else if (a == "--adaptive-noise") {
+            g_adaptive_noise = true;
         } else if (a == "--appearance" && i + 1 < argc) {
             g_blackout_appearance = std::atof(argv[++i]);
             g_decoy_appearance = g_blackout_appearance;

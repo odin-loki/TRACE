@@ -62,6 +62,13 @@ public:
     /// Current trust score for a sensor, 0..1. Starts at 0.8 for an unknown
     /// source and moves with how well its reports fit the tracks they are
     /// assigned to.
+    /// What the engine has learned about each sensor's real measurement noise,
+    /// as a multiple of what its profile asserts. Empty unless
+    /// `adaptive_meas_noise` is on and a source has produced enough samples.
+    [[nodiscard]] std::vector<std::pair<std::string, Real>> noise_scales() const {
+        return pmbm_.noise_scales();
+    }
+
     [[nodiscard]] Real source_credibility(const std::string& source_id) const {
         return pmbm_.credibility().get(source_id);
     }
