@@ -268,7 +268,12 @@ sensor reports the tracks it has been feeding. On this scenario they take
 recovery from 108.9% to 112.4% and 121.1% respectively, and to 122.1% together,
 while leaving clear conditions untouched.
 
-Both ship off, because elsewhere they are neutral or slightly negative — see
+Every scenario now hands the engine a coverage map built from its own sensors'
+`covers()`, so a sensor is charged with a miss only where it was looking — which
+is what makes these estimates trustworthy rather than merely available.
+
+Both estimates ship off, because elsewhere they are neutral or slightly
+negative — see
 [VALIDATION.md](VALIDATION.md) for the trade, for the two things the noise
 estimate had to get right before it was safe, and for why a *point* sensor's
 detection rate cannot be estimated this way at all.
@@ -322,10 +327,10 @@ worth taking from this list rather than any individual entry on it.
 - **MOT20 tuning.** All four sequences now replay, on the shared pedestrian
   profile; none has been tuned for. At 200+ people per frame it is the natural
   scalability test.
-- **Telling the engine each sensor's footprint.** It would fix the one thing
-  the detection-rate estimate cannot do — distinguish "the reader missed it"
-  from "the entity walked out of its coverage" — and would let a coverage gap
-  be known rather than inferred.
+- **A topological domain.** Turnstile taps or service hops, where "distance" is
+  graph edges and there is no metric position at all. The `MotionConstraint`
+  hook is the natural place to express it, and it is the last sketch here that
+  is a file rather than an architecture.
 
 ---
 

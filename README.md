@@ -318,9 +318,13 @@ decayed.
   fixed profile they take recovery from 108.9% to 122.1%; elsewhere they are
   neutral or slightly negative. Both trades are measured in
   docs/VALIDATION.md rather than assumed.
-- **A point sensor's detection rate cannot be estimated this way.** The engine
-  is not told sensor footprints, so it cannot distinguish "the reader missed
-  it" from "the entity walked out of coverage".
+- **Sensor coverage is optional.** Given `EngineConfig::coverage`, a miss is
+  known to have happened inside somebody's field of view and a sensor is only
+  charged for what it was looking at; without it the engine infers both, which
+  it does reasonably and still infers. Supplying it is worth +5.9 points of
+  recovery in the patchy-reader scenario, and it is what makes the detection-
+  rate estimate accurate — `blackout`'s cameras are configured at 0.90 and the
+  engine learns 0.89–0.92.
 - **Sensor availability is inferred, not known.** A coverage gap is guessed at
   from whether anything reported at all. A real deployment knows which cameras
   are down and has no way to say so.

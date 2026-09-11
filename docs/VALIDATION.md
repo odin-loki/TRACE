@@ -329,6 +329,41 @@ that walks away and the estimator cannot tell that from a miss. That is a real
 limit of the measurement, and it is exactly why the scenarios full of gate
 readers come out unchanged rather than improved.
 
+### The input both estimates were missing
+
+Both of the above converged on the same gap: **the engine is never told what
+each sensor can see.** A gate reader's detection probability could not be
+estimated, because the engine cannot distinguish "the reader missed it" from
+"the entity walked out of its few metres of coverage". And a silent scan was
+read as a dead estate or an empty scene by guessing from whether anything had
+reported recently.
+
+`EngineConfig::coverage` is how a deployment says so — optional, and without it
+the engine falls back on exactly the inferences it made before. A sensor is now
+charged with a miss only where it was actually looking, and a track missed
+outside everybody's coverage takes no existence penalty at all.
+
+The estimates it unlocks are checkable against the scenarios' own
+configurations:
+
+| Sensor | Truly | Learned, blind | Learned, told what it sees |
+|---|---|---|---|
+| `blackout` cameras | 0.90 | 0.59 – 0.77 | **0.89 – 0.92** |
+| `anpr-corridor` readers | 0.15 | floor (noise) | **0.12 – 0.14** |
+| `warehouse` BLE readers | ~0.60 | 0.05 (all at floor) | **0.55 – 0.76** |
+
+Supplying the map alone, with no estimate switched on, is worth **+5.9 points**
+of recovery on `warehouse` — patchy reader coverage, which is the case it is
+for — and is neutral on every other scenario, at a cost of 0.04 ghosts per scan.
+
+**What bounds any estimate of this kind.** It is conditioned on the track still
+existing. With a single sensor, a track that is missed dies and stops producing
+evidence against that sensor, so the estimate is biased *upward* — 0.95 against
+a true 0.60, in the two-sensor test above run with one sensor removed. It is
+accurate where something else keeps tracks alive, which is the case it is
+useful in anyway. That was found writing the test, not reasoning about the
+design.
+
 ### And one that caught me
 
 On its default seed `wildlife` appeared to gain **eighteen points**, and that
@@ -672,11 +707,10 @@ detector" above.
   `adaptive_p_detection` are measured above and are opt-in; for a deployment
   whose conditions vary they are likely worth turning on, and for one tuned
   against fixed assumptions they are not free.
-- **A point sensor's detection rate cannot be estimated this way.** The
-  estimator cannot distinguish "the reader missed it" from "the entity walked
-  out of the reader's few metres of coverage", so gate and ANPR sources sit at
-  the floor. Knowing each sensor's footprint would fix it; the engine is not
-  told footprints.
-- **Sensor availability is inferred, not known.** A coverage gap is guessed at
-  from whether anything reported at all. A real deployment knows which cameras
-  are down; there is no interface for it to say so.
+- **Sensor coverage is optional, and without it the engine infers.** Supply
+  `EngineConfig::coverage` and a miss is known to have happened inside
+  somebody's field of view; leave it out and the engine guesses, which it does
+  reasonably and still guesses.
+- **Detection-rate estimates are conditioned on track survival**, so they are
+  biased upward wherever a missed track simply dies. Accurate where something
+  else keeps tracks alive.
