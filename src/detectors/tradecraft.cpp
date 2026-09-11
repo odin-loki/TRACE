@@ -30,8 +30,10 @@ std::vector<DetectionEvent> TradecraftDetector::detect(
     // ---- Brush pass: two entities converge to within contact range ---------
     // Only the transition into contact is reported. Without the streak counter
     // two people walking together would raise an event every single scan.
-    for (std::size_t i = 0; i < tracks.size(); ++i) {
-        for (std::size_t j = i + 1; j < tracks.size(); ++j) {
+    // A brush pass is by definition a close approach, so only near pairs can
+    // produce one. Pairs that have separated are cleared lazily below.
+    for (const auto& [i, j] : ctx.near_pairs(p.brush_pass_m * 2.0, tracks.size())) {
+        {
             const Track& a = *tracks[i];
             const Track& b = *tracks[j];
             const Real sep = distance(a.position(), b.position());

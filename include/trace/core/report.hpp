@@ -155,8 +155,39 @@ struct CollectionTask {
     Real current_uncertainty_m{0.0};
 };
 
+/// Two sensors that persistently disagree about the same entity.
+struct SensorConflict {
+    std::string source_a;
+    std::string source_b;
+    Real mean_disagreement_m{0.0};
+    Real rate{0.0};
+    int observations{0};
+};
+
+/// A sensor whose reports are consistently offset in one direction.
+struct SensorBias {
+    std::string source_id;
+    Vec2 offset_m{};
+    Real magnitude_m{0.0};
+    Real significance{0.0};
+    int samples{0};
+    /// Residual points against the consensus - the signature of the sensor
+    /// that is dragging the tracks rather than being dragged by them.
+    bool minority_direction{false};
+};
+
+/// A sensor whose reports chronically match nothing.
+struct SensorOrphaned {
+    std::string source_id;
+    Real unassigned_rate{0.0};
+    int reports{0};
+};
+
 /// Cross-cutting observations that do not belong to a single detector.
 struct OperationalIntel {
+    std::vector<SensorBias> sensor_biases;
+    std::vector<SensorOrphaned> orphaned_sources;
+    std::vector<SensorConflict> sensor_conflicts;
     std::vector<std::string> possibility_mismatch_tracks;
     std::vector<std::string> high_speed_tracks;
     std::vector<std::string> dwelling_tracks;
@@ -174,6 +205,11 @@ struct ScanReport {
     int n_dormant{0};
     Real clutter_rate{0.0};
     Real latency_ms{0.0};
+    /// Where the scan's time went, by stage. Present because the engine's cost
+    /// profile is not obvious: tracking is linear in track count while some
+    /// detectors are not, and which dominates decides whether a deployment is
+    /// feasible at its intended scale.
+    std::vector<std::pair<std::string, Real>> stage_ms;
 
     std::vector<TargetReport> targets;
     std::vector<RendezvousWarning> rendezvous;

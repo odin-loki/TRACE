@@ -95,6 +95,7 @@ DomainProfile CityCameraSurveillance() {
     p.pos_noise_m = 8.0;           // re-ID projected to ground plane
     p.meas_noise_var = 64.0;
     p.p_detection = 0.70;          // coverage gaps dominate
+    p.max_tracks = 400;            // a city camera estate is genuinely crowded
     p.r_birth = 0.40;              // two detections before a track is reported
     p.dormant_timeout = 120;       // long gaps between camera zones
     p.rv_threshold_m = 25.0;
@@ -316,6 +317,7 @@ DomainProfile SportsPitch() {
     p.pos_noise_m = 0.25;
     p.meas_noise_var = 0.0625;
     p.p_detection = 0.88;
+    p.max_tracks = 60;             // a squad, not a crowd
     p.r_birth = 0.38;
     p.r_confirm = 0.50;
     p.dormant_timeout = 50;          // occlusion in a ruck or scrum

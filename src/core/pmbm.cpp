@@ -6,6 +6,7 @@
 #include <limits>
 #include <numeric>
 #include <map>
+#include <numbers>
 #include <tuple>
 #include <unordered_set>
 
@@ -22,7 +23,6 @@ constexpr Real kCredLoglikThreshold = -5.0;
 constexpr Real kGibbsClutterLoglik = -11.5129;  // log(1e-5)
 
 constexpr Real kMinBirthWeight = 0.25;
-constexpr std::size_t kMaxTracks = 80;
 
 /// Group-spawn heuristics: a track whose particles disagree sharply about
 /// velocity while still being fed a steady stream of detections is probably
@@ -67,6 +67,132 @@ void SourceCredibility::update(const std::string& source_id, Real obs_loglik,
     auto [it, inserted] = scores_.try_emplace(source_id, kCredDefault);
     const Real target = obs_loglik > threshold ? kCredGood : kCredBad;
     it->second = kCredDecay * it->second + (1.0 - kCredDecay) * target;
+}
+
+void SourceCredibility::record_pairwise_conflict(const std::string& a,
+                                                 const std::string& b,
+                                                 Real disagreement_m,
+                                                 Real expected_m) {
+    if (a.empty() || b.empty() || a == b) return;
+    const auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+    auto& c = conflicts_[key];
+    c.source_a = key.first;
+    c.source_b = key.second;
+    ++c.observations;
+    if (disagreement_m > 3.0 * std::max(expected_m, 1e-6)) ++c.disagreements;
+    // Running mean of the disagreement magnitude.
+    c.mean_disagreement_m +=
+        (disagreement_m - c.mean_disagreement_m) / static_cast<Real>(c.observations);
+}
+
+std::vector<SourceCredibility::Conflict> SourceCredibility::conflicts(
+    Real min_rate) const {
+    std::vector<Conflict> out;
+    for (const auto& [key, c] : conflicts_) {
+        if (c.observations >= 10 && c.rate() >= min_rate) out.push_back(c);
+    }
+    std::sort(out.begin(), out.end(), [](const Conflict& x, const Conflict& y) {
+        return x.mean_disagreement_m > y.mean_disagreement_m;
+    });
+    return out;
+}
+
+void SourceCredibility::update_against_peers(const std::string& source_id,
+                                             Real disagreement_m,
+                                             Real expected_m) {
+    if (source_id.empty()) return;
+    auto [it, inserted] = scores_.try_emplace(source_id, kCredDefault);
+
+    // Independent reports of one entity differ by roughly sqrt(2) sigma. Three
+    // times that is well outside noise and indicates a systematic offset.
+    const Real ratio = disagreement_m / std::max(expected_m, 1e-6);
+    const Real target = ratio < 3.0 ? kCredGood : kCredBad;
+
+    // Peer evidence moves credibility faster than the fit-to-track test,
+    // because it is the test that can actually be trusted.
+    constexpr Real kPeerDecay = 0.92;
+    it->second = kPeerDecay * it->second + (1.0 - kPeerDecay) * target;
+}
+
+void SourceCredibility::note_residual(const std::string& source_id,
+                                      Vec2 residual, Real pos_noise_m) {
+    if (source_id.empty()) return;
+    auto& r = residuals_[source_id];
+    ++r.n;
+    r.noise = pos_noise_m;
+    // Running mean of the signed offset. Noise cancels; a bias does not.
+    r.mean += (residual - r.mean) / static_cast<Real>(r.n);
+
+    // Standard error of the mean falls as 1/sqrt(n), so a persistent offset
+    // becomes significant even when it is small compared with single-shot
+    // noise. Below thirty samples the estimate is too loose to act on.
+    if (r.n < 30) return;
+    const Real stderr_m = std::max(pos_noise_m, 1e-6) /
+                          std::sqrt(static_cast<Real>(r.n));
+    const Real significance = r.mean.norm() / stderr_m;
+
+    auto [it, inserted] = scores_.try_emplace(source_id, kCredDefault);
+    const Real target = significance > 6.0 ? kCredBad : kCredGood;
+    constexpr Real kBiasDecay = 0.97;
+    it->second = kBiasDecay * it->second + (1.0 - kBiasDecay) * target;
+}
+
+std::vector<SourceCredibility::Bias> SourceCredibility::biases(
+    Real min_significance) const {
+    std::vector<Bias> out;
+    for (const auto& [id, r] : residuals_) {
+        if (r.n < 30) continue;
+        const Real stderr_m = std::max(r.noise, 1e-6) /
+                              std::sqrt(static_cast<Real>(r.n));
+        const Real significance = r.mean.norm() / stderr_m;
+        if (significance < min_significance) continue;
+        out.push_back(Bias{id, r.mean, r.mean.norm(), significance, r.n, false});
+    }
+
+    // Which direction does the bulk of the evidence point? Weighting by sample
+    // count keeps a thinly-observed sensor from casting a large vote.
+    Vec2 consensus{};
+    for (const auto& b : out) {
+        consensus += b.offset_m.unit() * static_cast<Real>(b.samples);
+    }
+    const Vec2 consensus_dir = consensus.unit();
+
+    for (auto& b : out) {
+        // The sound sensors form the majority and all point the same way,
+        // because the track has been dragged away from them. The odd one out,
+        // pointing back towards where it is pulling, is the biased sensor.
+        b.minority_direction = b.offset_m.unit().dot(consensus_dir) < 0.0;
+    }
+
+    std::sort(out.begin(), out.end(), [](const Bias& a, const Bias& b) {
+        if (a.minority_direction != b.minority_direction) {
+            return a.minority_direction;   // suspects first
+        }
+        return a.significance > b.significance;
+    });
+    return out;
+}
+
+void SourceCredibility::note_assignment(const std::string& source_id,
+                                        bool assigned) {
+    if (source_id.empty()) return;
+    auto& a = assignment_[source_id];
+    ++a.total;
+    if (!assigned) ++a.unassigned;
+}
+
+std::vector<SourceCredibility::Orphaned> SourceCredibility::orphaned_sources(
+    Real min_rate) const {
+    std::vector<Orphaned> out;
+    for (const auto& [id, a] : assignment_) {
+        if (a.total < 30) continue;
+        const Real rate = static_cast<Real>(a.unassigned) / a.total;
+        if (rate >= min_rate) out.push_back(Orphaned{id, rate, a.total});
+    }
+    std::sort(out.begin(), out.end(), [](const Orphaned& x, const Orphaned& y) {
+        return x.unassigned_rate > y.unassigned_rate;
+    });
+    return out;
 }
 
 Real SourceCredibility::get(const std::string& source_id) const {
@@ -420,14 +546,58 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         // watched by four cameras become four times as certain as the same
         // track watched by one.
         const Observation& primary = *it->second.front();
-        const Real obs_ll = -0.5 * tracks_[i]->filter().mahalanobis_sq(*primary.position);
         const Real L = profile_->p_detection;
         const Real r = tracks_[i]->existence();
         tracks_[i]->set_existence(
             std::clamp(r * L / (r * L + (1.0 - r) * cd + 1e-300), 0.0, 0.9999));
 
-        for (const Observation* o : it->second) {
+        // Where several sensors reported this entity in this scan, each can be
+        // checked against the others. That is the only non-circular test
+        // available: a sensor's fit to a track it has itself been steering says
+        // nothing about whether the sensor is right.
+        const auto& group = it->second;
+        const Real expected = profile_->pos_noise_m * std::numbers::sqrt2;
+
+        if (group.size() >= 3) {
+            // Three or more reports: the majority pulls the peer mean towards
+            // the truth, so a biased sensor's disagreement is roughly twice
+            // any sound sensor's and attribution works.
+            for (const Observation* o : group) {
+                Vec2 peer_sum{};
+                int peers = 0;
+                for (const Observation* other : group) {
+                    if (other == o) continue;
+                    peer_sum += *other->position;
+                    ++peers;
+                }
+                const Vec2 peer_mean = peer_sum / static_cast<Real>(peers);
+                cred_.update_against_peers(o->source_id,
+                                           distance(*o->position, peer_mean),
+                                           expected);
+            }
+        } else if (group.size() == 2) {
+            // Two reports and no tie-breaker. The disagreement is identical
+            // from both sides, so punishing either is a coin flip - and doing
+            // so demonstrably punished the sound sensor as hard as the drifting
+            // one. Record the conflict instead: "these two disagree" is
+            // actionable even when "this one is wrong" is not knowable.
+            cred_.record_pairwise_conflict(
+                group[0]->source_id, group[1]->source_id,
+                distance(*group[0]->position, *group[1]->position), expected);
+        }
+
+        for (const Observation* o : group) {
+            // Fit to the assigned track: weak, and circular for a sensor that
+            // has been steering that track, but it still catches a gross
+            // outlier where no peer evidence exists at all.
+            const Real obs_ll =
+                -0.5 * tracks_[i]->filter().mahalanobis_sq(*o->position);
             cred_.update(o->source_id, obs_ll, kCredLoglikThreshold);
+            // The residual's direction is the durable evidence: noise cancels
+            // over many samples, a miscalibration does not.
+            cred_.note_residual(o->source_id,
+                                *o->position - tracks_[i]->position(),
+                                profile_->pos_noise_m);
             Observation adjusted = *o;
             adjusted.confidence = o->confidence * cred_.get(o->source_id);
             tracks_[i]->update_hit(adjusted, profile_->scan_dt_s);
@@ -495,6 +665,10 @@ void PmbmManager::update(const std::vector<Observation>& observations,
             try_group_spawn(*fresh);
             tracks_.push_back(std::move(fresh));
         }
+    }
+
+    for (const auto* o : valid) {
+        cred_.note_assignment(o->source_id, assigned.contains(o));
     }
 
     prev_unassigned_ = std::move(unassigned_now);
@@ -629,14 +803,14 @@ void PmbmManager::prune(Real timestamp) {
     }
     tracks_ = std::move(keep);
 
-    if (tracks_.size() > kMaxTracks) {
-        std::partial_sort(tracks_.begin(),
-                          tracks_.begin() + static_cast<long>(kMaxTracks),
+    const auto cap = static_cast<std::size_t>(std::max(profile_->max_tracks, 1));
+    if (tracks_.size() > cap) {
+        std::partial_sort(tracks_.begin(), tracks_.begin() + static_cast<long>(cap),
                           tracks_.end(),
                           [](const TrackPtr& a, const TrackPtr& b) {
                               return a->existence() > b->existence();
                           });
-        tracks_.resize(kMaxTracks);
+        tracks_.resize(cap);
     }
 
     std::erase_if(dormant_, [&](const DormantEntry& d) {

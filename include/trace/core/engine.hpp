@@ -59,6 +59,13 @@ public:
     [[nodiscard]] const std::vector<ScanReport>& history() const { return history_; }
     [[nodiscard]] int scan_count() const { return scan_count_; }
 
+    /// Current trust score for a sensor, 0..1. Starts at 0.8 for an unknown
+    /// source and moves with how well its reports fit the tracks they are
+    /// assigned to.
+    [[nodiscard]] Real source_credibility(const std::string& source_id) const {
+        return pmbm_.credibility().get(source_id);
+    }
+
     /// Human-readable single-scan summary for the console.
     [[nodiscard]] std::string summary(const ScanReport& report) const;
 

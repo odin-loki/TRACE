@@ -16,6 +16,7 @@
 #include "trace/core/profile.hpp"
 #include "trace/core/report.hpp"
 #include "trace/core/rng.hpp"
+#include "trace/core/spatial_index.hpp"
 #include "trace/core/track.hpp"
 
 namespace trace {
@@ -29,6 +30,24 @@ struct DetectorContext {
     const std::unordered_map<std::string, Real>* betweenness{nullptr};
     const std::vector<Cluster>* clusters{nullptr};
     Rng* rng{nullptr};
+    /// Tracks binned by position, indexed in step with the `tracks` vector the
+    /// detector is handed. Built once per scan and shared, so no detector has
+    /// to walk every pair to find the nearby ones.
+    const SpatialIndex* index{nullptr};
+
+    /// Pairs of track indices within `radius`, using the shared index where
+    /// one is available and falling back to all pairs where it is not.
+    [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> near_pairs(
+        Real radius, std::size_t n_tracks) const {
+        if (index != nullptr && index->size() == n_tracks) {
+            return index->pairs_within(radius);
+        }
+        std::vector<std::pair<std::size_t, std::size_t>> all;
+        for (std::size_t i = 0; i < n_tracks; ++i) {
+            for (std::size_t j = i + 1; j < n_tracks; ++j) all.emplace_back(i, j);
+        }
+        return all;
+    }
 
     [[nodiscard]] Real betweenness_of(const std::string& tid) const {
         if (betweenness == nullptr) return 0.0;

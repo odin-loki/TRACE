@@ -263,6 +263,7 @@ DomainProfile MotPedestrianPixels(int frame_rate, Real typical_px_per_s) {
 
     p.gibbs_sweeps = 10;
     p.n_particles = 192;              // crowds mean many filters at once
+    p.max_tracks = 400;               // MOT20 puts 200+ people in one frame
 
     //                       name        holds heading (s)   speed (px/s)
     p.mou_models = {{motion("standing",           1.0, typical_px_per_s * 0.06),

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -40,11 +41,117 @@ private:
 /// spoofed or misaligned feed.
 class SourceCredibility {
 public:
+    /// Judge a source against how well its report fits the track it was
+    /// assigned to. Weak evidence: a sensor whose reports have been steering a
+    /// track all along will fit it perfectly, however wrong it is.
     void update(const std::string& source_id, Real obs_loglik, Real threshold);
+
+    /// Judge a source against what *other* sources said about the same entity
+    /// in the same scan.
+    ///
+    /// This is the only test that can catch a systematically biased sensor. A
+    /// sensor that consistently lies is consistent with the track its own lies
+    /// produced - the fit-to-track test is circular, and a camera whose mount
+    /// had slipped sixteen times its own noise ended up scoring *higher* than
+    /// its sound neighbours. Peer disagreement is not circular, because the
+    /// peers are independent of the source being judged.
+    ///
+    /// `disagreement_m` is how far this source's report sits from the mean of
+    /// the others'; `expected_m` is how far apart independent reports of the
+    /// same entity should be on noise alone.
+    /// Requires at least two peers, i.e. three sources reporting the entity.
+    /// With only one peer the disagreement is symmetric by construction and
+    /// carries no information about which of the two is wrong - see
+    /// `record_pairwise_conflict`.
+    void update_against_peers(const std::string& source_id, Real disagreement_m,
+                              Real expected_m);
+
+    /// Two sources disagreeing, with no third to break the tie. The conflict is
+    /// real and worth surfacing, but blaming either would be a coin flip, so
+    /// neither credibility is touched.
+    void record_pairwise_conflict(const std::string& a, const std::string& b,
+                                  Real disagreement_m, Real expected_m);
+
+    /// Sensor pairs whose reports of the same entity persistently disagree by
+    /// more than noise explains. Actionable even when attribution is not:
+    /// somebody should go and look at these two.
+    struct Conflict {
+        std::string source_a;
+        std::string source_b;
+        int observations{0};
+        int disagreements{0};
+        Real mean_disagreement_m{0.0};
+        [[nodiscard]] Real rate() const {
+            return observations > 0
+                       ? static_cast<Real>(disagreements) / observations
+                       : 0.0;
+        }
+    };
+    [[nodiscard]] std::vector<Conflict> conflicts(Real min_rate = 0.5) const;
+
+    /// Accumulate the signed offset between a source's report and the track it
+    /// was assigned to.
+    ///
+    /// This is the signal that survives where the others do not. A sound
+    /// sensor's residuals are zero-mean - it is wrong in every direction
+    /// equally - while a miscalibrated one is wrong in the *same* direction
+    /// every time. Consistency of direction is the evidence, not magnitude, so
+    /// it works with a single sensor on a track and needs no peer overlap.
+    void note_residual(const std::string& source_id, Vec2 residual,
+                       Real pos_noise_m);
+
+    /// A sensor whose residuals point consistently one way, with the offset
+    /// estimated. Operationally this is better than a trust score: it says
+    /// which sensor to re-survey and by how much it is out.
+    struct Bias {
+        std::string source_id;
+        Vec2 offset_m{};
+        Real magnitude_m{0.0};
+        Real significance{0.0};   ///< offset relative to what noise explains
+        int samples{0};
+        /// True when this source's residual points against the consensus.
+        ///
+        /// A track is a weighted mean of the sources feeding it, so their
+        /// residuals must very nearly cancel. A single biased sensor drags the
+        /// track towards itself, which leaves *its* residual pointing one way
+        /// and every sound sensor's pointing the other. The minority direction
+        /// is the culprit - and unlike magnitude, that is recoverable.
+        bool minority_direction{false};
+    };
+    [[nodiscard]] std::vector<Bias> biases(Real min_significance = 3.0) const;
+
+    /// Record whether a source's report was assigned to any track.
+    ///
+    /// The residual test above can only see a bias smaller than the association
+    /// gate: beyond that the sensor's reports stop matching anything and the
+    /// evidence is censored exactly when it becomes most damning. A chronically
+    /// unassigned source is the complementary signal - it is either badly
+    /// miscalibrated, or reporting things nobody else can see.
+    void note_assignment(const std::string& source_id, bool assigned);
+
+    struct Orphaned {
+        std::string source_id;
+        Real unassigned_rate{0.0};
+        int reports{0};
+    };
+    [[nodiscard]] std::vector<Orphaned> orphaned_sources(Real min_rate = 0.5) const;
+
     [[nodiscard]] Real get(const std::string& source_id) const;
 
 private:
+    struct ResidualState {
+        Vec2 mean{};
+        int n{0};
+        Real noise{1.0};
+    };
     std::unordered_map<std::string, Real> scores_;
+    struct AssignState {
+        int total{0};
+        int unassigned{0};
+    };
+    std::unordered_map<std::string, ResidualState> residuals_;
+    std::unordered_map<std::string, AssignState> assignment_;
+    std::map<std::pair<std::string, std::string>, Conflict> conflicts_;
 };
 
 /// Gibbs-sampled measurement-to-track assignment.

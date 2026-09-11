@@ -1,9 +1,9 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Sixteen substantive defects were found
-— eight inherited from `reference/aria_intel.py`, eight introduced or exposed by
-the port itself — while getting the simulations, and then real MOTChallenge
-data, to behave. Each is
+The C++23 port is not a transliteration. Twenty-one substantive defects were
+found — eleven inherited from `reference/aria_intel.py`, ten introduced or
+exposed by the port itself — while getting the simulations, then real
+MOTChallenge data, and finally the engine's own cost profile to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
 changed — partly as a changelog, partly because several are easy traps to fall
 back into.
@@ -301,6 +301,98 @@ track, and two entities under one sensor still stay separate.
 A test-scenario defect surfaced alongside it: the synthetic generator assigned
 each detection a source id at random from a pool, which no real sensor estate
 does — a camera covers a region. Fixed to assign by region.
+
+## 17. Source credibility was circular, and therefore inert
+
+**Severity: high.** The per-source trust score asked one question: does this
+source's report fit the track it was assigned to? That is circular. A sensor
+whose reports have been steering a track all along fits it perfectly however
+wrong it is.
+
+Measured with a camera whose mount slipped 23 m over a run — sixteen times its
+own noise — it ended scoring **0.950, higher than its sound neighbours**. The
+mechanism had never been tested, and it did nothing.
+
+**Fix:** three non-circular signals, answering different questions.
+
+- *Detection* — the residual **direction**. A sound sensor is wrong in every
+  direction equally; a biased one is wrong the same way every time, and the
+  standard error of that mean falls as 1/sqrt(n).
+- *Attribution* — a track is a weighted mean of the sources feeding it, so
+  their residuals nearly cancel. A biased sensor drags the track towards
+  itself, leaving its residual pointing one way and every sound sensor's
+  pointing the other. **The minority direction is the culprit.**
+- *Calibration* — not available. The absolute offset cannot be recovered from
+  tracks the biased sensor helped build, because it drags them towards itself.
+  That needs an independent reference: a surveyed landmark, or GPS truth.
+
+The drifting camera is now uniquely flagged, credibility 0.434 against 0.724
+for its neighbours, with no false accusations on a sound estate.
+
+## 18. Peer attribution punished the innocent
+
+**Severity: medium — introduced while fixing 17.** The first attempt compared
+each source against the mean of the others. With only two sources reporting an
+entity, that mean *is* the other source, so the disagreement is identical from
+both sides and blaming either is a coin flip. It duly punished the sound camera
+harder than the drifting one: 0.221 against 0.914.
+
+**Fix:** peer attribution requires three or more sources, where the majority
+pulls the mean towards the truth. With exactly two, the conflict is recorded and
+surfaced — "these two disagree by 10.8 m on 92% of shared sightings" is
+actionable even when "this one is wrong" is not knowable — and neither
+credibility is touched.
+
+## 19. A hardcoded ceiling of 80 tracks
+
+**Severity: high for any crowded deployment.** `kMaxTracks = 80`, a file-scope
+constant, silently discarded the weakest tracks beyond that. Offered 120, 180 or
+270 entities, the engine tracked exactly 80 and said nothing. Every claim about
+city-scale camera estates or stadium egress was bounded by a number nobody had
+written down.
+
+**Fix:** a profile field. A convoy needs a dozen, a city camera estate needs
+hundreds; it is a domain decision like every other in a `DomainProfile`.
+
+## 20. The convergence detector recomputed its forecasts once per pair
+
+**Severity: high — this was 95% of the engine's runtime.** `pol_cross_predict`
+built each track's pattern-of-life forecast *inside* the pair loop, so every
+track's forecast was rebuilt once for every other track. At 270 tracks that is
+270 times over: 33,000 pairs, each running up to 20 horizon steps of Monte-Carlo
+GMM sampling for both parties.
+
+Nothing about it was incorrect. It simply made the engine unusable at scale, and
+no correctness test could have caught it.
+
+**Fix:** compute each track's forecast once per scan and share it across every
+pair. Measured at 270 tracks: the detector fell from **751 ms to 34 ms**, total
+scan latency from **875 ms to 73 ms**, and overall cost from **n^1.82 to
+n^1.14** — from approaching quadratic to effectively linear.
+
+`tests/test_scaling.cpp` now guards the exponent, because this is precisely the
+class of defect that passes every correctness test.
+
+## 21. Betweenness centrality was O(V^3)
+
+**Severity: medium.** Brandes' algorithm is O(V·E), but the implementation took
+a dense adjacency matrix and scanned all V columns for every dequeued vertex,
+making it cubic — and it built two dense n-by-n matrices every scan to do it.
+
+**Fix:** adjacency lists throughout. This turned out *not* to be the bottleneck
+(0.5 ms of a 135 ms scan at 400 tracks), which is itself the lesson: the
+profiler found the real cost in one measurement after two wrong guesses.
+
+## A note on measuring before optimising
+
+Two hypotheses about where the time went were wrong before the third was right.
+The spatial index built to fix the "obviously quadratic" pairwise detector loops
+made almost no difference; the betweenness rewrite made none. Adding per-stage
+timing to `ScanReport` found the true cost in a single run.
+
+The per-stage breakdown is now part of every report, because the engine's cost
+profile is not obvious from reading it: tracking is linear in track count, and
+one detector was two orders of magnitude more expensive than the rest combined.
 
 ## A note on test thresholds
 

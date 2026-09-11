@@ -788,6 +788,153 @@ void run_mule_network(std::uint64_t seed, bool verbose) {
     report("mule-network", m, eng, note);
 }
 
+// ---------------------------------------------------------------------------
+// 10. Sensor drift — a camera whose mount slowly slips
+// ---------------------------------------------------------------------------
+// The case SourceCredibility exists for, and which nothing tested until now.
+// Testing it found the mechanism inert, and the reasons are worth stating.
+//
+// One camera in an otherwise sound estate develops a growing position bias. A
+// bias is not noise: it does not average out, and every detection from that
+// sensor is wrong in the same direction.
+//
+// The original test - does this source's report fit the track it was assigned
+// to? - is circular, and measurably so. A sensor that has been steering a track
+// all along fits it perfectly however wrong it is: the drifting camera ended
+// the run scoring 0.950, *higher* than its sound neighbours, on a bias sixteen
+// times its own noise.
+//
+// Three non-circular signals replaced it, and they answer different questions:
+//
+//   detection    the residual direction. A sound sensor is wrong in every
+//                direction equally; a biased one is wrong the same way every
+//                time, and the standard error of that mean falls as 1/sqrt(n).
+//   attribution  peer disagreement, but only with three or more sources on one
+//                entity. With two, the disagreement is identical from both
+//                sides and blaming either is a coin flip - which is why the
+//                first attempt punished the sound camera harder than the
+//                drifting one. Pairs are recorded as conflicts instead.
+//   calibration  not available. The absolute offset cannot be recovered from
+//                tracks the biased sensor helped build, because it drags those
+//                tracks towards itself. Estimating "how far out is it" needs an
+//                independent reference: a surveyed landmark, or GPS truth.
+void run_sensor_drift(std::uint64_t seed, bool verbose) {
+    Scenario s(seed);
+    s.n_scans = 200;
+    s.match_radius_m = 12.0;
+
+    DomainProfile p = CityCameraSurveillance();
+    p.scan_dt_s = 1.0;
+    p.pos_noise_m = 1.5;
+    p.meas_noise_var = 9.0;
+    s.engine_config.profile = p;
+    s.engine_config.area = Area{0, 600, 0, 300};
+    s.engine_config.seed = seed;
+
+    // Four cameras with genuine three-way overlap in the middle of the
+    // corridor, so most entities are seen by three sensors at once. That
+    // matters: with only two reports the disagreement is symmetric and
+    // attribution is impossible, which the scenario also demonstrates at the
+    // corridor's ends.
+    for (int i = 0; i < 4; ++i) {
+        CameraPanel::Config c;
+        c.id = (i == 1) ? "CAM_DRIFTING" : ("CAM_SOUND_" + std::to_string(i));
+        c.footprint = Area{i * 110.0 - 60.0, i * 110.0 + 320.0, 0, 300};
+        c.p_detect = 0.88;
+        c.pos_noise_m = 1.5;
+        c.false_alarm_rate = 0.03;
+        if (i == 1) {
+            // 0.12 m/s of slip: imperceptible per frame, 23 m by the end -
+            // sixteen times the sensor's own noise.
+            c.bias_drift_per_s = Vec2{0.10, 0.06};
+        }
+        s.sensors.push_back(std::make_unique<CameraPanel>(c));
+    }
+
+    for (int i = 0; i < 5; ++i) {
+        Entity e;
+        e.id = "person_" + std::to_string(i);
+        e.role = "real";
+        const Real y = 50.0 + i * 45.0;
+        e.position = Vec2{20, y};
+        e.velocity = Vec2{2.4, 0};
+        e.waypoints = line(Vec2{20, y}, Vec2{580, y + 20}, 120);
+        s.world.add(std::move(e));
+    }
+
+    Engine eng(s.engine_config);
+
+    Real cred_drifting_start = 0.0, cred_drifting_end = 0.0;
+    Real cred_sound_end = 0.0;
+    std::vector<SensorConflict> conflicts;
+    std::vector<SensorBias> biases;
+    std::vector<SensorOrphaned> orphaned;
+    s.on_report = [&](const Scenario&, int scan, const ScanReport& r, const Metrics&) {
+        if (scan == 20) cred_drifting_start = eng.source_credibility("CAM_DRIFTING");
+        if (scan == 195) {
+            cred_drifting_end = eng.source_credibility("CAM_DRIFTING");
+            cred_sound_end = eng.source_credibility("CAM_SOUND_0");
+            conflicts = r.operational.sensor_conflicts;
+            biases = r.operational.sensor_biases;
+            orphaned = r.operational.orphaned_sources;
+        }
+    };
+
+    const Metrics m = run(s, eng);
+
+    std::string conflict_lines;
+    for (const auto& c : conflicts) {
+        char line[200];
+        std::snprintf(line, sizeof(line),
+                      "\n    %s vs %s: %.1f m apart on %.0f%% of shared sightings",
+                      c.source_a.c_str(), c.source_b.c_str(),
+                      c.mean_disagreement_m, 100.0 * c.rate);
+        conflict_lines += line;
+    }
+    if (conflict_lines.empty()) conflict_lines = "\n    (none)";
+
+    std::string bias_lines;
+    for (const auto& b : biases) {
+        char line[220];
+        std::snprintf(line, sizeof(line),
+                      "\n    %-14s residual towards (%+.2f, %+.2f), %.0f sigma "
+                      "over %d samples%s",
+                      b.source_id.c_str(), b.offset_m.unit().x,
+                      b.offset_m.unit().y, b.significance, b.samples,
+                      b.minority_direction ? "   <- AGAINST CONSENSUS: suspect"
+                                           : "");
+        bias_lines += line;
+    }
+    if (bias_lines.empty()) bias_lines = "\n    (none detected)";
+
+    std::string orphan_lines;
+    for (const auto& o : orphaned) {
+        char line[180];
+        std::snprintf(line, sizeof(line),
+                      "\n    %-14s %.0f%% of its %d reports matched no track",
+                      o.source_id.c_str(), 100.0 * o.unassigned_rate, o.reports);
+        orphan_lines += line;
+    }
+    if (orphan_lines.empty()) orphan_lines = "\n    (none)";
+
+    char note[1800];
+    std::snprintf(note, sizeof(note),
+                  "one camera's mount slipped %.0f m over the run (%.0fx its own noise).\n"
+                  "  source credibility: drifting %.3f -> %.3f, sound neighbour %.3f  [%s]\n"
+                  "  residual direction per source (direction is recoverable,\n"
+                  "  absolute magnitude is not - see the comment above):%s\n"
+                  "  sources whose reports match nothing (bias beyond the gate):%s\n"
+                  "  pairwise conflicts flagged where no third sensor could attribute:%s",
+                  Vec2{0.10, 0.06}.norm() * 200.0,
+                  Vec2{0.10, 0.06}.norm() * 200.0 / 1.5,
+                  cred_drifting_start, cred_drifting_end, cred_sound_end,
+                  cred_drifting_end < cred_sound_end * 0.85
+                      ? "correctly discounted"
+                      : "NOT discounted",
+                  bias_lines.c_str(), orphan_lines.c_str(), conflict_lines.c_str());
+    report("sensor-drift", m, eng, note);
+}
+
 std::map<std::string, ScenarioSpec>& registry() {
     static std::map<std::string, ScenarioSpec> r{
         {"transit-hub",
@@ -813,6 +960,10 @@ std::map<std::string, ScenarioSpec>& registry() {
          {"Accounts in a behavioural space, not physical space; mules shuttle value",
           "non-geographic position; also shows role inference NOT transferring",
           run_mule_network}},
+        {"sensor-drift",
+         {"One camera's mount slips, biasing every detection it makes",
+          "per-source credibility under contradictory evidence",
+          run_sensor_drift}},
         {"spoofing",
          {"A compromised camera injects a convincing phantom into an honest feed",
           "possibility/probability mismatch, source credibility",

@@ -57,13 +57,26 @@ private:
     };
     std::map<std::pair<std::string, std::string>, std::deque<SepSample>> sep_history_;
 
+    /// One track's pattern-of-life forecast across the warning horizon.
+    ///
+    /// Computed once per track per scan and reused for every pair that track
+    /// appears in. Recomputing it inside the pair loop meant each track's
+    /// forecast was rebuilt once for every other track - at 270 tracks that is
+    /// 270 times over, and it made this detector 95% of the engine's runtime.
+    struct PolForecast {
+        std::vector<Vec2> position;
+        std::vector<Real> uncertainty;
+        bool valid{false};
+    };
+
     std::optional<RendezvousWarning> geometric_intercept(
         const Track& a, const Track& b, const DetectorContext& ctx) const;
     std::optional<RendezvousWarning> separation_rate(
         const Track& a, const Track& b, const std::deque<SepSample>& hist,
         const DetectorContext& ctx) const;
     std::optional<RendezvousWarning> pol_cross_predict(
-        const Track& a, const Track& b, const DetectorContext& ctx) const;
+        const Track& a, const Track& b, const PolForecast& fa,
+        const PolForecast& fb, const DetectorContext& ctx) const;
 };
 
 /// One entity shadowing another: same heading, steady lateral offset, held

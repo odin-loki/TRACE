@@ -169,33 +169,26 @@ std::optional<RendezvousWarning> RendezvousWarner::separation_rate(
 // times, and looks for a moment when both routines put them in the same place.
 // It is the only method that fires while the two are still stationary.
 std::optional<RendezvousWarning> RendezvousWarner::pol_cross_predict(
-    const Track& a, const Track& b, const DetectorContext& ctx) const {
+    const Track& a, const Track& b, const PolForecast& fa, const PolForecast& fb,
+    const DetectorContext& ctx) const {
     const DomainProfile& p = *ctx.profile;
-    if (!a.pol().fitted() || !b.pol().fitted()) return std::nullopt;
-    if (ctx.rng == nullptr) return std::nullopt;
+    if (!fa.valid || !fb.valid) return std::nullopt;
 
-    const Real dt = p.scan_dt_s;
-    const int steps = std::min(static_cast<int>(p.rv_pol_window_s / std::max(dt, 1e-6)),
-                               kPolMaxHorizonSteps);
-    if (steps < 1) return std::nullopt;
-
-    for (int k = 1; k <= steps; ++k) {
-        const Real t_future = ctx.timestamp + k * dt;
-        const auto pa = a.pol().predict_location(t_future, *ctx.rng, kPolMonteCarlo);
-        const auto pb = b.pol().predict_location(t_future, *ctx.rng, kPolMonteCarlo);
-        const Real sep = distance(pa.position, pb.position);
+    const std::size_t steps = std::min(fa.position.size(), fb.position.size());
+    for (std::size_t k = 0; k < steps; ++k) {
+        const Real sep = distance(fa.position[k], fb.position[k]);
         if (sep >= p.rv_threshold_m) continue;
 
-        const Real total_unc = pa.uncertainty_m + pb.uncertainty_m;
+        const Real total_unc = fa.uncertainty[k] + fb.uncertainty[k];
         RendezvousWarning w;
         w.track_a = a.id();
         w.track_b = b.id();
-        w.eta_s = static_cast<Real>(k) * dt;
+        w.eta_s = static_cast<Real>(k + 1) * p.scan_dt_s;
         w.current_sep_m = distance(a.position(), b.position());
         w.method = "POL_CROSS_PREDICT";
         w.confidence =
             std::clamp(1.0 - total_unc / (p.rv_threshold_m * 4.0), 0.1, 0.95);
-        w.location = (pa.position + pb.position) * 0.5;
+        w.location = (fa.position[k] + fb.position[k]) * 0.5;
         w.priority = priority_from_eta(w.eta_s, w.confidence);
         return w;
     }
@@ -209,8 +202,37 @@ std::vector<RendezvousWarning> RendezvousWarner::rendezvous(
     std::vector<RendezvousWarning> out;
     const DomainProfile& p = *ctx.profile;
 
-    for (std::size_t i = 0; i < tracks.size(); ++i) {
-        for (std::size_t j = i + 1; j < tracks.size(); ++j) {
+    // Each track's pattern-of-life forecast, computed once and shared across
+    // every pair it takes part in.
+    const int steps = std::min(
+        static_cast<int>(p.rv_pol_window_s / std::max(p.scan_dt_s, 1e-6)),
+        kPolMaxHorizonSteps);
+    std::vector<PolForecast> forecasts(tracks.size());
+    if (steps >= 1 && ctx.rng != nullptr) {
+        for (std::size_t i = 0; i < tracks.size(); ++i) {
+            if (!tracks[i]->pol().fitted()) continue;
+            auto& f = forecasts[i];
+            f.position.reserve(static_cast<std::size_t>(steps));
+            f.uncertainty.reserve(static_cast<std::size_t>(steps));
+            for (int k = 1; k <= steps; ++k) {
+                const auto pred = tracks[i]->pol().predict_location(
+                    ctx.timestamp + k * p.scan_dt_s, *ctx.rng, kPolMonteCarlo);
+                f.position.push_back(pred.position);
+                f.uncertainty.push_back(pred.uncertainty_m);
+            }
+            f.valid = true;
+        }
+    }
+
+    // Two entities cannot meet inside the warning horizon unless they are
+    // already within reach of each other at the domain's own speed scale.
+    // Walking every pair to discover that was the single largest cost in the
+    // engine at realistic track counts.
+    const Real reach = p.rv_threshold_m +
+                       p.courier_speed_thresh * 4.0 * p.rv_warning_horizon_s;
+
+    for (const auto& [i, j] : ctx.near_pairs(reach, tracks.size())) {
+        {
             const Track& a = *tracks[i];
             const Track& b = *tracks[j];
             const Real sep = distance(a.position(), b.position());
@@ -226,7 +248,7 @@ std::vector<RendezvousWarning> RendezvousWarner::rendezvous(
             const std::array<std::optional<RendezvousWarning>, 3> candidates{
                 geometric_intercept(a, b, ctx),
                 separation_rate(a, b, hist, ctx),
-                pol_cross_predict(a, b, ctx)};
+                pol_cross_predict(a, b, forecasts[i], forecasts[j], ctx)};
 
             int n_agree = 0;
             for (const auto& c : candidates) {

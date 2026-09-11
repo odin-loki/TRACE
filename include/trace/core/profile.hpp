@@ -97,6 +97,11 @@ struct DomainProfile {
     /// it from the fastest motion model's steady-state speed.
     Real birth_gate_m{-1.0};
     int  gibbs_sweeps{14};
+    /// Hard ceiling on simultaneously maintained tracks. Beyond this the
+    /// weakest are dropped, so it is a real limit on how crowded a scene can
+    /// be - a stadium concourse needs hundreds, a convoy needs a dozen. It was
+    /// a hardcoded 80 with nothing to say so.
+    int  max_tracks{80};
     /// How much weight association gives to appearance relative to position.
     /// Zero ignores descriptors entirely, which is the right default: most
     /// domains have no appearance evidence, and inventing a term for absent

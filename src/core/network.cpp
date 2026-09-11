@@ -15,29 +15,40 @@ constexpr std::size_t kEscalationWindow = 5;
 
 }  // namespace
 
-std::vector<Real> betweenness_centrality(const std::vector<std::vector<Real>>& adj) {
-    const std::size_t n = adj.size();
+std::vector<Real> betweenness_centrality(
+    const std::vector<std::vector<std::size_t>>& adjacency) {
+    const std::size_t n = adjacency.size();
     std::vector<Real> bc(n, 0.0);
     if (n < 3) return bc;
 
+    // Reused across sources so the inner loop allocates nothing.
+    std::vector<Real> sigma(n), delta(n);
+    std::vector<long> dist(n);
+    std::vector<std::vector<std::size_t>> preds(n);
+    std::vector<std::size_t> order;
+    order.reserve(n);
+    std::queue<std::size_t> q;
+
     for (std::size_t s = 0; s < n; ++s) {
-        std::vector<Real> sigma(n, 0.0);
-        std::vector<long> dist(n, -1);
-        std::vector<std::vector<std::size_t>> preds(n);
-        std::vector<std::size_t> order;
-        order.reserve(n);
+        // An isolated vertex lies on no shortest path between others.
+        if (adjacency[s].empty()) continue;
+
+        std::fill(sigma.begin(), sigma.end(), 0.0);
+        std::fill(delta.begin(), delta.end(), 0.0);
+        std::fill(dist.begin(), dist.end(), -1);
+        for (auto& p : preds) p.clear();
+        order.clear();
 
         sigma[s] = 1.0;
         dist[s] = 0;
-        std::queue<std::size_t> q;
         q.push(s);
 
         while (!q.empty()) {
             const std::size_t v = q.front();
             q.pop();
             order.push_back(v);
-            for (std::size_t w = 0; w < n; ++w) {
-                if (adj[v][w] <= 0.0) continue;
+            // Only actual neighbours, rather than every vertex in the graph.
+            for (const std::size_t w : adjacency[v]) {
                 if (dist[w] < 0) {
                     dist[w] = dist[v] + 1;
                     q.push(w);
@@ -49,7 +60,6 @@ std::vector<Real> betweenness_centrality(const std::vector<std::vector<Real>>& a
             }
         }
 
-        std::vector<Real> delta(n, 0.0);
         for (auto it = order.rbegin(); it != order.rend(); ++it) {
             const std::size_t w = *it;
             for (const std::size_t v : preds[w]) {
@@ -68,43 +78,53 @@ std::vector<Real> betweenness_centrality(const std::vector<std::vector<Real>>& a
 }
 
 std::vector<Cluster> NetworkAnalyser::analyse(const std::vector<TrackPtr>& tracks,
-                                              Real /*timestamp*/) {
+                                              Real /*timestamp*/,
+                                              const SpatialIndex* index) {
     latest_betweenness_.clear();
     if (tracks.size() < 2) return {};
 
     // Accumulate contact weight over time so a network is built from repeated
     // proximity, not from one scan's geometry.
-    for (std::size_t i = 0; i < tracks.size(); ++i) {
-        for (std::size_t j = i + 1; j < tracks.size(); ++j) {
-            const Real d = distance(tracks[i]->position(), tracks[j]->position());
-            if (d >= coloc_dist_) continue;
-            const Real w = std::max(0.1, 1.0 - d / coloc_dist_);
-            adjacency_[tracks[i]->id()][tracks[j]->id()] += w;
-            adjacency_[tracks[j]->id()][tracks[i]->id()] += w;
+    // Only pairs already within the co-location radius can contribute, so the
+    // index answers this directly instead of the all-pairs walk it replaces.
+    std::vector<std::pair<std::size_t, std::size_t>> candidates;
+    if (index != nullptr && index->size() == tracks.size()) {
+        candidates = index->pairs_within(coloc_dist_);
+    } else {
+        for (std::size_t i = 0; i < tracks.size(); ++i) {
+            for (std::size_t j = i + 1; j < tracks.size(); ++j) candidates.emplace_back(i, j);
         }
+    }
+    for (const auto& [i, j] : candidates) {
+        const Real d = distance(tracks[i]->position(), tracks[j]->position());
+        if (d >= coloc_dist_) continue;
+        const Real w = std::max(0.1, 1.0 - d / coloc_dist_);
+        adjacency_[tracks[i]->id()][tracks[j]->id()] += w;
+        adjacency_[tracks[j]->id()][tracks[i]->id()] += w;
     }
 
     const std::size_t n = tracks.size();
-    std::vector<std::vector<Real>> adj(n, std::vector<Real>(n, 0.0));
-    std::vector<std::vector<Real>> binary(n, std::vector<Real>(n, 0.0));
+
+    // Adjacency lists, not an n-by-n matrix. Two dense matrices were allocated
+    // and filled every scan purely to be read sparsely afterwards.
+    std::vector<std::vector<std::size_t>> adjacency(n);
+    std::vector<Real> weighted_degree(n, 0.0);
+    std::unordered_map<std::string, std::size_t> index_of;
+    index_of.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) index_of[tracks[i]->id()] = i;
 
     for (std::size_t i = 0; i < n; ++i) {
         const auto row = adjacency_.find(tracks[i]->id());
         if (row == adjacency_.end()) continue;
-        for (std::size_t j = 0; j < n; ++j) {
-            if (i == j) continue;
-            const auto e = row->second.find(tracks[j]->id());
-            if (e == row->second.end()) continue;
-            adj[i][j] = e->second;
-            binary[i][j] = 1.0;
+        for (const auto& [other_id, weight] : row->second) {
+            const auto it = index_of.find(other_id);
+            if (it == index_of.end() || it->second == i) continue;
+            adjacency[i].push_back(it->second);
+            weighted_degree[i] += weight;
         }
     }
 
-    const std::vector<Real> bc = betweenness_centrality(binary);
-    std::vector<Real> weighted_degree(n, 0.0);
-    for (std::size_t i = 0; i < n; ++i) {
-        for (std::size_t j = 0; j < n; ++j) weighted_degree[i] += adj[i][j];
-    }
+    const std::vector<Real> bc = betweenness_centrality(adjacency);
 
     for (std::size_t i = 0; i < n; ++i) {
         latest_betweenness_[tracks[i]->id()] = bc[i];
@@ -126,8 +146,8 @@ std::vector<Cluster> NetworkAnalyser::analyse(const std::vector<TrackPtr>& track
             const std::size_t v = stack.top();
             stack.pop();
             members.push_back(v);
-            for (std::size_t w = 0; w < n; ++w) {
-                if (!visited[w] && adj[v][w] > 0.0) {
+            for (const std::size_t w : adjacency[v]) {
+                if (!visited[w]) {
                     visited[w] = true;
                     stack.push(w);
                 }

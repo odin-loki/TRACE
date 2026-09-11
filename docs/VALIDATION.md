@@ -20,19 +20,20 @@ proximity to the camera.
 
 ## Result: MOT17 train, all 21 sequences
 
-Public detections, no appearance model, no re-identification network, no
-offline processing. One pass, causal, 336,891 ground-truth boxes.
+Public detections, no re-identification network, no offline processing. One
+causal pass over 336,891 ground-truth boxes. Appearance descriptors are
+supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **42.9%** |
-| MOTP | 27.3 px |
-| Recall | 66.2% |
-| Precision | 80.5% |
-| Mostly tracked | 24.7% |
+| **MOTA** | **46.2%** |
+| MOTP | 27.1 px |
+| Recall | 62.0% |
+| Precision | 86.3% |
+| Mostly tracked | 11.8% |
 | Mostly lost | 2.4% |
-| Identity switches | 24,248 |
-| Throughput | 15.8 ms/frame, one core |
+| Identity switches | 20,233 |
+| Throughput | 6.3 ms/frame, one core |
 
 ### The number that matters more than MOTA
 
@@ -43,8 +44,8 @@ detection it was handed — gives:
 | | |
 |---|---|
 | Detector ceiling, recall | **59.9%** |
-| TRACE, recall | **66.2%** |
-| **TRACE recovered** | **110.5% of the recall the detections allow** |
+| TRACE, recall | **62.0%** |
+| **TRACE recovered** | **103.6% of the recall the detections allow** |
 
 No tracker consuming these detections can exceed 59.9% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
@@ -79,17 +80,67 @@ association is hardest and the O(n^2) parts of the engine start to matter.
 
 | Sequence | People/frame | MOTA | Precision | Recall | Recovery of ceiling | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | ~46 | **53.1%** | 98.9% | 67.3% | 106.9% | 33.4 |
-| MOT20-02 | ~56 | **49.2%** | 96.0% | 59.9% | 107.1% | 50.9 |
+| MOT20-01 | ~46 | **51.8%** | 98.9% | 66.2% | 105.2% | 12.0 |
+| MOT20-02 | ~56 | 49.2% | 96.0% | 59.9% | 107.1% | 50.9* |
 
 Both score *higher* than the MOT17 average, because MOT20's detections are
 cleaner (98–99% precision at the ceiling). MOT20-01 loses no identity for more
 than 80% of its life at all: **mostly-lost 0.0%**.
 
-Latency scales close to linearly with crowd density over this range — roughly
-0.7 ms per tracked entity per frame — rather than quadratically, because the
-chi-square gate keeps the association matrix sparse. It has not been measured
-above ~60 simultaneous entities.
+\* MOT20-02 was measured before the cost work described below; expect roughly
+a third of that figure now, as MOT20-01 went from 33.4 to 12.0 ms/frame.
+
+---
+
+## Cost: how the engine scales with crowd size
+
+`trace_bench` sweeps entity count with density held constant, so it measures
+scaling in track count rather than the separate effect of packing entities
+closer together.
+
+An earlier version of this document claimed latency scaled "close to linearly
+… because the chi-square gate keeps the association matrix sparse". That was
+wrong. Measured, it was **n^1.82** — and the gate had nothing to do with it.
+
+| Tracks | Median ms/scan | Tracking only | µs per track |
+|---|---|---|---|
+| 10 | 2.2 | 1.5 | 220 |
+| 40 | 6.4 | 5.3 | 161 |
+| 120 | 22.3 | 16.4 | 186 |
+| 270 | 72.7 | 39.9 | 269 |
+| 400 | 135.3 | 76.8 | 338 |
+
+**Cost now grows as about n^1.14 — effectively linear.** Tracking alone is flat
+at ~145 µs per track across the whole range; the residual growth is in the
+detector pipeline.
+
+Getting there needed one measurement and two wrong guesses. The obvious
+suspects — the all-pairs detector loops, and a betweenness implementation that
+turned out to be O(V³) — were both fixed and neither mattered. Adding per-stage
+timing to `ScanReport` found the real cost immediately:
+
+| Stage at 270 tracks | Before | After |
+|---|---|---|
+| **RendezvousWarner** | **751 ms** | **34 ms** |
+| score + forecast | 26 ms | 26 ms |
+| track + associate | 13 ms | 13 ms |
+| everything else combined | 2 ms | 2 ms |
+
+The convergence detector was rebuilding each track's pattern-of-life forecast
+*inside* its pair loop, so every track's forecast was recomputed once for every
+other track. Hoisting it out cut total scan latency at 270 tracks from 875 ms
+to 73 ms. Nothing about it was incorrect, and no correctness test could have
+caught it — `tests/test_scaling.cpp` now guards the exponent.
+
+A second ceiling surfaced in the same sweep: the engine tracked exactly 80
+entities no matter how many were offered, because `kMaxTracks` was a file-scope
+constant. It is now a profile field, and the per-stage breakdown is part of
+every report.
+
+**What this means in practice.** At 400 simultaneous tracks the engine runs at
+about 7 scans per second on one core: comfortable for a 1 Hz camera estate,
+not for 25 fps without partitioning the area across workers. Above 400 has not
+been measured.
 
 ---
 
@@ -129,10 +180,12 @@ recognised as theirs.
 converging on one point, milling within measurement noise of each other, then
 dispersing along swapped paths:
 
+Mean over seven seeds, because a single run of this is noisy:
+
 | | identities lost |
 |---|---|
-| without appearance | 6 of 6 |
-| with appearance | **3 of 6** |
+| without appearance | 5.7 of 6 |
+| with appearance | **2.7 of 6** |
 
 So appearance is implemented, tested and available, and is switched **off** in
 the MOT profile — because it was measured there rather than assumed. An earlier
@@ -144,10 +197,11 @@ was wrong for this benchmark, and the measurement above is what disproved it.
 ## How to read this against published work
 
 Published MOT17 results using public detections generally sit around 50–60%
-MOTA. TRACE at 43.9% is below that, and the reason is worth stating plainly
+MOTA. TRACE at 46.2% is at the low end of that, and the reason is worth stating plainly
 rather than explaining away:
 
-**TRACE has no appearance model.** Methods at the top of the MOT leaderboards
+**TRACE has no *learned* appearance model.** Methods at the top of the MOT
+leaderboards
 lean heavily on re-identification embeddings — learned visual descriptors that
 say "this is the same person" when kinematics cannot. MOT's central difficulty
 is crowds, where people pass each other constantly and the only reliable
@@ -166,11 +220,11 @@ benchmark they are dominated by fragmentation rather than by association error,
 and even perfect appearance evidence barely moves them.
 
 A related finding, recorded because it was counter-intuitive: making dormant
-tracks *easier* to reacquire raised recall to 110.5% of ceiling but **lowered**
+tracks *easier* to reacquire raised recall against the ceiling but **lowered**
 MOTA. In a dense crowd a dormant track has dozens of plausible reappearances
 within any generous window, and resurrecting the wrong person costs both a false
 positive and an identity switch. The MOT profile therefore reacquires only
-across the briefest occlusions (`reacquire_kinematic_s = 0.4`). In sparse
+across the briefest occlusions (`reacquire_kinematic_s = 1.0`, swept). In sparse
 domains, where candidates are few and a lost identity may not resurface for
 days, the opposite setting is correct — which is exactly the sort of thing a
 `DomainProfile` exists to express.

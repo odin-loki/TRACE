@@ -24,7 +24,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
 ./build/src/apps/trace_maze          # watch it track through a maze
-./build/src/apps/trace_sim --all     # eight more scenarios
+./build/src/apps/trace_sim --all     # ten more scenarios
+./build/src/apps/trace_bench         # how cost grows with crowd size
 ctest --test-dir build               # the test suite
 ```
 
@@ -76,15 +77,14 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | 42.9% | **110.5%** |
-| MOT20-01, ~46 people/frame | 19,870 | **53.1%** | 106.9% |
+| MOT17 train, 21 sequences | 336,891 | **46.2%** | **103.6%** |
+| MOT20-01, ~46 people/frame | 19,870 | **51.8%** | 105.2% |
 | MOT20-02, ~56 people/frame | 154,742 | 49.2% | 107.1% |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
 missed — which is the entire job. Best single sequence: **71.3% MOTA**
-(MOT17-04-SDP). Latency scales roughly linearly with crowd density: 0.6 ms/frame
-in the maze, 51 ms/frame with 56 people in view.
+(MOT17-04-SDP).
 
 TRACE supports appearance descriptors but they are **switched off** on MOT, and
 that is a measurement rather than an omission: a *perfect* oracle descriptor
@@ -192,6 +192,17 @@ low-quality fabrication (flagged on 119 of 119 scans) from real entities
 (0 of 484) — though not a high-confidence lie, which by construction looks like
 high-confidence truth.
 
+**Catching a sensor that is lying to you.** The obvious test — does this
+source's report fit the track it was assigned to? — is circular: a sensor that
+has been steering a track fits it perfectly however wrong it is, and a camera
+biased by sixteen times its own noise scored *higher* than its sound neighbours.
+What works is the residual **direction**. A track is a weighted mean of the
+sources feeding it, so their residuals nearly cancel; a biased sensor drags the
+track towards itself, leaving its residual pointing one way and everyone else's
+pointing the other. The minority direction is the culprit. Where only two
+sensors see an entity, attribution is impossible in principle and TRACE says so,
+reporting the conflict instead of guessing.
+
 **Why association runs per sensor.** Exclusivity is a fact about a sensor, not
 about the world: one camera reports an entity once per scan, but two overlapping
 cameras both report it, and that second report is corroboration rather than a
@@ -204,12 +215,24 @@ scenario, now 0.12.
 ## Performance
 
 Measured on one core of the development container (AVX-512), Release build.
+`trace_bench` sweeps crowd size with density held constant.
 
-| Scenario | Tracks | Median | p95 |
+| Tracks | Median ms/scan | Tracking only | µs per track |
 |---|---|---|---|
-| maze, 3 travellers, 9 cameras | 3–4 | 0.35 ms | 0.86 ms |
-| transit-hub, 10 entities | 10–12 | 4.1 ms | 6.6 ms |
-| evader, 6 entities | 6–7 | 1.7 ms | 3.4 ms |
+| 10 | 2.2 | 1.5 | 220 |
+| 120 | 22.3 | 16.4 | 186 |
+| 270 | 72.7 | 39.9 | 269 |
+| 400 | 135.3 | 76.8 | 338 |
+
+**Cost grows as about n^1.14 — effectively linear**, and tracking alone is flat
+at ~145 µs per track. It was n^1.82 until the convergence detector stopped
+rebuilding each track's pattern-of-life forecast once per pair; that one change
+cut scan latency at 270 tracks from 875 ms to 73 ms. Every report carries a
+per-stage timing breakdown, because the cost profile is not obvious from
+reading the code — see [docs/VALIDATION.md](docs/VALIDATION.md).
+
+At 400 simultaneous tracks that is about 7 scans/second on one core: fine for a
+1 Hz camera estate, not for 25 fps without partitioning across workers.
 
 Backends:
 - **xsimd** (vendored, on by default) vectorises particle propagation — 8 lanes

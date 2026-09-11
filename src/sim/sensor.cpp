@@ -40,11 +40,16 @@ std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth, Rng& r
         }
     }
 
+    // A bias is not noise: it does not average out, and it moves every
+    // detection from this sensor the same way.
+    const Vec2 bias = cfg_.bias + cfg_.bias_drift_per_s * truth.timestamp;
+
     for (std::size_t i = 0; i < in_view.size(); ++i) {
         if (!rng.bernoulli(cfg_.p_detect)) continue;
         if (ledger != nullptr) ledger->insert(in_view[i]->id);
-        const Vec2 noisy{report_positions[i].x + rng.normal(0.0, cfg_.pos_noise_m),
-                         report_positions[i].y + rng.normal(0.0, cfg_.pos_noise_m)};
+        const Vec2 noisy{
+            report_positions[i].x + bias.x + rng.normal(0.0, cfg_.pos_noise_m),
+            report_positions[i].y + bias.y + rng.normal(0.0, cfg_.pos_noise_m)};
         const Real conf = std::clamp(
             rng.normal(cfg_.confidence_mean, cfg_.confidence_sigma), 0.1, 1.0);
         out.emplace_back(make_id(cfg_.id, counter_++), truth.timestamp, noisy,

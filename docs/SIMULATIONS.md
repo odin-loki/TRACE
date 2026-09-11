@@ -22,6 +22,8 @@ below is built around a specific way tracking fails in the field:
 | Overlapping sensors | Two sensors report one entity; the second looks like a new one | transit-hub, mule-network |
 | Fabricated evidence | A feed reports something that is not there | spoofing |
 | Non-physical space | "Position" is behavioural, not geographic | mule-network |
+| Miscalibrated sensor | A bias does not average out the way noise does | sensor-drift |
+| Crowd scale | Cost per track, and the hard ceiling on track count | trace_bench |
 
 ---
 
@@ -124,8 +126,9 @@ Sketched with what each would newly stress. The `Scenario`, `World` and `Sensor`
 pieces are in place; each is roughly one file.
 
 **Sensor and environment**
-- **Stadium egress.** Thousands of entities in minutes — the scalability wall,
-  where the O(n²) convergence check and Brandes betweenness stop being free.
+- **Stadium egress.** Thousands of entities in minutes. `trace_bench` now
+  measures cost to 400 tracks (about 7 scans/second on one core); beyond that
+  needs partitioning the area across workers, which is not implemented.
 - **Metro network.** Turnstile taps only: purely topological observation with no
   metric position at all. Forces the question of what the filter means when
   "distance" is graph hops.
@@ -133,9 +136,8 @@ pieces are in place; each is roughly one file.
   vertically are on different floors and cannot interact.
 - **Adverse weather.** Detection probability and position noise varying *over
   time* rather than being fixed per sensor.
-- **Sensor drift and miscalibration.** One camera slowly developing a position
-  bias — the case `SourceCredibility` exists for and which nothing currently
-  tests.
+- **Intermittent sensor failure.** A camera that drops out and returns, rather
+  than one that drifts — `sensor-drift` covers the drifting case.
 
 **Adversarial** — spoofing is now implemented; see scenario 8.
 - **Decoy and split.** A subject who hands off to a lookalike mid-route.

@@ -13,13 +13,19 @@
 #include <vector>
 
 #include "trace/core/report.hpp"
+#include "trace/core/spatial_index.hpp"
 #include "trace/core/track.hpp"
 
 namespace trace {
 
-/// Brandes betweenness centrality on an unweighted graph given as an adjacency
-/// matrix. O(V*E), which is well within budget at realistic track counts.
-std::vector<Real> betweenness_centrality(const std::vector<std::vector<Real>>& adj);
+/// Brandes betweenness centrality on an unweighted graph given as adjacency
+/// lists.
+///
+/// O(V*E). The earlier version took a dense adjacency matrix and scanned all V
+/// columns for every dequeued vertex, making it O(V^3) - about 20 million
+/// operations per scan at 270 tracks, which dominated the entire engine.
+std::vector<Real> betweenness_centrality(
+    const std::vector<std::vector<std::size_t>>& adjacency);
 
 class NetworkAnalyser {
 public:
@@ -27,7 +33,8 @@ public:
 
     /// Accumulate this scan's contacts and return the current clusters.
     std::vector<Cluster> analyse(const std::vector<TrackPtr>& tracks,
-                                 Real timestamp);
+                                 Real timestamp,
+                                 const SpatialIndex* index = nullptr);
 
     /// Betweenness by track id, as computed on the most recent scan.
     [[nodiscard]] const std::unordered_map<std::string, Real>& betweenness() const {

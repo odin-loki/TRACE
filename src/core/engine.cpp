@@ -57,12 +57,21 @@ std::vector<std::string> Engine::detector_names() const {
 ScanReport Engine::ingest(const std::vector<Observation>& observations,
                           Real timestamp) {
     const auto t_start = std::chrono::steady_clock::now();
+    auto stage_mark = t_start;
+    const auto lap = [&stage_mark]() {
+        const auto now = std::chrono::steady_clock::now();
+        const Real ms = std::chrono::duration<Real, std::milli>(now - stage_mark).count();
+        stage_mark = now;
+        return ms;
+    };
+    std::vector<std::pair<std::string, Real>> stages;
     ++scan_count_;
 
     // ---- [T] + [A] tracking and association -------------------------------
     pmbm_.predict();
     pmbm_.update(observations, timestamp);
     const std::vector<TrackPtr> confirmed = pmbm_.confirmed();
+    stages.emplace_back("track+associate", lap());
 
     // Keep the recent evidence behind each track for the credibility fusion.
     for (const auto& t : confirmed) {
@@ -79,8 +88,22 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         }
     }
 
+    // One spatial index per scan, shared by every stage that asks which tracks
+    // are near which. The cell is sized to the widest radius any of them uses.
+    std::vector<Vec2> track_points;
+    track_points.reserve(confirmed.size());
+    for (const auto& t : confirmed) track_points.push_back(t->position());
+
+    const Real widest_radius =
+        std::max({config_.profile.coloc_dist_m, config_.profile.rv_threshold_m * 4.0,
+                  config_.profile.parallel_route_m, config_.profile.brush_pass_m});
+    const SpatialIndex index(track_points, std::max(widest_radius, 1.0));
+    stages.emplace_back("spatial-index", lap());
+
     // ---- Network structure, needed before roles can be inferred -----------
-    const std::vector<Cluster> clusters = network_.analyse(confirmed, timestamp);
+    const std::vector<Cluster> clusters =
+        network_.analyse(confirmed, timestamp, &index);
+    stages.emplace_back("network", lap());
 
     // ---- Scoring ----------------------------------------------------------
     ScanReport report;
@@ -135,6 +158,7 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
               [](const TargetReport& a, const TargetReport& b) {
                   return a.threat.mean > b.threat.mean;
               });
+    stages.emplace_back("score+forecast", lap());
 
     // ---- [C] + [E] convergence and events ---------------------------------
     DetectorContext ctx;
@@ -145,11 +169,13 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     ctx.betweenness = &network_.betweenness();
     ctx.clusters = &clusters;
     ctx.rng = &rng_;
+    ctx.index = &index;
 
     for (auto& d : detectors_) {
         // A misbehaving detector must not take the engine down with it: a
         // deployment can register anything, and losing the tracking core
         // because one plugin threw is not an acceptable failure mode.
+        const auto d_start = std::chrono::steady_clock::now();
         try {
             for (auto& e : d->detect(confirmed, ctx)) report.events.push_back(std::move(e));
             for (auto& r : d->rendezvous(confirmed, ctx)) report.rendezvous.push_back(std::move(r));
@@ -160,7 +186,12 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
             e.note = ex.what();
             report.events.push_back(std::move(e));
         }
+        stages.emplace_back(
+            d->name(),
+            std::chrono::duration<Real, std::milli>(
+                std::chrono::steady_clock::now() - d_start).count());
     }
+    stage_mark = std::chrono::steady_clock::now();
 
     // ---- Cross-cutting operational flags ----------------------------------
     for (const auto& t : confirmed) {
@@ -182,6 +213,23 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         }
     }
 
+    for (const auto& b : pmbm_.credibility().biases()) {
+        report.operational.sensor_biases.push_back(
+            SensorBias{b.source_id, b.offset_m, b.magnitude_m, b.significance,
+                       b.samples, b.minority_direction});
+    }
+
+    for (const auto& o : pmbm_.credibility().orphaned_sources()) {
+        report.operational.orphaned_sources.push_back(
+            SensorOrphaned{o.source_id, o.unassigned_rate, o.reports});
+    }
+
+    for (const auto& c : pmbm_.credibility().conflicts()) {
+        report.operational.sensor_conflicts.push_back(
+            SensorConflict{c.source_a, c.source_b, c.mean_disagreement_m, c.rate(),
+                           c.observations});
+    }
+
     report.sensor_schedule = schedule_collection(confirmed, config_.profile);
     report.clusters = clusters;
     report.scan = scan_count_;
@@ -196,6 +244,8 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     const auto t_end = std::chrono::steady_clock::now();
     report.latency_ms =
         std::chrono::duration<Real, std::milli>(t_end - t_start).count();
+    stages.emplace_back("report-assembly", lap());
+    report.stage_ms = std::move(stages);
     total_latency_ms_ += report.latency_ms;
 
     history_.push_back(report);

@@ -37,8 +37,10 @@ std::vector<DetectionEvent> ParallelRouteDetector::detect(
     std::vector<DetectionEvent> events;
     const DomainProfile& p = *ctx.profile;
 
-    for (std::size_t i = 0; i < tracks.size(); ++i) {
-        for (std::size_t j = i + 1; j < tracks.size(); ++j) {
+    // A tail holds a fixed offset, so only pairs already within that offset
+    // can be one.
+    for (const auto& [i, j] : ctx.near_pairs(p.parallel_route_m * 1.5, tracks.size())) {
+        {
             const Track& a = *tracks[i];
             const Track& b = *tracks[j];
             const auto key = pair_key(a.id(), b.id());
@@ -317,13 +319,10 @@ std::vector<NetworkRole> NetworkRoleDetector::roles(
     // any classification is an artefact of the threshold, so we decline.
     if (tracks.size() < 3) return out;
 
-    for (std::size_t i = 0; i < tracks.size(); ++i) {
-        for (std::size_t j = i + 1; j < tracks.size(); ++j) {
-            if (distance(tracks[i]->position(), tracks[j]->position()) <
-                p.coloc_dist_m) {
-                contacts_[tracks[i]->id()].insert(tracks[j]->id());
-                contacts_[tracks[j]->id()].insert(tracks[i]->id());
-            }
+    for (const auto& [i, j] : ctx.near_pairs(p.coloc_dist_m, tracks.size())) {
+        if (distance(tracks[i]->position(), tracks[j]->position()) < p.coloc_dist_m) {
+            contacts_[tracks[i]->id()].insert(tracks[j]->id());
+            contacts_[tracks[j]->id()].insert(tracks[i]->id());
         }
     }
 

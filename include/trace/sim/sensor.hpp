@@ -66,6 +66,13 @@ public:
         /// Chance that two entities in view are reported at each other's
         /// position - the identity confusion a real re-ID stage suffers.
         Real swap_probability{0.0};
+        /// Systematic position offset: a miscalibrated or knocked camera.
+        /// Unlike noise, a bias does not average out, and every detection from
+        /// the sensor is wrong in the same direction.
+        Vec2 bias{};
+        /// How fast the bias grows, in metres per second. Models a mount
+        /// slowly slipping, which is harder to notice than a sudden knock.
+        Vec2 bias_drift_per_s{};
         bool enabled{true};
     };
 
