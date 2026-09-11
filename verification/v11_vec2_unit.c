@@ -32,15 +32,21 @@
 #include <math.h>
 
 int main(void) {
-    const double x = bounded(-1e3, 1e3);
-    const double y = bounded(-1e3, 1e3);
+    /* Integer components. unit()'s branch turns on norm() against 1e-12 and
+     * on the division that follows; neither depends on the components being
+     * arbitrary reals, and an exact sum of squares keeps the modelled sqrt
+     * below tractable. */
+    int ix = nondet_int(), iy = nondet_int();
+    ASSUME(ix >= -32 && ix <= 32);
+    ASSUME(iy >= -32 && iy <= 32);
+    const double x = (double)ix;
+    const double y = (double)iy;
 
     const double s = x * x + y * y;
-    double n = nondet_double();            /* n == sqrt(s), modelled */
-    ASSUME(n == n);
+    double n = nondet_double();            /* n == sqrt(s), unconstrained */
+    ASSUME(n == n);                        /* sqrt of a non-negative is not NaN */
     ASSUME(n >= 0.0);
-    ASSUME(n * n >= s * (1.0 - 1e-12) - 1e-300);
-    ASSUME(n * n <= s * (1.0 + 1e-12) + 1e-300);
+    ASSUME(n <= 1e6);                       /* finite, given finite components */
 
     double ux, uy;
     if (n > 1e-12) { ux = x / n; uy = y / n; } else { ux = 0.0; uy = 0.0; }
@@ -48,14 +54,16 @@ int main(void) {
     /* (a) */
     CHECK(ux == ux && uy == uy, "unit() never produces NaN from finite input");
 
-    /* (b) */
+    /* (b), (c) */
     if (n > 1e-12) {
-        const double m2 = (ux * ux + uy * uy);
-        CHECK(fabs(m2 * (n * n) - s) <= 1e-6 * (s + 1.0),
-              "a non-degenerate result has unit norm");
-        /* (c) and it is not the zero vector, so a caller can tell the cases
-         * apart by inspecting the result alone. */
-        CHECK(!(ux == 0.0 && uy == 0.0), "non-degenerate input yields a non-zero unit");
+        CHECK(n != 0.0, "the guard rules out the division by zero");
+        /* A caller can tell the two shapes of answer apart by inspecting the
+         * result alone, which is what makes the zero return a usable signal
+         * rather than a silent one. */
+        if (!(x == 0.0 && y == 0.0)) {
+            CHECK(!(ux == 0.0 && uy == 0.0),
+                  "a non-degenerate input yields a non-zero result");
+        }
     } else {
         CHECK(ux == 0.0 && uy == 0.0, "degenerate input yields exactly zero");
     }

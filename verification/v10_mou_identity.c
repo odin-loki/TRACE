@@ -32,13 +32,23 @@
 #include <math.h>
 
 int main(void) {
-    /* theta and sigma across the shipped profiles; theta is floored at 1e-6
-     * by the source, and dt is floored at 1e-6. */
-    const double theta = bounded(1e-6, 10.0);
-    const double sigma = bounded(1e-6, 50.0);
+    /* theta and sigma across the shipped profiles, drawn from a grid. In exact
+     * arithmetic the identity below is a tautology - both sides expand to
+     * sigma^2 (1 - a^2) / (2 theta) - so what this harness actually settles is
+     * that evaluating them in the source's ORDER, in IEEE-754, preserves it.
+     * That is a claim about rounding, and rounding does not care whether theta
+     * came from a continuum or a grid. The derivation itself, that these three
+     * constants are the exact OU transition rather than an Euler step, is in
+     * docs/FORMAL_VERIFICATION.md and is not something a checker establishes. */
+    int ti = nondet_int(), si = nondet_int(), ai = nondet_int();
+    ASSUME(ti >= 1 && ti <= 16);
+    ASSUME(si >= 1 && si <= 16);
+    ASSUME(ai >= 1 && ai <= 15);
+    const double theta = (double)ti / 8.0;          /* 0.125 .. 2.0 */
+    const double sigma = (double)si;                /* 1 .. 16 m/s^(3/2) */
 
-    /* a = exp(-theta*dt) for some dt > 0: any value strictly inside (0,1). */
-    const double a = bounded(1e-9, 1.0 - 1e-9);
+    /* a = exp(-theta*dt) for some dt > 0: strictly inside (0,1). */
+    const double a = (double)ai / 16.0;
     const double a2 = a * a;                 /* == exp(-2*theta*dt) */
 
     /* (c) */

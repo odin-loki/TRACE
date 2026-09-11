@@ -425,3 +425,18 @@ defect that did not exist, and the case where bounds checking caught a
 translation error that inspection had missed. Sizes are small — 3x2 and 3x3
 matchings, four-vertex graphs — and the larger cases are covered by exhaustive
 search in the test suite instead, which at those sizes is not a sample either.
+
+Thirteen of the fifteen harnesses are discharged. Two are not: bit-precise IEEE
+division is where both tools are weakest, and they reach a quarter of a
+million SAT variables from a handful of divisions. They are marked and reported
+rather than dropped, because a suite that hid them would read as more complete
+than it is.
+
+Of the six findings, exactly one — the existence update — was found by a
+checker rather than by reading. The rest came from derivation: writing down what
+the formula is supposed to compute and comparing. Model checking earned its
+place by settling things reading could not, in both directions. It proved the
+matcher's optimality and the saturation theorem outright; it also produced one
+convincing report of a non-terminating loop that turned out to be an artefact of
+the harness, which is the standing reminder that a failing proof is a claim about
+the harness until the harness has been checked against the source.

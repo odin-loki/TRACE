@@ -32,9 +32,21 @@ static double miss(double r, double pd) {
     return out;
 }
 
+/* A probability on a 1/16 grid. The claims below are about the SHAPE of the
+ * update - that it is a probability, monotone down, monotone in p_D - and none
+ * of them turns on the width of the value domain. Encoding them over arbitrary
+ * IEEE doubles multiplies the solver's work without strengthening one of them;
+ * bit-precise division under an inequality is where both checkers are slowest.
+ * The grid is stated so the claim is read as what it is. */
+static double grid_prob(void) {
+    int i = nondet_int();
+    ASSUME(i >= 0 && i <= 16);
+    return (double)i / 16.0;
+}
+
 int main(void) {
-    const double r  = bounded(0.0, 1.0);
-    const double pd = bounded(0.0, 1.0);
+    const double r  = grid_prob();
+    const double pd = grid_prob();
 
     const double r1 = miss(r, pd);
 
@@ -51,7 +63,7 @@ int main(void) {
           "a detector that never detects provides no evidence");
 
     /* (e) */
-    const double pd_hi = bounded(0.0, 1.0);
+    const double pd_hi = grid_prob();
     ASSUME(pd_hi >= pd);
     CHECK(miss(r, pd_hi) <= r1 + 1e-12,
           "a better detector makes a miss count for more");

@@ -15,12 +15,19 @@
 # which they started passing would mean the code had changed underneath them.
 # A mismatch in either direction is an error.
 #
-# Three more are marked SLOW. Neither checker discharges them inside the
-# default budget - bit-precise IEEE division under an inequality tolerance is
-# where both are weakest, and Z3 gives up on v14 with five verification
-# conditions. They are correct encodings of their properties, kept so a faster
+# The two marked SLOW are not discharged by either checker inside the default
+# budget. Bit-precise IEEE division is where both are weakest: v12 and v13
+# reach 246,000 and 146,000 SAT variables from a handful of divisions and then
+# sit there. They are correct encodings of their properties, kept so a faster
 # solver or a longer budget can close them, and they are reported rather than
-# counted.
+# counted or quietly dropped.
+#
+# v07 is a special case. The property it states - that betweenness is
+# normalised to [0,1] - is established far more strongly by tests/test_network,
+# which enumerates every undirected graph on four, five and six vertices and
+# runs the real function on each rather than a translation of it. The harness
+# is kept because it states the claim next to the code, not because it is the
+# evidence.
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -45,14 +52,14 @@ MANIFEST=(
   "v04_hungarian:PASS:cbmc:--unwind 20"
   "v05_log_sum_exp:PASS:cbmc:"
   "v06_otsu:PASS:cbmc:--unwind 16"
-  "v07_brandes_norm:PASS:cbmc:--unwind 8"
+  "v07_brandes_norm:SLOW:cbmc:--unwind 8"
   "v08_existence_hit:FAIL:esbmc:"
   "v09_existence_saturation:PASS:esbmc:"
-  "v10_mou_identity:SLOW:cbmc:"
-  "v11_vec2_unit:SLOW:cbmc:"
+  "v10_mou_identity:PASS:cbmc:--unwind 8"
+  "v11_vec2_unit:PASS:esbmc:"
   "v12_closest_on_segment:SLOW:cbmc:"
   "v13_clutter_rate:SLOW:cbmc:--unwind 16"
-  "v14_existence_miss:SLOW:cbmc:"
+  "v14_existence_miss:PASS:cbmc:"
   "v15_hungarian_optimal:PASS:esbmc:--unwind 10"
 )
 

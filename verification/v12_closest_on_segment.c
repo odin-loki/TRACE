@@ -31,10 +31,20 @@
 #include "verif.h"
 #include <math.h>
 
+static double grid_coord(void) {
+    int i = nondet_int();
+    ASSUME(i >= -16 && i <= 16);
+    return (double)i;
+}
+
 int main(void) {
-    const double px = bounded(-1e4, 1e4), py = bounded(-1e4, 1e4);
-    const double ax = bounded(-1e4, 1e4), ay = bounded(-1e4, 1e4);
-    const double bx = bounded(-1e4, 1e4), by = bounded(-1e4, 1e4);
+    /* Integer coordinates on a coarse grid. Every claim below is about the
+     * clamp, the affine combination and the unit tangent; none turns on the
+     * coordinates being arbitrary reals, and exact products keep the divisions
+     * tractable. */
+    const double px = grid_coord(), py = grid_coord();
+    const double ax = grid_coord(), ay = grid_coord();
+    const double bx = grid_coord(), by = grid_coord();
 
     const double abx = bx - ax, aby = by - ay;
     const double len_sq = abx * abx + aby * aby;

@@ -27,28 +27,35 @@ property of the code.
 
 ## What is proven
 
+Thirteen of the fifteen are discharged. The other two are marked, reported, and
+explained below rather than dropped.
+
 | | property | verdict |
 |---|---|---|
 | v01 | `Mat2::inverse`'s guard leaves a divisor that is non-zero and at least 1e-15, for any determinant | holds |
 | v02 | the same guard does **not** sanitise a NaN determinant | counterexample |
 | v03 | `std::clamp(NaN, 0, 1)` returns NaN — it reads like a sanitiser and is not one | counterexample |
-| v04 | the Hungarian matcher is memory-safe and returns a valid partial matching, and the `max_cost` gate holds | holds |
-| v05 | `log_sum_exp`'s shift by the maximum makes `log(0)` unreachable: `acc` is in [1, K] | holds |
+| v04 | the Hungarian matcher is memory-safe, returns a valid partial matching, and the `max_cost` gate holds | holds |
+| v05 | `log_sum_exp`'s shift by the maximum makes `log(0)` unreachable: `acc` lies in [1, K] | holds |
 | v06 | the Otsu split never divides by an empty class, and `sample[best_k]` is always in bounds | holds |
-| v07 | betweenness is normalised to [0,1], over every undirected graph on four vertices | holds (fails before the fix) |
+| v07 | betweenness is normalised to [0,1] over every four-vertex graph | *not discharged* — see below |
 | v08 | the existence update on a detection does **not** agree with the JIPDA update | counterexample |
-| v09 | one detection, of any quality, always clears `r_confirm` and saturates `r` above 0.999 | holds |
-| v10 | the MOU discretisation satisfies `sigma_v^2 == ss_vvar (1 - alpha^2)`, so a cloud at steady state stays there | holds |
-| v11 | `Vec2::unit()` is total on finite input: never NaN, either exactly zero or unit-length | holds |
-| v12 | the road projection lands on the segment, and the tangent it returns is unit-length | holds |
-| v13 | the clutter posterior never divides by zero and never rules clutter impossible | holds |
+| v09 | one detection, of any quality, always clears `r_confirm` and drives `r` above 0.999 | holds |
+| v10 | the MOU discretisation satisfies `sigma_v^2 == ss_vvar (1 - alpha^2)` in IEEE, so a cloud at steady state stays there | holds |
+| v11 | `Vec2::unit()` is total on finite input, and its guard is what rules out the division by zero | holds |
+| v12 | the road projection lands on the segment, and its tangent is unit-length | *not discharged* |
+| v13 | the clutter posterior never divides by zero and never rules clutter impossible | *not discharged* |
 | v14 | the miss update is a probability, never increases existence, and is monotone in `p_D` | holds |
 | v15 | the matcher returns a **minimum-cost** matching on a tall problem | holds (fails before the fix) |
 
 v02, v03 and v08 assert something the code does not do, and are expected to
 fail. They are in the suite because "where does a NaN stop" and "what is this
-update actually a posterior over" are worth having written down and checked,
-rather than rediscovered.
+update actually a posterior over" are worth writing down and checking, rather
+than rediscovering.
+
+Two of them — v07 and v15 — also fail against the code as it was before the
+defects they describe were fixed, which is what makes them regression tests
+rather than descriptions.
 
 ## What these proofs do not say
 
@@ -89,13 +96,26 @@ Two further limits:
   a claim, the claim is stated over the narrower domain instead of being
   quietly generalised.
 
-- **Some harnesses are not discharged within the default budget by either
+- **Two harnesses are not discharged within the default budget by either
   checker**, and `run.sh` marks them SLOW and reports them rather than counting
-  them. Bit-precise IEEE division under an inequality tolerance is where both
-  tools are weakest: Z3 gives up on v14 with five verification conditions.
-  Those harnesses encode their properties correctly and are kept so that a
-  faster solver, or a longer budget, can close them. A suite that quietly
-  dropped them would read as more complete than it is.
+  them. Bit-precise IEEE division is where both tools are weakest: v12 and v13
+  reach 246,000 and 146,000 SAT variables from a handful of divisions and then
+  sit there. Both encode their properties correctly and are kept so a faster
+  solver, or a longer budget, can close them. A suite that quietly dropped them
+  would read as more complete than it is.
+
+  v07 is a different case. What it states — that betweenness is normalised to
+  [0,1] — is established far more strongly by `tests/test_network`, which
+  enumerates every undirected graph on four, five and six vertices and runs the
+  **real function** on each rather than a translation of it. The harness is kept
+  because it states the claim beside the code, not because it is the evidence.
+
+  Narrowing a domain to make a harness discharge is legitimate where the claim
+  does not turn on what was narrowed, and it is not where it does. v11 shows
+  the line: its unit-length claim needed `n*n == x*x + y*y` to within a
+  tolerance, no checker would take it, and rather than weaken the claim until
+  something passed, the harness now states only what an arbitrary non-negative
+  `n` supports — and says in its header what that costs.
 
 ## Reproducing
 

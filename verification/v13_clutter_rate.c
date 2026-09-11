@@ -71,7 +71,12 @@ int main(void) {
     CHECK(rate_hi >= rate, "more observed clutter never lowers the estimate");
 
     /* (e) */
-    const double volume = bounded(1.0, 1e10);
+    /* A volume from a coarse decade grid: the claim is that a positive volume
+     * yields a positive density, which does not turn on the exact value. */
+    int e = nondet_int();
+    ASSUME(e >= 0 && e <= 10);
+    double volume = 1.0;
+    for (int i = 0; i < 10; ++i) if (i < e) volume *= 10.0;
     const double density = volume > 0.0 ? rate / volume : 1e-6;
     CHECK(density > 0.0, "clutter density is positive for any positive volume");
     return 0;
