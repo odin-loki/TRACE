@@ -365,8 +365,28 @@ driving it, because the two are a coupled pair and stepping straight to the
 implied value rings.
 
 `adaptive_meas_noise` is off in every shipped profile and reached only through
-`--adaptive-noise`, so no default measurement in this repository changes. What
-changes is that the opt-in feature now does what it claims.
+`--adaptive-noise`, so no default measurement in this repository changes — all
+twelve scenarios produce byte-identical output. What changes is the opt-in
+path, and there the correction is not uniformly a win:
+
+| domain, recovery | default | `--adaptive-noise`, before | after |
+|---|---|---|---|
+| CityCameraSurveillance | 93.7% | 90.0% | **105.0%** |
+| IndoorVenue | 124.7% | 115.9% | 107.0% |
+| WarehouseAssets | 108.2% | 114.9% | 111.6% |
+| TransactionSpace | 98.1% | 98.6% | 99.3% |
+| the other three | — | unchanged | unchanged |
+
+Which is what a working mechanism should look like rather than a broken one.
+Learning a scale of 8.8 instead of 2.25 for a genuinely noisy source widens its
+association gate by what the noise actually warrants, and that is worth 15
+points where noise is the binding constraint (city cameras) and costs 9 where
+a wider gate mostly buys confusion (a dense indoor venue). Before the fix the
+estimator barely moved the gate at all, so it could neither help nor hurt much.
+
+Whether to switch it on is therefore a domain judgement, which is why it is a
+flag. The defect was that the flag did not do what its name said; it now does,
+and the trade-off it exposes is a real one rather than an artefact.
 
 ---
 
