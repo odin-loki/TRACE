@@ -860,10 +860,39 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ./build/src/apps/trace_mot ./data/mot/MOT20Labels/train          # dense crowds
 ```
 
-Deterministic under a fixed seed: the same command gives the same numbers. The
-tool's defaults are what every table here reports; `--min-score` and `--radius`
-change the operating point, and the sweep of the first is in "Per-sequence, by
-detector" above.
+Deterministic under a fixed seed **on a given build**: the same command gives
+the same numbers every time. Across builds it is not quite, and the reason is
+worth stating because it bounds how precisely any of these figures can be read.
+
+`TRACE_NATIVE_ARCH` is on by default, so the core compiles with `-march=native`
+and the SIMD width follows whatever the build machine supports. The particle
+filter draws its process noise a vector at a time, so a different lane count
+consumes the random stream in a different order: the same algorithm, the same
+seed, a different sample. Building with `-DTRACE_NATIVE_ARCH=OFF` gives a
+portable binary and a stream that does not depend on the host.
+
+Measured, on this machine, native against generic:
+
+| MOT17 train, 336,891 boxes | native | generic |
+|---|---|---|
+| MOTA | 54.3% | 54.3% |
+| Recall | 58.9% | 58.9% |
+| MOTP | 22.2 px | 22.7 px |
+| Identity switches | 2,362 | 2,383 |
+| Recovery of ceiling | 108.3% | 108.2% |
+
+So the headline figures are stable to the precision printed, and the finer ones
+move by about a percent. **The synthetic scenarios are a different matter**: one
+scenario moved from 114.5% recovery to 119.9%, and from 789 ghost tracks to
+964, on the same seed. They carry five to seventeen entities over a few hundred
+scans, so a single run is a Monte Carlo sample and not a measurement. That is
+why every scenario comparison in this repository is a median over several
+seeds, and why a single-seed difference of a few points should be read as
+nothing at all.
+
+The tool's defaults are what every table here reports; `--min-score` and
+`--radius` change the operating point, and the sweep of the first is in
+"Per-sequence, by detector" above.
 
 ## What is still missing
 

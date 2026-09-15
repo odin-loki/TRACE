@@ -27,7 +27,7 @@ property of the code.
 
 ## What is proven
 
-Fourteen of the fifteen are discharged. The one that is not is marked,
+Fifteen of the sixteen are discharged. The one that is not is marked,
 reported, and explained below rather than dropped.
 
 | | property | verdict |
@@ -43,7 +43,8 @@ reported, and explained below rather than dropped.
 | v09 | one detection, of any quality, always clears `r_confirm` and drives `r` above 0.999 | holds |
 | v10 | the MOU discretisation satisfies `sigma_v^2 == ss_vvar (1 - alpha^2)` in IEEE, so a cloud at steady state stays there | holds |
 | v11 | `Vec2::unit()` is total on finite input, and its guard is what rules out the division by zero | holds |
-| v12 | the road projection lands on the segment, and its tangent is unit-length | *not discharged* |
+| v12 | the clamp puts the projection parameter on the segment, and the degenerate branch returns a unit fallback | holds |
+| v12b | the affine combination lands inside the segment's bounding box, and the tangent is unit-length | *not discharged* |
 | v13 | the clutter posterior never divides by zero and never rules clutter impossible | holds |
 | v14 | the miss update is a probability, never increases existence, and is monotone in `p_D` | holds |
 | v15 | the matcher takes as many admissible pairs as exist, and the cheapest such matching, on a tall **gated** problem | holds |
@@ -96,13 +97,24 @@ Two further limits:
   a claim, the claim is stated over the narrower domain instead of being
   quietly generalised.
 
-- **One harness is not discharged**, v12, the road-segment projection.
-  `run.sh` marks it SLOW and reports it rather than counting it. Bit-precise
-  IEEE division is where both tools are weakest, and v12 has three of them plus
-  a square root; it reaches 246,000 SAT variables and sits there. It encodes
-  its property correctly and is kept so a faster solver, or a longer budget,
-  can close it. A suite that quietly dropped it would read as more complete
-  than it is.
+- **One harness is not discharged**, v12b. `run.sh` marks it SLOW and reports
+  it rather than counting it.
+
+  v12 began as one harness covering four claims about the road projection and
+  closed none of them, at 246,000 SAT variables. Splitting the claims apart --
+  each stated over exactly the inputs it needs rather than threaded through the
+  whole function -- discharged two of the four, and they are now v12. What
+  remains in v12b is the pair that compares an IEEE product against a scaled
+  tolerance, which is the shape bit-blasting handles worst. It is not the
+  domain: CBMC still runs past four minutes with the coordinates narrowed from
+  +-1e4 to +-10, so narrowing further would make the claim less useful without
+  making it more provable. Both remaining claims are covered concretely by
+  `tests/test_motion_constraint`.
+
+  The split is worth describing because it is the technique, not a dodge.
+  Stating a claim over a superset of the values that can reach it -- "for any
+  parameter in [0,1]" rather than "for the parameter this division produces" --
+  is both cheaper to check and a stronger statement.
 
   Two others carried that mark until they were re-run and did not deserve it.
   v07 and v13 were recorded as undischarged on the strength of ESBMC runs that
