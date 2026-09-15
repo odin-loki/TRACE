@@ -11,8 +11,7 @@ Two questions, asked of the engine's numerical core:
    what the proofs do **not** cover.
 
 Ten derivations came back sound. Nine did not, and are set out below with the
-evidence. Eight are fixed; the ninth is a calibration decision that belongs to
-whoever owns the engine, and is reported rather than patched over.
+evidence. All nine are now fixed.
 
 **Five of the nine are in the scorer, not the engine** — the code that decides
 which track corresponds to which real entity, what counts as the tracker
@@ -258,9 +257,9 @@ arithmetically, sharing no structure with Brandes' backward accumulation, over
 **every** undirected graph on four, five and six vertices — 33,856 of them.
 606,050 checks pass; 132,810 of them fail against the old divisor.
 
-### 3. The existence update on a hit is not a posterior — **reported, not fixed**
+### 3. The existence update on a hit was not a posterior — **fixed**
 
-`src/core/pmbm.cpp:816`. The code is
+`src/core/pmbm.cpp`. The code was
 
     r' = r p_D / ( r p_D + (1-r) cd )
 
@@ -270,62 +269,69 @@ Bernoulli/JIPDA update for a track that was detected is
     r' = r p_D g(z) / ( r p_D g(z) + (1-r) lambda_c )
 
 where `g(z)` is the likelihood density of the detection under the track's own
-innovation covariance. Two consequences:
+innovation covariance. Two things followed from dropping it:
 
-- **The units do not agree.** The numerator carries a bare probability while
-  the denominator carries a density, so the ratio has no scale-free meaning —
-  its value moves with the units the area of regard happens to be written in.
+- **The units did not agree.** The numerator carried a bare probability while
+  the denominator carried a density, so the ratio had no scale-free meaning —
+  its value moved with the units the area of regard happened to be written in.
 
-- **The update is blind to fit.** `g(z)` is the only term carrying the
-  innovation, so two detections — one on top of the prediction, one at the very
-  edge of the gate — produce byte-identical existence. ESBMC finds the
-  counterexample immediately (`v08`).
+- **The update was blind to fit.** `g(z)` is the only term carrying the
+  innovation, so a detection on top of the prediction and one at the very edge
+  of the gate produced byte-identical existence. ESBMC finds the counterexample
+  immediately (`v08`), and `v09` proves what it cost: a newborn track at
+  `r_birth = 0.45` went above **0.999** on its first detection whatever that
+  detection looked like, for every `p_detection` and clutter density the engine
+  can produce. So `r_confirm = 0.55` cleared on every track that got a
+  detection and no track that did not — **`n_hits >= 1` wearing a probability's
+  clothing**, with the gap between 0.45 and 0.55 doing no work at all.
 
-The practical effect is proven in `v09`: a newborn track at `r_birth = 0.45`
-goes above **0.999** on its first detection, whatever that detection looks
-like, for every `p_detection` and clutter density the engine can produce. So
-`r_confirm = 0.55` clears on every track that gets a detection and no track
-that does not. **The confirmation threshold is `n_hits >= 1` wearing a
-probability's clothing**, and the gap between 0.45 and 0.55 chosen for it is
-not doing any work.
+Restoring `g(z)` is a dozen lines; both `mahalanobis_sq` and
+`innovation_covariance` were already computed at that call site. A newborn
+track's first detection now lands at 0.949 rather than pinned at the 0.9999
+clamp, and a poorer one lands lower.
 
-This is reported rather than fixed, and the reason is worth recording, because
-restoring `g(z)` is a dozen lines and was implemented and measured before being
-withdrawn.
+**What it costs and what it buys.** Measured over 14 scenarios and 7 seeds,
+medians throughout:
 
-With the likelihood restored, existence still saturates on a well-fitting
-detection — correctly, since where clutter is sparse a good detection really is
-near-conclusive. What changes is the *ceiling*: `r` lands at 0.9962 instead of
-being pinned at the clamp's 0.9999. That difference is small and it is load
-bearing, because the number of consecutive misses a track survives before
-`r_prune` retires it is set by where `r` starts. The old update pinned `r` at
-the clamp ceiling on every hit, which bought the longest coast available. So
-**coast duration was being set by an arithmetic artefact of the saturating
-update rather than by the profile's prune threshold.**
+| | as shipped | with g(z) |
+|---|---|---|
+| Ghost tracks | 2,912 | **2,375 (−18.4%)** |
+| Recovery (sum over 14 scenarios) | 1538.2 | 1499.3 (−38.9, ≈ −2.5%) |
+| Mean position error (sum) | 2443.6 | **2412.7** |
+| Identity switches | 1,409 | 1,448 (+2.8%) |
 
-Correcting the update alone therefore shortens the coast, and the scenarios
-that depend on coasting lose recovery:
+Two scenarios are outright wins — `coordinated-evasion` drops from 128 ghost
+tracks to 43 and `mule-network` from 50 to 11, both with fewer identity
+switches and no loss of recovery. `metro` is the sharpest trade: half the ghost
+tracks (360 to 178) and mean position error from 20.5 m to 15.1 m, for nine
+points of recovery.
 
-| domain | recovery before | after | identity switches before | after |
-|---|---|---|---|---|
-| CityCameraSurveillance | 93.7% | 68.8% | 104 | 79 |
-| CounterTerrorism | 86.1% | 75.3% | 86 | 53 |
-| IndoorVenue | 124.7% | 116.0% | 1058 | 1033 |
-| WarehouseAssets | 108.2% | 105.2% | 21 | 22 |
-| VehicleConvoy, Maritime | unchanged | | unchanged | |
-| TransactionSpace | 98.1% | 98.6% | 13 | 12 |
+On real data the correction is close to free:
 
-Identity switches improve almost everywhere, which is what a fit-sensitive
-existence should do. Recovery falls, in one case by 25 points.
+| | before | after |
+|---|---|---|
+| MOT17 MOTA | 54.3% | 54.3% |
+| MOT17 MOTP | 23.0 px | **22.2 px** |
+| MOT17 identity switches | 2,445 | **2,362** |
+| MOT20 MOTA | 64.0% | 63.8% |
+| MOT20 MOTP | 26.2 px | **25.8 px** |
+| MOT20 identity switches | 4,906 | **4,738** |
 
-The mathematics is not in question; the calibration is. `r_birth`, `r_confirm`
-and `r_prune` were all chosen against the saturating dynamics, and correcting
-the update without re-deriving them ships a regression in exchange for a
-correctness argument. That trade is the engine owner's to make, and doing it
-properly means re-deriving the lifecycle thresholds — and probably the coast
-timeout — against the corrected update, then re-measuring. It is not a drive-by
-change, and pretending otherwise by tuning thresholds until the numbers came
-back would be fitting to the scenarios rather than fixing anything.
+**No threshold recovers the difference**, and that was checked rather than
+assumed. `r_prune` was swept over a 500x range and moved total recovery by
+under 1% (730.4 to 736.6 across five settings); `r_confirm` was swept over a 2x
+range and moved it by 0.35%. The trade is a property of the corrected
+posterior, not of a calibration that happens to be stale: fewer, better-founded
+tracks that coast less far.
+
+**A false trail worth recording.** The first measurement of this change said it
+cost 25 points of recovery on one scenario and was a plain regression, and that
+is what an earlier version of this document reported. It was wrong twice over.
+It was taken through the matcher of finding 1, before either half of that was
+fixed — and the scenario scorer is the matcher, so the comparison was made with
+a broken instrument. And it looked only at recovery, which is the half of the
+trade that gets worse. With the matcher fixed and ghost tracks counted, the
+same scenario is within half a point.
 
 ### 4. Dempster's rule started from a mass vector summing to three — **fixed**
 

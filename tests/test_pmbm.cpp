@@ -450,6 +450,83 @@ void test_vague_tracks_do_not_win_reacquisition() {
     CHECK(got == id_a);
 }
 
+/// Build a track, then offer it one detection displaced from the track's own
+/// predicted position by `offset_m`, and report the existence that results.
+///
+/// The displacement has to be measured from the PREDICTION, not from a fixed
+/// point in the world. A coasting track's mean drifts, so an observation held
+/// at the origin is not held at a constant innovation - an earlier version of
+/// this helper offset from the origin and produced existence that RISES with
+/// distance, purely because the drift happened to run the same way.
+Real existence_after_one_displaced_detection(Real offset_m) {
+    const DomainProfile profile = UrbanHUMINT();
+    PmbmManager pmbm(profile, Area{-5000, 5000, -5000, 5000}, 4242);
+    auto feed = [&](Vec2 p, int i) {
+        Observation o;
+        o.obs_id = "o" + std::to_string(i);
+        o.source_id = "CAM";
+        o.timestamp = static_cast<Real>(i) * profile.scan_dt_s;
+        o.position = p;
+        o.modality = Modality::GEOINT;
+        o.confidence = 0.9;
+        pmbm.predict();
+        pmbm.update({o}, o.timestamp);
+    };
+    for (int i = 0; i < 4; ++i) feed(Vec2{0.0, 0.0}, i);
+
+    // One more prediction, then place the detection relative to where the
+    // filter now thinks the entity is.
+    pmbm.predict();
+    if (pmbm.all_tracks().empty()) return -1.0;
+    const Vec2 predicted = pmbm.all_tracks().front()->position();
+
+    Observation o;
+    o.obs_id = "probe";
+    o.source_id = "CAM";
+    o.timestamp = 4.0 * profile.scan_dt_s;
+    o.position = Vec2{predicted.x + offset_m, predicted.y};
+    o.modality = Modality::GEOINT;
+    o.confidence = 0.9;
+    pmbm.update({o}, o.timestamp);
+
+    Real r = 0.0;
+    for (const auto& t : pmbm.all_tracks()) r = std::max(r, t->existence());
+    return r;
+}
+
+void test_existence_responds_to_fit() {
+    // The Bernoulli/JIPDA existence update for a track that was detected is
+    //
+    //     r' = r p_D g(z) / ( r p_D g(z) + (1-r) lambda_c )
+    //
+    // and g(z) - the likelihood density of the detection under the track's own
+    // innovation covariance - is the only term carrying the innovation. Without
+    // it the numerator is a bare probability while the denominator is a density
+    // per square metre, so the ratio is not a quantity at all; and, more
+    // visibly, the posterior becomes a function of (r, p_D, clutter) alone, so
+    // a detection on top of the prediction and one far out give byte-identical
+    // existence.
+    //
+    // verification/v08 finds the counterexample against the old form and v09
+    // proves what it cost: every track that got any detection cleared
+    // r_confirm = 0.55 on it, and no track that did not. The threshold was
+    // `n_hits >= 1` wearing a probability's clothing.
+    const Real tight = existence_after_one_displaced_detection(0.0);
+    const Real loose = existence_after_one_displaced_detection(600.0);
+
+    std::printf("  existence vs fit: on-prediction=%.6f  600 m off=%.6f\n",
+                tight, loose);
+
+    CHECK(tight > 0.0);
+    CHECK(loose > 0.0);
+    // The point of the fix: fit reaches existence at all.
+    CHECK(tight > loose);
+    // And a well-fitting detection is still strong evidence, because where
+    // clutter is sparse it genuinely is. The fix makes r informative; it does
+    // not make it timid.
+    CHECK(tight > 0.9);
+}
+
 int main() {
     test_overlapping_sensors_do_not_spawn_duplicates();
     test_two_entities_one_sensor_stay_separate();
@@ -460,5 +537,6 @@ int main() {
     test_ids_are_stable();
     test_reacquisition_is_one_to_one();
     test_vague_tracks_do_not_win_reacquisition();
+    test_existence_responds_to_fit();
     return trace::test::summary("test_pmbm");
 }

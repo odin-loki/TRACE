@@ -836,10 +836,46 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         // independent scans. Counting each one separately would let a track
         // watched by four cameras become four times as certain as the same
         // track watched by one.
+        // The Bernoulli/JIPDA update for a track that WAS detected is
+        //
+        //     r' = r p_D g(z) / ( r p_D g(z) + (1-r) lambda_c )
+        //
+        // and the factor that is easy to drop is g(z), the likelihood DENSITY
+        // of the detection under this track's own innovation covariance.
+        // Without it the numerator carried a bare probability while the
+        // denominator carried a density per square metre, so the ratio was not
+        // a quantity at all - its value moved with the units the area of
+        // regard happened to be written in.
+        //
+        // It also made the update blind to fit. Two detections, one on top of
+        // the prediction and one at the very edge of the gate, produced
+        // byte-identical existence, so r measured only that SOMETHING had been
+        // associated. verification/v08 finds the counterexample immediately and
+        // v09 proves the consequence: a newborn track went from r_birth = 0.45
+        // to above 0.999 on its first detection whatever that detection looked
+        // like, which left r_confirm = 0.55 clearing on every track that got
+        // one and no track that did not.
         const Real L = profile_->p_detection;
         const Real r = tracks_[i]->existence();
-        tracks_[i]->set_existence(
-            std::clamp(r * L / (r * L + (1.0 - r) * cd + 1e-300), 0.0, 0.9999));
+        Real best_nis = std::numeric_limits<Real>::infinity();
+        for (const Observation* o : it->second) {
+            if (!o->has_position()) continue;
+            best_nis =
+                std::min(best_nis, tracks_[i]->filter().mahalanobis_sq(*o->position));
+        }
+        if (std::isfinite(best_nis)) {
+            // 2-D Gaussian density at the innovation: exp(-NIS/2) / (2 pi sqrt|S|).
+            // The best-fitting member of the group, for the same reason the
+            // whole group updates existence once: these are one scan's evidence
+            // about one entity, and the best explanation of it is what counts.
+            const Mat2 S = tracks_[i]->filter().innovation_covariance();
+            const Real det_s = std::max(S.det(), 1e-12);
+            const Real g = std::exp(-0.5 * best_nis) /
+                           (2.0 * std::numbers::pi * std::sqrt(det_s));
+            const Real lik = r * L * g;
+            tracks_[i]->set_existence(
+                std::clamp(lik / (lik + (1.0 - r) * cd + 1e-300), 0.0, 0.9999));
+        }
 
         // Where several sensors reported this entity in this scan, each can be
         // checked against the others. That is the only non-circular test
