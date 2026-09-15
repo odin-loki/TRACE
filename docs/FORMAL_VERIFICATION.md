@@ -604,11 +604,16 @@ translation error that inspection had missed. Sizes are small — 3x2 and 3x3
 matchings, four-vertex graphs — and the larger cases are covered by exhaustive
 search in the test suite instead, which at those sizes is not a sample either.
 
-Thirteen of the fifteen harnesses are discharged. Two are not: bit-precise IEEE
-division is where both tools are weakest, and they reach a quarter of a
-million SAT variables from a handful of divisions. They are marked and reported
-rather than dropped, because a suite that hid them would read as more complete
-than it is.
+Fifteen of the sixteen harnesses are discharged. The one that is not compares
+an IEEE product against a scaled tolerance, which is the shape bit-blasting
+handles worst; it is marked and reported rather than dropped, because a suite
+that hid it would read as more complete than it is. It reached a quarter of a
+million SAT variables as originally written, and splitting its four claims so
+each is stated over exactly the inputs it needs — "for any parameter in [0,1]"
+rather than "for the parameter this division produces" — discharged two of
+them. Quantifying over a superset of the reachable values is both the cheaper
+encoding and the stronger statement, which is the one generalisable technique
+to come out of this exercise.
 
 Of the nine findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
