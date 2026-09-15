@@ -27,8 +27,8 @@ property of the code.
 
 ## What is proven
 
-Thirteen of the fifteen are discharged. The other two are marked, reported, and
-explained below rather than dropped.
+Fourteen of the fifteen are discharged. The one that is not is marked,
+reported, and explained below rather than dropped.
 
 | | property | verdict |
 |---|---|---|
@@ -38,13 +38,13 @@ explained below rather than dropped.
 | v04 | the Hungarian matcher is memory-safe, returns a valid partial matching, and the `max_cost` gate holds | holds |
 | v05 | `log_sum_exp`'s shift by the maximum makes `log(0)` unreachable: `acc` lies in [1, K] | holds |
 | v06 | the Otsu split never divides by an empty class, and `sample[best_k]` is always in bounds | holds |
-| v07 | betweenness is normalised to [0,1] over every four-vertex graph | *not discharged* — see below |
+| v07 | betweenness is normalised to [0,1] over every four-vertex graph | holds (fails before the fix) |
 | v08 | the existence update on a detection does **not** agree with the JIPDA update | counterexample |
 | v09 | one detection, of any quality, always clears `r_confirm` and drives `r` above 0.999 | holds |
 | v10 | the MOU discretisation satisfies `sigma_v^2 == ss_vvar (1 - alpha^2)` in IEEE, so a cloud at steady state stays there | holds |
 | v11 | `Vec2::unit()` is total on finite input, and its guard is what rules out the division by zero | holds |
 | v12 | the road projection lands on the segment, and its tangent is unit-length | *not discharged* |
-| v13 | the clutter posterior never divides by zero and never rules clutter impossible | *not discharged* |
+| v13 | the clutter posterior never divides by zero and never rules clutter impossible | holds |
 | v14 | the miss update is a probability, never increases existence, and is monotone in `p_D` | holds |
 | v15 | the matcher takes as many admissible pairs as exist, and the cheapest such matching, on a tall **gated** problem | holds |
 
@@ -96,19 +96,26 @@ Two further limits:
   a claim, the claim is stated over the narrower domain instead of being
   quietly generalised.
 
-- **Two harnesses are not discharged within the default budget by either
-  checker**, and `run.sh` marks them SLOW and reports them rather than counting
-  them. Bit-precise IEEE division is where both tools are weakest: v12 and v13
-  reach 246,000 and 146,000 SAT variables from a handful of divisions and then
-  sit there. Both encode their properties correctly and are kept so a faster
-  solver, or a longer budget, can close them. A suite that quietly dropped them
-  would read as more complete than it is.
+- **One harness is not discharged**, v12, the road-segment projection.
+  `run.sh` marks it SLOW and reports it rather than counting it. Bit-precise
+  IEEE division is where both tools are weakest, and v12 has three of them plus
+  a square root; it reaches 246,000 SAT variables and sits there. It encodes
+  its property correctly and is kept so a faster solver, or a longer budget,
+  can close it. A suite that quietly dropped it would read as more complete
+  than it is.
 
-  v07 is a different case. What it states — that betweenness is normalised to
-  [0,1] — is established far more strongly by `tests/test_network`, which
-  enumerates every undirected graph on four, five and six vertices and runs the
-  **real function** on each rather than a translation of it. The harness is kept
-  because it states the claim beside the code, not because it is the evidence.
+  Two others carried that mark until they were re-run and did not deserve it.
+  v07 and v13 were recorded as undischarged on the strength of ESBMC runs that
+  exhausted memory; under CBMC they close in 46 seconds and 19 minutes
+  respectively. **Which checker, not which property** — and the lesson is the
+  same one the harnesses keep teaching: a negative result from a tool is a
+  statement about the tool until it has been tried another way.
+
+  That said, v07's claim is established far more strongly by
+  `tests/test_network`, which enumerates every undirected graph on four, five
+  and six vertices and runs the **real function** on each rather than a
+  translation of it. Its harness earns its place by stating the claim beside
+  the code, not by being the evidence.
 
   Narrowing a domain to make a harness discharge is legitimate where the claim
   does not turn on what was narrowed, and it is not where it does. v11 shows

@@ -26,21 +26,22 @@ supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **51.6%** |
+| **MOTA** | **54.3%** |
 | MOTP | 23.0 px |
 | Recall | 59.1% |
-| Precision | 89.7% |
+| Precision | 93.5% |
 | Mostly tracked | 30.3% |
 | Mostly lost | 26.1% |
 | Identity switches | 2,445 |
-| Throughput | 5.1 ms/frame, one core |
+| Track-frames on not-to-be-considered regions, discarded | 8,974 |
+| Throughput | 6.0 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
 version of this table reported a different operating point (`--min-score 0`,
 `--radius 120`) than the command printed beside it; that configuration gives
-48.8% MOTA and 109.5% of ceiling — nearly three points of MOTA for nothing in
-ceiling recovery, since dropping the score filter buys recall (66.7%) at the
-cost of precision (79.8%).
+56.3% MOTA and 109.5% of ceiling — two points of MOTA and nearly a point of
+ceiling recovery, since dropping the score filter buys recall (66.7%) at a
+smaller cost in precision (87.6%) than it used to appear to.
 
 ### These numbers moved, and it was the scorer
 
@@ -59,17 +60,30 @@ the figures that depend on **which** pairs did:
 | MOT17 train, all 21 sequences | before | after |
 |---|---|---|
 | Recall | 60.0% | 59.1% |
-| Precision | 90.8% | 89.7% |
-| MOTA | 48.2% | **51.6%** |
+| Precision | 90.8% | 93.5% |
+| MOTA | 48.2% | **54.3%** |
 | MOTP | 27.4 px | 23.0 px |
 | Identity switches | 19,156 | **2,445** |
 
-**Three defects, all of them in the scorer rather than the engine.** Two in
-the matcher that decides which track corresponds to which ground-truth box —
+**Five defects, every one of them in the scorer rather than the engine.** Two
+in the matcher that decides which track corresponds to which ground-truth box —
 one for matrices with more rows than columns, one for matrices containing
-gated-out pairs — and one in the identity-switch rule. The engine's own code is
-unchanged by any of them; what changed is the instrument. All three are derived
-in [FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md).
+gated-out pairs — one in the identity-switch rule, one in how ground-truth
+identities are pooled, and one in the handling of regions MOT flags as
+not-to-be-considered. The engine's own code is unchanged by all five; what
+changed is the instrument. All are derived in
+[FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md).
+
+Precision rises from 90.8% to 93.5% because of the last of them. Nearly half
+the MOT17 ground-truth file — 277,212 rows of 614,103 — marks places where
+something is present and the benchmark declined to annotate it: a reflection, a
+cyclist, a crowd too dense to separate. Those rows were dropped from ground
+truth, correctly, but a track sitting on one was then charged as a false
+positive, which penalises the tracker for finding exactly what the annotator
+saw and chose not to label. MOT's own protocol discards such hypotheses before
+counting, and now so does this. 8,974 track-frames are discarded across the
+train split, and the count is printed beside the precision it raises rather
+than folded silently into it.
 
 The identity-switch count is the largest single correction, from 19,156 to
 2,445. CLEAR-MOT matches in two passes: a correspondence from the previous
@@ -138,17 +152,17 @@ a kinematics-only tracker.
 
 | Detector | MOTA range | Character |
 |---|---|---|
-| **SDP** (strongest) | 57.0 – **76.4%** | Best result: MOT17-10-SDP |
-| **FRCNN** | 42.2 – 66.1% | Precision routinely above 95% |
-| **DPM** (oldest) | 19.3 – 40.4% | Its false positives get promoted to tracks |
+| **SDP** (strongest) | 62.2 – **79.2%** | Best result: MOT17-10-SDP |
+| **FRCNN** | 43.1 – 71.3% | Precision routinely above 99% |
+| **DPM** (oldest) | 20.4 – 50.4% | Its false positives get promoted to tracks |
 
 DPM's range was 4–38% before the source-credibility work; discounting a source
 whose reports disagree with its peers is worth roughly ten MOTA points on the
 sequences where the detector is unreliable, and nothing at all where it is not.
 
 The detection threshold has a shallow optimum and falls away either side of it.
-On MOT17-02-DPM, sweeping it gives 21.0% MOTA at 0.0, 19.3% at the default
-0.15, and 16.8% at 0.30. **The default is no longer the best of the three.**
+On MOT17-02-DPM, sweeping it gives 24.8% MOTA at 0.0, 20.4% at the default
+0.15, and 16.9% at 0.30. **The default is no longer the best of the three.**
 Earlier versions of this document reported an optimum at 0.15, and that was
 measured through the broken matcher; with it corrected, filtering nothing beats
 filtering a little by 1.3 points, because recall dominates MOTA and the
@@ -169,11 +183,11 @@ for them:
 
 | Sequence | People/frame | MOTA | Precision | Recall | Mostly lost | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | 62 | **64.4%** | 97.4% | 66.6% | 9.5% | 11 |
-| MOT20-02 | 72 | 56.0% | 95.1% | 59.5% | 7.0% | 18 |
-| MOT20-03 | 148 | 61.7% | 96.8% | 64.2% | 13.2% | 42 |
-| MOT20-05 | 226 | 62.9% | 96.1% | 66.0% | 9.2% | 70 |
-| **Overall** | **127** | **61.7%** | **96.2%** | **64.6%** | **10.2%** | **44** |
+| MOT20-01 | 62 | **65.6%** | 99.1% | 66.6% | 9.5% | 13 |
+| MOT20-02 | 72 | 58.7% | 99.2% | 59.5% | 7.0% | 21 |
+| MOT20-03 | 148 | 63.7% | 99.7% | 64.2% | 13.2% | 48 |
+| MOT20-05 | 226 | 65.3% | 99.7% | 66.0% | 9.2% | 81 |
+| **Overall** | **127** | **64.0%** | **99.6%** | **64.6%** | **10.2%** | **50** |
 
 | | |
 |---|---|
@@ -195,7 +209,7 @@ at far less. Density hurts association, but it is a smaller effect than
 detection quality, and the denser sequences also give the coasting mechanism
 more to work with — a crowd that thins for a few frames is still a crowd.
 
-The cost, though, is real: 83 ms/frame at 226 people. That is 12 frames per
+The cost, though, is real: 81 ms/frame at 226 people. That is 12 frames per
 second on one core, so a 25 fps camera at that density needs the area
 partitioned across workers. See the scaling measurements below.
 
@@ -248,7 +262,7 @@ asserts something the file never said, and it asserted the worst case.
 | MOT20-03 | MOTA | Mostly lost | Recovery of ceiling |
 |---|---|---|---|
 | before | 18.4% | 74.8% | 26% |
-| **after** | **61.7%** | **13.2%** | **117%** |
+| **after** | **63.7%** | **13.2%** | **117%** |
 
 The same two fixes are worth 2.7 points of ceiling recovery on MOT17, and took
 `wildlife` — the sparsest scenario in the suite, and the only one that had ever
@@ -615,10 +629,10 @@ for the mechanism to run at all:
 
 | Descriptor on MOT17-02-FRCNN | MOTA | Identity switches |
 |---|---|---|
-| `--appearance none` | 42.2% | 34 |
-| `--appearance oracle` (profile weight, 0.0) | 42.2% | 34 |
-| `--appearance oracle --appearance-weight 0.15` | **42.3%** | **26** |
-| `--appearance oracle --appearance-weight 0.35` | 42.1% | 31 |
+| `--appearance none` | 43.1% | 34 |
+| `--appearance oracle` (profile weight, 0.0) | 43.1% | 34 |
+| `--appearance oracle --appearance-weight 0.15` | **43.2%** | **26** |
+| `--appearance oracle --appearance-weight 0.35` | 43.1% | 31 |
 
 A *perfect* descriptor, handed the true identity of every detection, removes 8
 identity switches out of 34 and moves MOTA by a tenth of a point. Too much
@@ -627,12 +641,12 @@ setting changed that.
 
 The arithmetic explains it, and explains it more starkly than before the
 identity-switch rule was corrected. On MOT17-02-FRCNN, with 18,581
-ground-truth boxes and 42.2% MOTA, the penalty decomposes as:
+ground-truth boxes and 43.1% MOTA, the penalty decomposes as:
 
 | Component | Count | Share of penalty |
 |---|---|---|
-| Missed detections | ~10,460 | **97.4%** |
-| False positives | ~245 | 2.3% |
+| Missed detections | ~10,460 | **98.9%** |
+| False positives | ~78 | 0.7% |
 | Identity switches | 34 | **0.3%** |
 
 Missed detections are capped by the detector — which TRACE already exceeds by
@@ -684,8 +698,8 @@ was wrong for this benchmark, and the measurement above is what disproved it.
 ## How to read this against published work
 
 Published MOT17 results using public detections generally sit around 50–60%
-MOTA. TRACE at 51.6% sits at the bottom of that range, and the reason is worth
-stating plainly rather than explaining away:
+MOTA. TRACE at 54.3% sits inside that range, at the lower end, and the reason
+it is not higher is worth stating plainly rather than explaining away:
 
 **TRACE has no *learned* appearance model.** Methods at the top of the MOT
 leaderboards

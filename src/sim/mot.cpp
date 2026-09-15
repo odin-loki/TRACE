@@ -29,7 +29,9 @@ std::vector<Real> parse_csv_line(const std::string& line) {
     return out;
 }
 
-std::map<int, std::vector<MotBox>> load_boxes(const fs::path& file, bool is_gt) {
+std::map<int, std::vector<MotBox>> load_boxes(
+    const fs::path& file, bool is_gt,
+    std::map<int, std::vector<MotBox>>* ignore = nullptr) {
     std::map<int, std::vector<MotBox>> out;
     std::ifstream in(file);
     if (!in) return out;
@@ -51,12 +53,12 @@ std::map<int, std::vector<MotBox>> load_boxes(const fs::path& file, bool is_gt) 
         b.cls = f.size() > 7 ? static_cast<int>(f[7]) : 1;
         b.visibility = f.size() > 8 ? f[8] : 1.0;
 
-        if (is_gt) {
-            // MOT's ground truth includes boxes flagged not-to-be-considered
-            // (score 0) and non-pedestrian classes. Scoring against those would
-            // penalise the tracker for correctly ignoring them.
-            if (b.score < 0.5) continue;
-            if (b.cls != 1) continue;
+        if (is_gt && (b.score < 0.5 || b.cls != 1)) {
+            // Not ground truth, but not nothing either: see MotSequence::ignore.
+            // Routed to the caller's second map rather than discarded, so the
+            // scorer can decline to charge a track that sits on one.
+            if (ignore != nullptr) (*ignore)[b.frame].push_back(b);
+            continue;
         }
         out[b.frame].push_back(b);
     }
@@ -215,7 +217,7 @@ MotSequence load_mot_sequence(const std::string& directory) {
 
     seq.name = dir.filename().string();
     seq.detections = load_boxes(dir / "det" / "det.txt", false);
-    seq.truth = load_boxes(dir / "gt" / "gt.txt", true);
+    seq.truth = load_boxes(dir / "gt" / "gt.txt", true, &seq.ignore);
 
     const fs::path info = dir / "seqinfo.ini";
     const auto as_int = [&](const std::string& key, int fallback) {

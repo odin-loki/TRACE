@@ -66,6 +66,22 @@ struct MotSequence {
     /// Ground truth, indexed by frame.
     std::map<int, std::vector<MotBox>> truth;
 
+    /// Regions MOT flags as not-to-be-considered, indexed by frame.
+    ///
+    /// Ground-truth rows scored below 0.5, or of a non-pedestrian class, mark
+    /// places where something IS present but the benchmark declines to say
+    /// what: a reflection, a person on a bicycle, a figure in a poster, a
+    /// crowd too dense to annotate individually. They are 45% of the MOT17
+    /// train file - 277,212 rows of 614,103.
+    ///
+    /// They must not be scored against, which is why they are kept out of
+    /// `truth`. But they must not be scored AGAINST THE TRACKER either: a
+    /// track sitting on one is neither right nor wrong, and charging it as a
+    /// false positive penalises the tracker for finding something the
+    /// benchmark saw too and chose not to annotate. MOT's own protocol
+    /// discards such hypotheses before counting; so does `accumulate`.
+    std::map<int, std::vector<MotBox>> ignore;
+
     /// Robust bounds of this sequence's own detection-score distribution,
     /// computed once at load. Detectors do not share a scale - DPM emits
     /// roughly -1..+3, FRCNN and SDP quite different ranges again, and MOT20's

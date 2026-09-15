@@ -35,6 +35,10 @@ struct ClearMot {
     long false_positives{0};
     long false_negatives{0};
     long id_switches{0};
+    /// Tracks discarded for sitting on a not-to-be-considered region: neither
+    /// true positives nor false ones. Reported so the discard is visible rather
+    /// than silently improving precision.
+    long ignored_tracks{0};
     Real distance_sum{0.0};
 
     /// Last track id seen for each ground-truth identity. Per sequence, so a
@@ -97,7 +101,24 @@ struct ClearMot {
     }
 };
 
+/// Does this position fall in a region MOT declined to annotate?
+///
+/// Two ways to be inside one, because a don't-care region is a rectangle while
+/// everything else in this scorer is a ground-contact point. A track whose foot
+/// point lies within the rectangle is plainly in it; one within `match_radius`
+/// of the rectangle's own foot point would have counted as a match had the
+/// region been annotated, which is the same standard applied to real ground
+/// truth.
+bool in_ignored_region(Vec2 p, const std::vector<MotBox>& ignore, Real match_radius) {
+    for (const MotBox& b : ignore) {
+        if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return true;
+        if (distance(p, b.foot()) <= match_radius) return true;
+    }
+    return false;
+}
+
 void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
+                const std::vector<MotBox>& ignore,
                 const std::vector<TargetReport>& tracks, Real match_radius) {
     std::vector<Vec2> gt_pts;
     gt_pts.reserve(gt.size());
@@ -182,7 +203,18 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
         if (gt_to_track[i] >= 0) matched_track[static_cast<std::size_t>(gt_to_track[i])] = 1;
     }
     for (std::size_t j = 0; j < tracks.size(); ++j) {
-        if (!matched_track[j]) ++m.false_positives;
+        if (matched_track[j]) continue;
+        // An unmatched track sitting on a not-to-be-considered region is
+        // neither right nor wrong. MOT flags those regions because something
+        // IS there and the benchmark declined to annotate it - a reflection, a
+        // cyclist, a crowd too dense to separate - so charging the tracker for
+        // finding it penalises it for agreeing with the annotator. They are 45%
+        // of the MOT17 ground-truth file, so this is not a rounding detail.
+        if (in_ignored_region(tracks[j].position, ignore, match_radius)) {
+            ++m.ignored_tracks;
+            continue;
+        }
+        ++m.false_positives;
     }
 }
 
@@ -194,6 +226,12 @@ void print_result(const std::string& name, const ClearMot& m) {
         name.c_str(), 100.0 * m.mota(), m.motp(), 100.0 * m.recall(),
         100.0 * m.precision(), m.id_switches, 100.0 * mt, 100.0 * ml,
         m.frames > 0 ? m.latency_sum / static_cast<Real>(m.frames) : 0.0);
+    // Reported, not buried: discarding hypotheses raises precision, so the
+    // number discarded belongs next to the precision it raised.
+    if (m.ignored_tracks > 0) {
+        std::printf("  %-22s %ld track-frames discarded on not-to-be-considered regions\n",
+                    "", m.ignored_tracks);
+    }
 }
 
 /// What the input allows.
@@ -271,7 +309,11 @@ ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
 
         const auto gt_it = seq.truth.find(frame);
         if (gt_it != seq.truth.end()) {
-            accumulate(m, gt_it->second, r.targets, match_radius);
+            static const std::vector<MotBox> kNoIgnore;
+            const auto ig_it = seq.ignore.find(frame);
+            accumulate(m, gt_it->second,
+                       ig_it != seq.ignore.end() ? ig_it->second : kNoIgnore,
+                       r.targets, match_radius);
         }
 
         if (verbose && frame % 200 == 0) {
@@ -364,6 +406,7 @@ int main(int argc, char** argv) {
         overall.false_positives += m.false_positives;
         overall.false_negatives += m.false_negatives;
         overall.id_switches += m.id_switches;
+        overall.ignored_tracks += m.ignored_tracks;
         overall.distance_sum += m.distance_sum;
         overall.latency_sum += m.latency_sum;
         overall.frames += m.frames;

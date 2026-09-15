@@ -10,15 +10,20 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Eight did not, and are set out below with the
-evidence. Seven are fixed; the eighth is a calibration decision that belongs to
+Ten derivations came back sound. Nine did not, and are set out below with the
+evidence. Eight are fixed; the ninth is a calibration decision that belongs to
 whoever owns the engine, and is reported rather than patched over.
 
-Four of the eight are in the **scorer** rather than the engine — the code that
-decides which track corresponds to which real entity, what counts as the
-tracker changing its mind, and which ground-truth identity is which. None of
-them changes how TRACE tracks anything. All four change what this repository
-was reporting about it.
+**Five of the nine are in the scorer, not the engine** — the code that decides
+which track corresponds to which real entity, what counts as the tracker
+changing its mind, which ground-truth identity is which, and what to do about
+the places the benchmark declined to annotate. Not one of them changes how
+TRACE tracks anything. All five change what this repository was reporting
+about it, and together they move MOT17 MOTA from 48.2% to 54.3% without a
+single line of the engine being touched.
+
+That ratio is the most useful thing here. Nine findings, and the majority were
+in the instrument rather than the thing being measured.
 
 ---
 
@@ -517,6 +522,44 @@ depend on these maps, and the per-sequence figures were always right, since
 within one sequence the raw id is unique. Only the pooled line was wrong, which
 is why it survived — every sequence in the table above it was correct.
 
+### 9. Regions MOT declines to annotate were charged as false positives — **fixed**
+
+`src/sim/mot.cpp` and `src/apps/mot_main.cpp`. MOTChallenge's ground-truth file
+carries rows scored below 0.5 or of a non-pedestrian class. They mark places
+where something **is** present and the benchmark declines to say what: a
+reflection, a person on a bicycle, a figure in a poster, a crowd too dense to
+annotate individually. They are not a minor category — **277,212 of the 614,103
+rows in the MOT17 train file, 45% of it.**
+
+The loader dropped them, which is right: scoring a tracker against a region
+nobody labelled would be meaningless. But dropping them from ground truth is
+only half the protocol. A track sitting on one then has nothing to match
+against, so it fell through to the false-positive count — which penalises the
+tracker for finding exactly what the annotator saw and chose not to label. MOT's
+own protocol removes such hypotheses from the hypothesis set before counting.
+
+The regions are now kept in a separate map and an unmatched track that sits on
+one is discarded rather than charged. "Sits on one" has two arms, because a
+don't-care region is a rectangle while the rest of this scorer works in
+ground-contact points: the track's foot point is inside the rectangle, or it is
+within `match_radius` of the rectangle's own foot point — the same standard
+applied to real ground truth.
+
+| | before | after |
+|---|---|---|
+| MOT17 MOTA | 51.6% | **54.3%** |
+| MOT17 precision | 89.7% | **93.5%** |
+| MOT20 MOTA | 61.7% | **64.0%** |
+| MOT20 precision | 96.2% | **99.6%** |
+
+Recall, MOTP, identity switches, mostly-tracked and mostly-lost do not move at
+all, on either benchmark — only the false-positive count was ever wrong.
+
+8,974 track-frames are discarded across the MOT17 train split. That number is
+**printed beside the precision it raises**, per sequence and overall, because a
+change that improves a score by discarding evidence should not be able to hide
+inside the score.
+
 ---
 
 ## Noted in passing, not chased
@@ -561,7 +604,7 @@ million SAT variables from a handful of divisions. They are marked and reported
 rather than dropped, because a suite that hid them would read as more complete
 than it is.
 
-Of the eight findings, exactly one — the existence update — was found by a
+Of the nine findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
 the formula is supposed to compute and comparing. Model checking earned its
 place by settling things reading could not, in both directions. It proved the
