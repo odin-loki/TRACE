@@ -1,6 +1,7 @@
 // Engine-level contracts: what a caller is entitled to rely on in a ScanReport.
 #include "trace/core/engine.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -316,9 +317,68 @@ void test_memory_plateaus_under_track_turnover() {
     CHECK(growth < 6 * 1024);
 }
 
+void test_forecast_advances_a_scan_period_per_step() {
+    // A forecast step stamped one scan period into the future must place the
+    // entity one scan period of travel away. `Track::velocity()` is metres per
+    // second, so the step is v * scan_dt_s - not v, which is one second of
+    // travel and correct only where the scan period is one second.
+    //
+    // Nine of the ten shipped profiles have a scan period that is not one
+    // second, from 0.04 s at 25 fps to 14,400 s for a satellite collar duty
+    // cycle, so the forecast was out by that factor in all of them: a vessel
+    // at 9.5 m/s predicted an hour ahead was placed 9.5 m from where it
+    // started rather than 34 km. Checked here on a 60 s profile, where the
+    // error was sixty-fold.
+    EngineConfig cfg;
+    cfg.profile = UrbanHUMINT();            // scan_dt_s = 60
+    cfg.area = Area{-500000, 500000, -500000, 500000};
+    cfg.seed = 3;
+    Engine engine(cfg);
+
+    // Walk a vessel in a straight line long enough for the filter to settle on
+    // a velocity, then look at what it predicts.
+    const Real dt = cfg.profile.scan_dt_s;
+    const Real speed = 1.4;                 // m/s, walking pace
+    Vec2 truth{0.0, 0.0};
+    const TargetReport* target = nullptr;
+    ScanReport last;
+    for (int i = 0; i < 24; ++i) {
+        last = engine.ingest(one("v" + std::to_string(i), static_cast<Real>(i) * dt,
+                                 truth, 0.95),
+                             static_cast<Real>(i) * dt);
+        truth.x += speed * dt;
+    }
+    for (const auto& t : last.targets) {
+        if (!t.forecast.empty()) { target = &t; break; }
+    }
+    if (target == nullptr) {
+        std::printf("  forecast: no track reached a forecastable priority, skipped\n");
+        return;
+    }
+
+    // Each step must move by one scan period of the reported velocity, and the
+    // timestamps must agree with the distance.
+    const Vec2 v = target->velocity_mps;
+    Vec2 expected = target->position;
+    for (std::size_t k = 0; k < target->forecast.size(); ++k) {
+        expected += v * dt;
+        const ForecastStep& f = target->forecast[k];
+        const Real err = distance(f.position, expected);
+        CHECK(err <= 1e-6 * (1.0 + std::abs(expected.x) + std::abs(expected.y)));
+    }
+    const Real step_m = distance(target->forecast[0].position, target->position);
+    const Real step_s = target->forecast[0].timestamp - last.timestamp;
+    std::printf("  forecast: first step %.0f m over %.0f s (%.2f m/s reported)\n",
+                step_m, step_s, v.norm());
+    // The distance travelled must match the time elapsed at the reported
+    // speed. With `p += v` it was out by the scan period - 3600x here.
+    CHECK(std::abs(step_m - v.norm() * step_s) <= 1e-3 * (step_m + 1.0));
+}
+
 int main() {
     test_empty_scan_is_safe();
     test_possibility_mismatch_discriminates();
+    test_forecast_advances_a_scan_period_per_step();
     test_memory_plateaus_under_track_turnover();
     test_track_forms_and_reports();
     test_detector_registry();

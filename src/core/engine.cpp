@@ -140,13 +140,23 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         // Forecast only what warrants the compute.
         if (tr.threat.priority == Priority::IMMEDIATE ||
             tr.threat.priority == Priority::HIGH) {
+            // `velocity()` is metres per SECOND and each step is stamped one
+            // scan period into the future, so the step has to be a scan period
+            // of travel. It used to be `p += v`, one second of it, which is
+            // right only where the scan period happens to be one second - one
+            // of the ten shipped profiles. Everywhere else the forecast was out
+            // by the scan period: a vessel at 9.5 m/s predicted an hour ahead
+            // was placed 9.5 m from where it started instead of 34 km, and at
+            // the other end a 25 fps profile threw the prediction 25 times too
+            // far.
             const Vec2 v = t->velocity();
+            const Real dt = config_.profile.scan_dt_s;
             Vec2 p = t->position();
             const Real unc0 = t->position_uncertainty();
             for (int k = 1; k <= config_.forecast_horizon; ++k) {
-                p += v;
+                p += v * dt;
                 tr.forecast.push_back(ForecastStep{
-                    timestamp + k * config_.profile.scan_dt_s, p,
+                    timestamp + k * dt, p,
                     // Uncertainty grows as sqrt(time) under a diffusion model.
                     unc0 * std::sqrt(static_cast<Real>(k) + 1.0)});
             }

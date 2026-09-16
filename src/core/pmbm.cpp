@@ -965,12 +965,46 @@ void PmbmManager::update(const std::vector<Observation>& observations,
     // beyond this cannot be the same object, so it cannot corroborate a birth.
     Real birth_gate = profile_->birth_gate_m;
     if (birth_gate <= 0.0) {
-        // Derive from the domain's own speed scale, not from the fastest MOU
-        // model: a low-theta regime has an enormous steady-state velocity
-        // variance that says nothing about how far a real entity travels in
-        // one scan, and using it opened the gate to the whole area of regard.
-        const Real speed_scale = profile_->courier_speed_thresh * 4.0;
-        birth_gate = speed_scale * profile_->scan_dt_s + 3.0 * profile_->pos_noise_m;
+        // The furthest an entity can travel between scans, by the profile's own
+        // account of how its entities move.
+        //
+        // Each MOU regime is built by `motion(name, heading_hold_s,
+        // typical_speed_mps)`, which sets sigma = typical_speed * sqrt(2 theta)
+        // - so sigma / sqrt(2 theta) recovers that typical speed exactly, and
+        // the fastest regime is the domain's own statement of its top speed.
+        //
+        // This used to be derived from `courier_speed_thresh`, which is a
+        // network-analysis parameter - how fast a courier walks - and sits
+        // between 0.3 and 4 m/s in every shipped profile. Multiplied by four it
+        // still described nobody: an aircraft profile whose own motion model
+        // declares 300 m/s got a gate built from 12 m/s. No profile sets
+        // `birth_gate_m`, so the derivation is what every one of them used, and
+        // where a scan's travel exceeded the gate no track could ever be born
+        // at all. Measured on a clean single-target feed, three profiles never
+        // formed a track: Airspace (1,000 m per scan against a 210 m gate),
+        // VehicleConvoy (150 m against 129 m) and Maritime (32.4 km against
+        // 29.4 km). Slowing the target below the gate made tracks appear
+        // immediately in all three.
+        //
+        // No multiplier: the fast regime is already the fast case, and the
+        // factor of four was there to compensate for a speed scale that was an
+        // order of magnitude too small.
+        //
+        // The gate has two constraints pulling against each other. It must be
+        // at least one scan of travel, or a fast entity can never be
+        // corroborated; and no wider than the spacing between entities, or a
+        // detection is corroborated by its neighbour and two objects become
+        // one. This derivation serves the first. Where a domain packs its
+        // entities closer together than one scan of travel - WarehouseAssets
+        // does, which is why the fix costs it about five points of recovery
+        // while improving its identity switches - the profile should say so by
+        // setting `birth_gate_m` directly. No profile currently does.
+        Real fastest = 0.0;
+        for (const auto& m : profile_->mou_models) {
+            fastest = std::max(fastest,
+                               m.sigma / std::sqrt(2.0 * std::max(m.theta, 1e-6)));
+        }
+        birth_gate = fastest * profile_->scan_dt_s + 3.0 * profile_->pos_noise_m;
     }
 
     std::vector<Vec2> unassigned_now;

@@ -10,19 +10,23 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Nine did not, and are set out below with the
-evidence. All nine are now fixed.
+Ten derivations came back sound. Eleven did not, and are set out below with
+the evidence. All eleven are now fixed.
 
-**Five of the nine are in the scorer, not the engine** — the code that decides
-which track corresponds to which real entity, what counts as the tracker
-changing its mind, which ground-truth identity is which, and what to do about
-the places the benchmark declined to annotate. Not one of them changes how
-TRACE tracks anything. All five change what this repository was reporting
+**Five of the eleven are in the scorer, not the engine** — the code that
+decides which track corresponds to which real entity, what counts as the
+tracker changing its mind, which ground-truth identity is which, and what to do
+about the places the benchmark declined to annotate. Not one of them changes
+how TRACE tracks anything. All five change what this repository was reporting
 about it, and together they move MOT17 MOTA from 48.2% to 54.3% without a
 single line of the engine being touched.
 
-That ratio is the most useful thing here. Nine findings, and the majority were
-in the instrument rather than the thing being measured.
+That ratio is the most useful thing here: nearly half the defects were in the
+instrument rather than in the thing being measured. Of the six that were in the
+engine, three were errors of dimension — a probability compared against a
+density, metres per second integrated as metres per scan, a walking pace used
+as an aircraft's speed — which is what makes "do the units agree" worth asking
+of every formula rather than only of the ones that look suspicious.
 
 ---
 
@@ -568,6 +572,71 @@ inside the score.
 
 ---
 
+### 10. The forecast advanced one second per scan — **fixed**
+
+`src/core/engine.cpp`. `Track::velocity()` is metres per **second**, and each
+forecast step is stamped one scan period into the future — but the step added
+was `p += v`, one second of travel. Right only where the scan period happens
+to be one second, which is one of the ten shipped profiles.
+
+Everywhere else the forecast was out by the scan period: a vessel at 9 m/s
+predicted an hour ahead was placed 9 m from where it started rather than 32 km,
+and at the other end a 25 fps profile threw the prediction twenty-five times
+too far. The fix is `p += v * scan_dt_s`.
+
+### 11. Three profiles could not form a track at all — **fixed**
+
+`src/core/pmbm.cpp`. Two-point initiation corroborates an unassigned detection
+against the unassigned detections of the previous scan: if one is within
+`birth_gate` metres, the pair is a birth rather than two false alarms. So the
+gate is a question about travel — how far could this entity have moved since
+the last scan.
+
+It was derived from `courier_speed_thresh`, which is a network-analysis
+parameter describing how fast a courier walks, and sits between 0.3 and 4 m/s
+in every shipped profile. **No profile sets `birth_gate_m`**, so that
+derivation is what all of them used. Where a scan's travel exceeded the gate,
+no track could ever be born:
+
+| profile | travel per scan | gate | tracks formed |
+|---|---|---|---|
+| Airspace | 1,000 m | 210 m | **none, ever** |
+| Maritime | 32,400 m | 29,400 m | **none, ever** |
+| VehicleConvoy | 150 m | 129 m | **none, ever** |
+
+Slowing the target below the gate made tracks appear immediately in all three,
+which is what confirms the gate as the cause rather than anything else about
+those profiles.
+
+The gate now comes from the profile's own motion model. Each MOU regime is
+built by `motion(name, heading_hold_s, typical_speed_mps)`, which sets
+`sigma = typical_speed * sqrt(2 theta)`, so `sigma / sqrt(2 theta)` recovers
+that speed exactly and the fastest regime is the domain's own statement of how
+fast its entities go — 300 m/s for Airspace against the 12 m/s the old
+derivation supplied. All ten profiles now form tracks.
+
+It costs something, and the cost is understood rather than waved past. Over
+seven seeds and fourteen scenarios: total recovery 1499.3 to 1491.3 (−0.5%),
+ghost tracks 2,375 to 2,389 (+0.6%), identity switches 1,448 to 1,362 (−6%).
+On MOT it is within rounding — MOT17 MOTA 54.3% to 54.4%, MOTP 22.2 to 22.1 px.
+Almost all of the recovery loss is one scenario — warehouse, 117.0 to 110.8 —
+and the mechanism is the tension the gate cannot resolve alone: it must be at
+least one scan of travel or fast entities cannot be born, and no wider than the
+spacing between entities or a detection is corroborated by its neighbour and
+two objects become one. A warehouse packs its pallets closer together than a
+forklift travels in a scan.
+
+That difference was checked rather than assumed. Perturbing the gate by one
+millimetre and by one centimetre leaves warehouse recovery identical to three
+decimal places across three seeds, while the old gate moves it by five points —
+so the change is genuinely attributable and not the chaotic divergence these
+Monte Carlo scenarios are prone to. The remedy for a domain in that position is
+`birth_gate_m`, which exists for exactly this and which no profile sets;
+setting it here to recover the number would be fitting to the scenario rather
+than to the domain.
+
+---
+
 ## Not a formula error, and fixed anyway
 
 The engine leaked memory without bound, which is not a mathematical defect and
@@ -650,7 +719,7 @@ them. Quantifying over a superset of the reachable values is both the cheaper
 encoding and the stronger statement, which is the one generalisable technique
 to come out of this exercise.
 
-Of the nine findings, exactly one — the existence update — was found by a
+Of the eleven findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
 the formula is supposed to compute and comparing. Model checking earned its
 place by settling things reading could not, in both directions. It proved the
