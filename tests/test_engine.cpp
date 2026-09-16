@@ -191,6 +191,14 @@ void test_every_profile_runs() {
             CHECK(std::isfinite(t.position.x) && std::isfinite(t.position.y));
             CHECK(std::isfinite(t.threat.mean));
             CHECK(t.existence >= 0.0 && t.existence <= 1.0);
+            // The forecast recursion runs per regime over a horizon, on
+            // profiles whose scan periods span 0.04 s to four hours, so it is
+            // worth asking all thirteen whether it stays a number.
+            for (const ForecastStep& f : t.forecast) {
+                CHECK(std::isfinite(f.position.x) && std::isfinite(f.position.y));
+                CHECK(std::isfinite(f.uncertainty_m));
+                CHECK(f.uncertainty_m >= cfg.profile.pos_noise_m - 1e-9);
+            }
         }
     }
     std::printf("  all %zu profiles formed, localised and held a track\n",

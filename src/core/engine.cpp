@@ -164,14 +164,12 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         if (tr.threat.priority == Priority::IMMEDIATE ||
             tr.threat.priority == Priority::HIGH) {
             // `velocity()` is metres per SECOND and each step is stamped one
-            // scan period into the future, so the step has to be a scan period
-            // of travel. It used to be `p += v`, one second of it, which is
-            // right only where the scan period happens to be one second - one
-            // of the ten shipped profiles. Everywhere else the forecast was out
-            // by the scan period: a vessel at 9.5 m/s predicted an hour ahead
-            // was placed 9.5 m from where it started instead of 34 km, and at
-            // the other end a 25 fps profile threw the prediction 25 times too
-            // far.
+            // scan period into the future. This used to be `p += v`, one
+            // second of travel however long a scan was - right on one of the
+            // thirteen profiles, and out by the scan period on the rest: a
+            // vessel at 9.5 m/s predicted an hour ahead was placed 9.5 m from
+            // where it started instead of 34 km. Fixing the units left the
+            // model wrong, which is what the rest of this block is about.
             const Vec2 v = t->velocity();
             const Real dt = config_->profile.scan_dt_s;
             const Vec2 p0 = t->position();
