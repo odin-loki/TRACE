@@ -288,9 +288,9 @@ the false-alarm rate rises eightfold.
 Both of the asserted quantities can be learned instead, from evidence the
 engine already has. `--adaptive-noise` learns measurement noise from the
 innovations; `--adaptive-pd` learns detection probability from how often a
-sensor reports the tracks it has been feeding. On this scenario they take
-recovery from 108.9% to 112.4% and 121.1% respectively, and to 122.1% together,
-while leaving clear conditions untouched.
+sensor reports the tracks it has been feeding. On this scenario, medians over
+seven seeds, they take recovery from 105.5% to 108.6% and 118.7% respectively,
+and to 122.2% together, while leaving clear conditions untouched.
 
 Every scenario now hands the engine a coverage map built from its own sensors'
 `covers()`, so a sensor is charged with a miss only where it was looking — which

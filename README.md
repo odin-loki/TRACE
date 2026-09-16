@@ -266,7 +266,7 @@ about the world: one camera reports an entity once per scan, but two overlapping
 cameras both report it, and that second report is corroboration rather than a
 second entity. Enforcing exclusivity globally left every corroborating report to
 found a duplicate track — 2.08 ghost tracks per scan in the overlapping-camera
-scenario, now 0.12.
+scenario, 0.12 once it was fixed and 0.08 at this head.
 
 ---
 
@@ -387,7 +387,7 @@ decayed.
 - **The two sensor estimates ship off.** `meas_noise_var` and `p_detection` can
   both be learned from evidence the engine already has (`adaptive_meas_noise`,
   `adaptive_p_detection`). On the scenario where conditions change under a
-  fixed profile they take recovery from 108.9% to 122.1%; elsewhere they are
+  fixed profile they take recovery from 105.5% to 122.2%; elsewhere they are
   neutral or slightly negative. Both trades are measured in
   docs/VALIDATION.md rather than assumed.
 - **Sensor coverage is optional.** Given `EngineConfig::coverage`, a miss is

@@ -247,9 +247,12 @@ detection from each sensor, and existence is updated once per scan however many
 sensors reported it — counting each separately would make an entity watched by
 four cameras four times as certain as the same entity watched by one.
 
-Effect: transit-hub (overlapping ceiling cameras) ghost tracks fell from 2.08
-to **0.12** per scan; the behaviour-space scenario from 10.95 to 4.10; evader
-identity switches from 8 to **0**.
+Effect, measured either side of this change: transit-hub (overlapping ceiling
+cameras) ghost tracks fell from 2.08 to **0.12** per scan; the behaviour-space
+scenario from 10.95 to 4.10; evader identity switches from 8 to **0**. At the
+current head, medians over twelve seeds, those three read 0.08 ghosts/scan,
+0.10 ghosts/scan and 2 identity switches - the pair above is kept as it was
+taken, so that it measures one change rather than everything since.
 
 ## 14. The possibility/probability mismatch could only ever fire
 

@@ -320,11 +320,16 @@ followed — `metro` to 20.6% / 74.4% / 59 / 260 and `weather` to 80.1% /
 105.0% / 23 / 10 — so the "after" column above is the clutter term's effect in
 isolation rather than the current head, which is what it is there to measure.
 The head's own means, medians over twelve seeds, are 76.0% detection and 108.3%
-recovery. With both sensor estimates
-switched on (`--adaptive-noise`) the mean recovery goes 106.6% → 107.0% and
-`coordinated-evasion` improves sharply — 167 → 101 identity switches and 428 →
-251 ghosts — because a learned `p_D` and the clutter term are the two halves of
-the same reading of a miss.
+recovery.
+
+Measured alongside the A/B above, and so on the same code rather than on this
+head: with both sensor estimates switched on the mean recovery went 106.6% →
+107.0% and `coordinated-evasion` improved sharply — 167 → 101 identity switches
+and 428 → 251 ghosts — because a learned `p_D` and the clutter term are the two
+halves of the same reading of a miss. `weather`, the scenario built to need
+them, is re-measured at this head in
+[SIMULATIONS.md](SIMULATIONS.md): 105.5% recovery with neither, 108.6% with
+`--adaptive-noise`, 118.7% with `--adaptive-pd`, 122.2% with both.
 
 The trade is real and it is not free: **+2.3 points of mean recovery and +1.1
 of mean detection rate, for 7 more identity switches and 6 more ghosts per
@@ -956,24 +961,25 @@ strictly separate from anything the engine can see.
 
 Medians over twelve seeds, with the spread, because a single run of any of
 these is a draw from a high-variance process and reporting one is how a
-document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
+document ends up describing its luckiest seed. `anpr-corridor` alone spans
+100–123%.
 
 | Scenario | Sensors produced | TRACE reported | Recovery | Spread over 12 seeds |
 |---|---|---|---|---|
-| evader | 70.1% | 94.8% | **134%** | 130 – 138% |
+| evader | 70.1% | 94.5% | **134%** | 131 – 138% |
+| warehouse | 48.0% | 57.8% | **121%** | 103 – 127% |
 | blackout | 66.6% | 80.2% | **120%** | 118 – 122% |
-| transit-hub | 81.3% | 97.5% | **120%** | 118 – 121% |
-| spoofing | 84.8% | 98.0% | **116%** | 112 – 118% |
-| warehouse | 48.0% | 53.8% | **113%** | 102 – 131% |
-| coordinated-evasion | 88.1% | 96.3% | **109%** | 108 – 113% |
-| anpr-corridor | 19.9% | 21.4% | **108%** | 94 – 123% |
+| transit-hub | 81.3% | 97.6% | **120%** | 118 – 121% |
+| spoofing | 84.8% | 98.1% | **116%** | 112 – 118% |
+| coordinated-evasion | 88.1% | 96.8% | **110%** | 109 – 113% |
 | decoy-split | 92.0% | 98.8% | **107%** | 106 – 109% |
-| mule-network | 91.8% | 98.3% | **107%** | 106 – 108% |
-| weather | 77.2% | 80.9% | **105%** | 103 – 107% |
-| dark-vessel | 76.0% | 77.2% | **102%** | 96 – 105% |
-| sensor-drift | 98.5% | 97.4% | 99% | 98 – 100% |
-| wildlife | 46.0% | 41.7% | 90% | 71 – 100% |
-| metro | 28.0% | 21.2% | 75% | 71 – 79% |
+| mule-network | 91.8% | 98.4% | **107%** | 106 – 108% |
+| weather | 77.2% | 80.7% | **104%** | 103 – 106% |
+| anpr-corridor | 19.9% | 21.0% | **104%** | 100 – 123% |
+| dark-vessel | 76.0% | 78.2% | **102%** | 98 – 106% |
+| sensor-drift | 98.5% | 97.5% | 99% | 98 – 100% |
+| wildlife | 46.0% | 43.9% | 98% | 90 – 103% |
+| metro | 28.0% | 20.9% | 74% | 72 – 80% |
 
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
@@ -985,7 +991,7 @@ there are almost no gaps left to coast through and 99% is close to the ceiling
 of what is available. `wildlife` has four animals reporting every four hours,
 and `metro` sees an entity in roughly one scan in four: below about a third of
 scans there is not enough of a track to coast from, and both sit under 100%
-with a wide spread — `wildlife` spans 71–100% over these twelve seeds, which is
+with a wide spread — `wildlife` spans 90–103% over these twelve seeds, which is
 a reminder of how little a single run of it is worth.
 
 These numbers are re-measured at the current head and several moved from the
@@ -994,7 +1000,7 @@ existence update's clutter term and the pattern-of-life correction both change
 how long a sparsely-sensed track survives. Nothing here is a single run: all
 fourteen are medians over the same twelve seeds, `--seed 1` through `--seed 12`.
 
-**`metro` at 84% is the one real shortfall in the suite**, and unlike
+**`metro` at 74% is the one real shortfall in the suite**, and unlike
 `dark-vessel`'s former 70% it is not an artefact. Position is observed only at
 turnstiles and is identical for two travellers standing at one, so the two cues
 that carry almost every other scenario — where something is, and how far it is
@@ -1012,10 +1018,11 @@ failure. The same applies to `warehouse` and `wildlife`.
 One of them measures the same thing twice under different conditions.
 `weather` degrades its sensors mid-run without telling the engine — detection
 probability from 0.90 to 0.30, position error from 3 m to 12 m — and the engine
-recovers 109% of what the sensors produce in the clear and 103% in fog. The
-tracker's grip barely moves; what it loses is the margin coasting gave it,
-because a coasted position is only as good as a velocity measured through four
-times the noise.
+recovers 110% of what the sensors produce in the clear and 87% in fog, medians
+over twelve seeds, the fog phase ranging 78–94%. What it loses is not its grip
+but the margin coasting gave it: a coasted position is only as good as the
+velocity behind it, and in fog that velocity is measured through four times the
+noise from a third as many detections.
 
 ### The shortfall that was not one
 
