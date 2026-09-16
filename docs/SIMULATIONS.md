@@ -62,10 +62,12 @@ Every knob is exposed because the interesting behaviour is at the edges: raise
 `--swap`, drop `--pd`, disable more panels, and watch where it breaks.
 
 **Typical result** (15×9, 3×3 panels, 1 blind, 3 travellers, 60 scans):
-detection 80% — **117% of what the cameras actually produced** — mean position
-error 1.5 m, **0 identity switches**, **0 ghost tracks**, 0.65 ms median
-latency. At 21×11 with 12 panels and 400 scans it holds 78% detection and five
-identity switches across three travellers.
+detection 79% — **116% of what the cameras actually produced** — mean position
+error 1.4 m, **0 identity switches**, one ghost track across the whole run,
+0.48 ms median latency. At 21×11 with 12 panels and 400 scans it holds 79%
+detection, four identity switches across three travellers and 0.02
+ghosts/scan; at the defaults (21×11, 4×3 panels, 2 blind, 120 scans) 76%
+detection, 118% recovery, 1.6 m error and one switch.
 
 ---
 

@@ -228,7 +228,7 @@ prevent.
 **Fix:** the on-network decision is made once, for the whole cloud, from its
 weighted mean. Whether an entity is on a road is a fact about the entity, not
 about each Monte-Carlo sample. Measured over 30 coasting scans: unconstrained
-lateral spread 2,481 m, constrained 0 m.
+lateral spread 2,480 m, constrained 0 m.
 
 ## 13. Association exclusivity was global, not per sensor
 
@@ -897,9 +897,9 @@ Stated plainly, because the simulations make them measurable:
 
 - **Appearance is implemented but does not help on MOT.** The mechanism works
   where descriptors are discriminative — six entities huddling then dispersing
-  lose 6/6 identities without it and 3/6 with it. On MOT it delivers nothing,
-  and a perfect *oracle* descriptor delivers nothing either, because 89% of the
-  MOTA penalty there is missed detections. The earlier claim in this file that
+  lose 5.6 of 6 identities without it and 3.0 of 6 with it, over seven seeds.
+  On MOT it delivers nothing, and a perfect *oracle* descriptor delivers
+  nothing either, because 88% of the MOTA penalty there is missed detections. The earlier claim in this file that
   an appearance cue was "the obvious next step" was wrong, and the measurement
   that disproved it is in [VALIDATION.md](VALIDATION.md).
 - **The velocity estimate needs `speed × heading-hold ≫ position noise`.**

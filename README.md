@@ -102,10 +102,11 @@ default, so here is the exact invocation:
 ./trace_maze --width 15 --height 9 --panels 3x3 --blind 1 --travellers 3 --scans 60
 ```
 
-80% detection — **117% of what the cameras actually produced** — 1.5 m mean
-error, **0 identity switches**, **0 ghost tracks**, 0.56 ms median scan latency
-on one core. The defaults (21×11, 4×3 panels, 2 blind, 120 scans) are a harder
-problem and give 76% detection, 117% recovery, 1.6 m error and 1 switch.
+79% detection — **116% of what the cameras actually produced** — 1.4 m mean
+error, **0 identity switches**, one ghost track in the whole run, 0.48 ms
+median scan latency on one core. The defaults (21×11, 4×3 panels, 2 blind, 120
+scans) are a harder problem and give 76% detection, 118% recovery, 1.6 m error
+and 1 switch.
 
 ---
 
@@ -132,13 +133,14 @@ docs/VALIDATION.md](docs/VALIDATION.md).
 
 MOT20 scoring above MOT17 is not the expected direction, and it is the
 detections rather than the tracker: MOT20's are uniformly good where MOT17's
-include DPM. Density costs latency far more than accuracy — 78 ms/frame at 226
+include DPM. Density costs latency far more than accuracy — 83 ms/frame at 226
 people per frame, against 5.7 for MOT17.
 
 TRACE supports appearance descriptors but they are **switched off** on MOT, and
 that is a measurement rather than an omission: a *perfect* oracle descriptor
-moves identity switches by 2.6% and MOTA not at all, because 89% of the MOTA
-penalty there is missed detections, capped by the detector.
+takes two identity switches off fifty-nine on MOT17-02-FRCNN and moves MOTA not
+at all, because 88% of the MOTA penalty across the benchmark is missed
+detections, capped by the detector.
 
 Where descriptors are discriminative the same mechanism is decisive. In the
 `decoy-split` scenario — a subject hands off to a lookalike who then leaves
@@ -231,7 +233,7 @@ right for a person in a plaza and wrong for a vehicle between two ANPR readers.
 An optional `MotionConstraint` projects the particle cloud onto a road, rail or
 corridor network after each prediction step, leaving existence, association and
 behaviour detection untouched. Over 30 coasting scans an unconstrained cloud
-spreads 2,481 m sideways; a constrained one stays on the carriageway.
+spreads 2,480 m sideways; a constrained one stays on the carriageway.
 
 ```cpp
 cfg.motion_constraint = std::make_shared<RoadNetwork>(

@@ -840,31 +840,33 @@ alone changes nothing — it selects a descriptor the association never consults
 and reproduces the `none` row exactly. The weight has to be given explicitly
 for the mechanism to run at all:
 
-| Descriptor on MOT17-02-FRCNN | MOTA | Identity switches |
-|---|---|---|
-| `--appearance none` | **43.2%** | 37 |
-| `--appearance oracle` (profile weight, 0.0) | **43.2%** | 37 |
-| `--appearance oracle --appearance-weight 0.15` | 42.9% | 34 |
-| `--appearance oracle --appearance-weight 0.35` | 42.8% | **27** |
+| Descriptor on MOT17-02-FRCNN | MOTA | MOTP | Identity switches |
+|---|---|---|---|
+| `--appearance none` | **42.3%** | 22.6 px | 59 |
+| `--appearance oracle` (profile weight, 0.0) | **42.3%** | 22.6 px | 59 |
+| `--appearance oracle --appearance-weight 0.15` | **42.3%** | **20.1 px** | 61 |
+| `--appearance oracle --appearance-weight 0.35` | **42.3%** | **20.1 px** | **57** |
 
-A *perfect* descriptor, handed the true identity of every detection, removes 10
-identity switches out of 37 — and **costs** four tenths of a point of MOTA doing
-it, because the switches it prevents are worth less than the associations it
-perturbs. No reacquisition window or dormancy setting changed that.
+A *perfect* descriptor, handed the true identity of every detection, takes two
+identity switches off fifty-nine at the higher weight and **adds** two at the
+lower, and moves MOTA by nothing at either. It does buy 2.5 px of MOTP, which
+is the honest positive result here and is not what appearance was added for.
+No reacquisition window or dormancy setting changed any of it.
 
 The arithmetic explains it, and explains it more starkly than before the
 identity-switch rule was corrected. On MOT17-02-FRCNN, with 18,581
-ground-truth boxes and 43.2% MOTA, the penalty decomposes as:
+ground-truth boxes, 43.7% recall, 97.5% precision and 42.3% MOTA, the penalty
+decomposes as:
 
 | Component | Count | Share of penalty |
 |---|---|---|
-| Missed detections | ~10,460 | **99.1%** |
-| False positives | ~56 | 0.5% |
-| Identity switches | 37 | **0.4%** |
+| Missed detections | ~10,460 | **97.5%** |
+| False positives | ~210 | 1.9% |
+| Identity switches | 59 | **0.6%** |
 
 Missed detections are capped by the detector — which TRACE already exceeds by
-coasting — so appearance can address four parts in a thousand of the penalty.
-Eliminating *every* identity switch would be worth 0.2 MOTA points. The old
+coasting — so appearance can address six parts in a thousand of the penalty.
+Eliminating *every* identity switch would be worth 0.3 MOTA points. The old
 version of this table put identity switches at 9.3% of the penalty and the
 conclusion was already that appearance was not worth it; with the scorer
 corrected the case is an order of magnitude stronger. And the
@@ -887,7 +889,7 @@ who then leaves along the subject's original heading at the subject's speed.
 
 A *modest* descriptor closes a gap that a *perfect* one could not touch on MOT,
 and the reason is the whole lesson: a mechanism is worth what the failure mode
-it addresses is worth. MOT's penalty is 89% missed detections, which appearance
+it addresses is worth. MOT's penalty is 88% missed detections, which appearance
 cannot help. `decoy-split`'s single error is a confusion, which is the only
 thing appearance addresses.
 
@@ -898,8 +900,8 @@ Mean over seven seeds, because a single run of this is noisy:
 
 | | identities lost |
 |---|---|
-| without appearance | 5.7 of 6 |
-| with appearance | **2.7 of 6** |
+| without appearance | 5.6 of 6 |
+| with appearance | **3.0 of 6** |
 
 So appearance is implemented, tested and available, and is switched **off** in
 the MOT profile — because it was measured there rather than assumed. An earlier
