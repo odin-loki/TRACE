@@ -155,12 +155,27 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
             const Vec2 v = t->velocity();
             const Real dt = config_.profile.scan_dt_s;
             Vec2 p = t->position();
-            const Real unc0 = t->position_uncertainty();
+            // Floored at the sensor's own noise. `position_uncertainty()` is
+            // sqrt(trace(P)) over the particle cloud, and a cloud that has
+            // collapsed - every particle agreeing, which happens on a long run
+            // of tight detections - returns zero. Multiplying zero by
+            // sqrt(k+1) is still zero, so a forecast six steps out went out
+            // claiming perfect certainty about where the entity would be. No
+            // estimate is better than the measurement that fed it.
+            const Real unc0 =
+                std::max(t->position_uncertainty(), config_.profile.pos_noise_m);
             for (int k = 1; k <= config_.forecast_horizon; ++k) {
                 p += v * dt;
                 tr.forecast.push_back(ForecastStep{
                     timestamp + k * dt, p,
-                    // Uncertainty grows as sqrt(time) under a diffusion model.
+                    // Growing as sqrt(elapsed) is the right SHAPE for a
+                    // diffusion, but the coefficient here is the current
+                    // uncertainty rather than the motion model's process
+                    // noise, so this is an order-of-magnitude indication and
+                    // not a calibrated interval. Saying so rather than
+                    // implying otherwise; deriving it from the MOU constants
+                    // is a change with a number attached and has not been
+                    // made here.
                     unc0 * std::sqrt(static_cast<Real>(k) + 1.0)});
             }
         }
@@ -255,12 +270,7 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     report.clutter_rate = pmbm_.clutter_rate();
     report.coverage_gap = pmbm_.coverage_gap();
 
-    const auto t_end = std::chrono::steady_clock::now();
-    report.latency_ms =
-        std::chrono::duration<Real, std::milli>(t_end - t_start).count();
     stages.emplace_back("report-assembly", lap());
-    report.stage_ms = std::move(stages);
-    total_latency_ms_ += report.latency_ms;
 
     // Retire per-track state for identities the manager has let go. Track ids
     // are never reused, so anything outside this set can never be needed
@@ -277,6 +287,18 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         escalator_.forget(live);
         for (auto& d : detectors_) d->forget(live);
     }
+
+    // Stamped HERE, after the retirement sweep, because the sweep is part of
+    // what one scan costs. It used to be stamped before it, so every latency
+    // this engine has ever reported excluded a per-scan pass over four maps
+    // plus every detector - work the caller pays for whether or not it is
+    // counted. The history copy below is excluded deliberately: it is this
+    // class's own bookkeeping rather than the caller's scan.
+    const auto t_end = std::chrono::steady_clock::now();
+    report.latency_ms =
+        std::chrono::duration<Real, std::milli>(t_end - t_start).count();
+    report.stage_ms = std::move(stages);
+    total_latency_ms_ += report.latency_ms;
 
     // Accumulate the session statistics before the report can age out, then
     // keep only a bounded tail. See Engine::history().

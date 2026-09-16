@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -351,6 +352,59 @@ void test_memory_plateaus_under_track_turnover() {
     CHECK(growth < 6 * 1024);
 }
 
+void test_forecast_never_claims_more_precision_than_the_sensor() {
+    // A forecast's uncertainty was `position_uncertainty() * sqrt(k+1)`, and
+    // `position_uncertainty()` is sqrt(trace(P)) over the particle cloud - a
+    // quantity the filter is free to drive below the noise of the sensor that
+    // fed it, because the cloud contracts on agreement between successive
+    // detections rather than on the accuracy of any one of them.
+    //
+    // It does. Fed a perfectly still entity at 25 fps, SportsPitch's cloud
+    // tightens to 4.6 cm against a `pos_noise_m` of 25 cm - so six steps out
+    // the engine published 12 cm of uncertainty for a position it could not
+    // know to better than a quarter of a metre. (Exact zero, which would make
+    // every waypoint a claim of perfect certainty, was NOT reachable in any
+    // shipped profile; the floor is there for the reachable case.)
+    EngineConfig cfg;
+    cfg.profile = SportsPitch();
+    cfg.area = Area{-500.0, 500.0, -500.0, 500.0};
+    cfg.seed = 5;
+    // A forecast is only produced for a track the threat scorer rates HIGH or
+    // IMMEDIATE - "forecast only what warrants the compute" - so the entity has
+    // to be worth forecasting before any of this is reachable. Sitting it on a
+    // high-value location is the cheapest way to get there.
+    cfg.high_value_locations = {Vec2{0.0, 0.0}};
+    Engine engine(cfg);
+
+    const Real dt = cfg.profile.scan_dt_s;
+    Real tightest_track = std::numeric_limits<Real>::infinity();
+    Real tightest_forecast = std::numeric_limits<Real>::infinity();
+    int steps_seen = 0;
+    for (int s = 0; s < 400; ++s) {
+        const ScanReport r = engine.ingest(one("s" + std::to_string(s),
+                                               static_cast<Real>(s) * dt,
+                                               Vec2{0.0, 0.0}, 0.99),
+                                           static_cast<Real>(s) * dt);
+        for (const auto& tr : r.targets) {
+            tightest_track = std::min(tightest_track, tr.position_uncertainty_m);
+            for (const ForecastStep& f : tr.forecast) {
+                tightest_forecast = std::min(tightest_forecast, f.uncertainty_m);
+                ++steps_seen;
+            }
+        }
+    }
+    std::printf("  forecast floor: cloud reached %.4f m, forecast never below "
+                "%.4f m, pos_noise %.3f m (%d steps)\n",
+                tightest_track, tightest_forecast, cfg.profile.pos_noise_m,
+                steps_seen);
+
+    CHECK(steps_seen > 0);
+    // The setup has to actually bite, or this test proves nothing.
+    CHECK(tightest_track < cfg.profile.pos_noise_m);
+    // And the forecast must not inherit it.
+    CHECK(tightest_forecast >= cfg.profile.pos_noise_m - 1e-9);
+}
+
 void test_forecast_advances_a_scan_period_per_step() {
     // A forecast step stamped one scan period into the future must place the
     // entity one scan period of travel away. `Track::velocity()` is metres per
@@ -403,6 +457,25 @@ void test_forecast_advances_a_scan_period_per_step() {
         const Real err = distance(f.position, expected);
         CHECK(err <= 1e-6 * (1.0 + std::abs(expected.x) + std::abs(expected.y)));
     }
+    // No forecast step may claim perfect certainty. `position_uncertainty()`
+    // is sqrt(trace(P)) over the particle cloud, and a cloud that has
+    // collapsed - which a long run of tight detections produces - returns
+    // zero; zero times sqrt(k+1) is still zero, so every waypoint went out
+    // saying the entity would be exactly there. No estimate is better than the
+    // measurement that fed it, so the floor is the profile's own position
+    // noise.
+    Real worst_unc = std::numeric_limits<Real>::infinity();
+    for (const ForecastStep& f : target->forecast) {
+        worst_unc = std::min(worst_unc, f.uncertainty_m);
+        CHECK(f.uncertainty_m >= cfg.profile.pos_noise_m - 1e-9);
+        CHECK(std::isfinite(f.uncertainty_m));
+    }
+    std::printf("  forecast: tightest uncertainty %.3f m against pos_noise %.3f m\n",
+                worst_unc, cfg.profile.pos_noise_m);
+    // And it must widen with the horizon, not stay flat.
+    CHECK(target->forecast.back().uncertainty_m >
+          target->forecast.front().uncertainty_m);
+
     const Real step_m = distance(target->forecast[0].position, target->position);
     const Real step_s = target->forecast[0].timestamp - last.timestamp;
     std::printf("  forecast: first step %.0f m over %.0f s (%.2f m/s reported)\n",
@@ -459,6 +532,7 @@ void test_fitted_velocity_is_metres_per_scan() {
 int main() {
     test_empty_scan_is_safe();
     test_possibility_mismatch_discriminates();
+    test_forecast_never_claims_more_precision_than_the_sensor();
     test_forecast_advances_a_scan_period_per_step();
     test_fitted_velocity_is_metres_per_scan();
     test_memory_plateaus_under_track_turnover();
