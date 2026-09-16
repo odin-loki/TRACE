@@ -75,6 +75,86 @@ jobs:
       - name: All scenarios
         run: ./build/src/apps/trace_sim --all --seed 7 > /dev/null
 
+  # The install path breaks in ways that are invisible from inside the tree:
+  # the export took the raw target name and offered `TRACE::trace_core` while
+  # every document says `TRACE::core`, and nothing in-tree could have noticed,
+  # because in-tree the ALIAS exists. The only test that finds that is
+  # consuming the package.
+  install-and-consume:
+    name: install, then consume from another project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-13
+          echo "CXX=g++-13" >> "$GITHUB_ENV"
+
+      # TRACE_NATIVE_ARCH=OFF, because that is what the README tells anyone
+      # installing this to do and CI should exercise the documented path.
+      - name: Configure, build and install
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTRACE_NATIVE_ARCH=OFF \
+            -DTRACE_BUILD_TESTS=OFF
+          cmake --build build
+          cmake --install build --prefix "$PWD/_install"
+
+      - name: The package carries what it must
+        run: |
+          set -e
+          test -f _install/lib/cmake/TRACE/TRACEConfig.cmake
+          test -f _install/lib/cmake/TRACE/TRACEConfigVersion.cmake
+          # AGPL section 4: the licence travels with the work. BSD-3: xsimd's
+          # notice is reproduced in the distribution.
+          test -f _install/share/doc/TRACE/LICENSE
+          test -f _install/share/doc/TRACE/LICENSE.xsimd
+          test -f _install/include/trace/core/engine.hpp
+          # The exported name is the documented one, not the raw target name.
+          grep -q 'TRACE::core' _install/lib/cmake/TRACE/TRACETargets.cmake
+
+      - name: Consume it from a separate project
+        run: |
+          mkdir -p /tmp/consumer && cd /tmp/consumer
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.24)
+          project(trace_consumer LANGUAGES CXX)
+          find_package(TRACE REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE TRACE::core)
+          EOF
+          cat > main.cpp <<'EOF'
+          #include "trace/backend/simd.hpp"
+          #include "trace/core/engine.hpp"
+          #include "trace/core/observation.hpp"
+          #include "trace/core/profile.hpp"
+          #include <cstdio>
+          int main() {
+              if (!trace::abi::compatible()) { std::puts("ABI mismatch"); return 1; }
+              trace::EngineConfig cfg;
+              cfg.profile = trace::CityCameraSurveillance();
+              trace::Engine eng(cfg);
+              int n = 0;
+              for (int s = 0; s < 40; ++s) {
+                  trace::Observation o;
+                  o.source_id = "cam";
+                  o.timestamp = s * cfg.profile.scan_dt_s;
+                  o.position = trace::Vec2{1.4 * s, 0.0};
+                  o.modality = trace::Modality::GEOINT;
+                  o.confidence = 0.95;
+                  n = eng.ingest({o}, s * cfg.profile.scan_dt_s).n_tracks;
+              }
+              std::printf("consumed: backend %s, %d track(s)\n",
+                          trace::simd::backend_name(), n);
+              return n > 0 ? 0 : 1;
+          }
+          EOF
+          cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/_install"
+          cmake --build build
+          ./build/consumer
+
   proofs:
     name: bounded model checking
     runs-on: ubuntu-latest
