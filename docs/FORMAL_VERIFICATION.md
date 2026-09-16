@@ -10,10 +10,10 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Fourteen did not, and are set out below with
-the evidence. All fourteen are now fixed.
+Ten derivations came back sound. Fifteen did not, and are set out below with
+the evidence. All fifteen are now fixed.
 
-**Five of the fourteen are in the scorer, not the engine** — the code that
+**Five of the fifteen are in the scorer, not the engine** — the code that
 decides which track corresponds to which real entity, what counts as the
 tracker changing its mind, which ground-truth identity is which, and what to do
 about the places the benchmark declined to annotate. Not one of them changes
@@ -21,8 +21,8 @@ how TRACE tracks anything. All five change what this repository was reporting
 about it, and together they move MOT17 MOTA from 48.2% to 54.3% without a
 single line of the engine being touched.
 
-That ratio is the most useful thing here: close to half the defects were in the
-instrument rather than in the thing being measured. Of the nine that were in
+That ratio is the most useful thing here: a third of the defects were in the
+instrument rather than in the thing being measured. Of the ten that were in
 the engine, five were errors of dimension — a probability compared against a
 density, metres per second integrated as metres per scan, a walking pace used
 as an aircraft's speed, a count of detections divided by a count of scans, a slope per sample
@@ -46,9 +46,23 @@ whose exact transition over a step `dt` is
     Var[eta] = sigma^2 * (1 - e^{-2 theta dt}) / (2 theta),
 
 and whose stationary variance is `sigma^2 / (2 theta)`. The code computes all
-three, so the discretisation is **exact rather than an Euler approximation** —
-it is right at any step size, which matters here because scan periods range
-from one second to an hour across the profiles.
+three, so the velocity discretisation is **exact rather than an Euler
+approximation** — it is right at any step size, which matters here because scan
+periods range from one second to an hour across the profiles.
+
+The position half is now exact too, and was not until this release; see defect
+15. Integrating the velocity above gives a Gaussian displacement with
+
+    E[X]          = v0 (1 - alpha) / theta
+    Var[X]        = (sigma/theta)^2 [ dt - 2(1-alpha)/theta + (1-alpha^2)/(2 theta) ]
+    Cov[X, eta]   = sigma^2 (1-alpha)^2 / (2 theta^2)
+
+and the code carries all three as per-regime constants, splitting the standard
+deviation into the part correlated with the velocity draw and an independent
+remainder so that one pair of standard normals per axis serves both halves of
+the step. `tests/test_particle_filter` checks the four quantities against
+moments obtained by integrating the process's own moment ODEs under RK4, which
+shares no algebra with the closed forms above.
 
 The three constants are not independent. They must satisfy
 
@@ -759,6 +773,55 @@ so only that was fixed — a modelling change is the engine owner's to make.
 
 ---
 
+### 15. The position step was a trapezoid over an exact velocity step — **fixed**
+
+`src/core/particle_filter.cpp`. The velocity half used the exact OU transition
+above; the position half then integrated it with
+
+    x += (v + v') / 2 * dt
+
+which is the trapezoid rule applied to a process whose exact integral is known.
+The two agree to second order in `theta dt` and part company after that, always
+in the same direction. Writing `u = theta dt`, the ratio of the trapezoid's
+mean displacement to the correct one is
+
+    [(1 + e^-u) / 2] / [(1 - e^-u) / u]
+
+which is 1.08 at u = 1, 1.31 at u = 2 and 5.00 at u = 10. As `u` grows the
+exact answer tends to `v0/theta` — one relaxation length, and then the entity
+has forgotten its velocity — while the trapezoid keeps half a scan of the
+initial velocity for ever.
+
+`u` is the scan period over the regime's heading-hold time, so this is not a
+corner of the parameter space. Ten regime/profile pairs among the thirteen
+shipped profiles sit at `u >= 1`:
+
+    OrganisedCrimeNetwork  stationary    10.0    +400%
+    OrganisedCrimeNetwork  foot           3.3     +79%
+    OrganisedCrimeNetwork  vehicle        2.5     +47%
+    UrbanHUMINT            stationary     2.0     +31%
+    CounterTerrorism       stationary     2.0     +31%
+    FugitiveTracking       stationary     2.0     +31%
+    WildlifeTelemetry      fleeing        2.0     +31%
+    Maritime               anchored       1.0      +8%
+    VehicleConvoy          stopped        1.0      +8%
+    BorderPatrol           lying_up       1.0      +8%
+
+The consequence is a coasting track that runs too far, and an uncertainty
+derived from it that opens too wide. Replacing it with the exact integral left
+MOT17 MOTA at 53.0% and took identity switches from 2,656 to 2,442; it costs
+`anpr-corridor` about three points of recovery, which is a sparse scenario that
+had been benefiting from the over-prediction.
+
+The noise was wrong in the same place and by less. The trapezoid's position
+noise was `sigma_v dt / 2` times the same standard normal the velocity step
+used, plus an ad-hoc jitter — perfectly correlated with the velocity draw where
+the true displacement is only partly so, and about 18% too tight on
+`UrbanHUMINT`'s foot regime (36 m against 44 m). Both are now taken from the
+closed forms above.
+
+---
+
 ## Checked and not reproduced
 
 An adversarial audit run alongside this work raised, at high severity, that the
@@ -796,6 +859,17 @@ individual claim.
 ---
 
 ## Not a formula error, and fixed anyway
+
+Source credibility was multiplied into an observation's confidence before it
+reached the possibilistic existence, so `pi_r` — defined as the normalised
+quality of a track's evidence — silently became quality times trust. Both are
+in [0,1] and the product is a perfectly well-formed number; nothing about the
+formula is wrong. What is wrong is that credibility is a *relative* judgement
+whose mid-range is normal for a healthy sensor, so the quantity stopped meaning
+what its own documentation said, and `possibility_mismatch` fired on 476 of 496
+real-entity scans in the scenario built to test it. Defect 38 in
+[PORTING_NOTES.md](PORTING_NOTES.md) has the measurement. It is recorded here
+because a formula check would not have caught it and nothing else was looking.
 
 The engine leaked memory without bound, which is not a mathematical defect and
 would not have been found by any of the work above. It came out of an
