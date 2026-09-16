@@ -750,6 +750,42 @@ so only that was fixed — a modelling change is the engine owner's to make.
 
 ---
 
+## Checked and not reproduced
+
+An adversarial audit run alongside this work raised, at high severity, that the
+pattern-of-life anomaly baseline is measured **in sample**: `em_fit` calibrates
+`baseline_nll_` by scoring the most recent forty sightings under the mixture it
+has just fitted to those same sightings, so — the argument went — a freshly
+fitted entity would read as anomalous.
+
+The methodology point is real. In-sample likelihood is optimistic by
+construction, and a baseline calibrated that way is too low, which makes
+genuinely typical new behaviour look worse than the baseline implies.
+
+The magnitude is not. Fitting on everything and scoring the tail, against
+fitting without the tail and scoring the same points:
+
+| sightings | tail | in-sample | held-out | gap |
+|---|---|---|---|---|
+| 108 | 40 | 0.505 | 0.524 | +0.019 |
+| 270 | 40 | 0.500 | 0.504 | +0.004 |
+
+Two per cent of the score's range at a hundred sightings and under half a per
+cent at three hundred, with both sitting at 0.50 — the middle of the range, not
+the anomalous end. Forty points are a small fraction of the window and the
+mixture has few parameters in three dimensions, so it does not overfit them
+specifically.
+
+So this is left alone. Restructuring the fit to hold out a calibration set
+would trade a measured two per cent for a model that no longer sees the most
+recent behaviour, which is the thing the baseline exists to track. Recorded
+here because a finding that does not survive measurement is worth the same
+write-up as one that does — and because the audit that raised it also produced
+several of the defects above, so its hit rate is the useful number, not any
+individual claim.
+
+---
+
 ## Not a formula error, and fixed anyway
 
 The engine leaked memory without bound, which is not a mathematical defect and
