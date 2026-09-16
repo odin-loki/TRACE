@@ -163,10 +163,13 @@ commit that made it.
 
 ## What is still open
 
-- `PARALLEL_ROUTE` fires in none of the fourteen scenarios. The distance
-  windows are fixed; the streak it requires is not reachable at the detection
-  rate of the scenario written to exercise it. See "What is still missing" in
-  [VALIDATION.md](VALIDATION.md).
+- `PARALLEL_ROUTE` fires, on five of thirteen seeds of `anpr-corridor`, and
+  one of those six events is on the target/tail pair the scenario built for it.
+  The audit reported it as firing in none of the fourteen scenarios; that was
+  one seed. The distance windows are fixed. What remains is that a
+  single-carriageway corridor is the wrong place to demonstrate "matched
+  heading at a fixed offset", because everything there matches heading. See
+  "What is still missing" in [VALIDATION.md](VALIDATION.md).
 - The forecast's uncertainty grows as `sqrt(elapsed)` with a coefficient that
   is the current uncertainty rather than the motion model's process noise. The
   shape is right; the scale is an indication, and now says so.

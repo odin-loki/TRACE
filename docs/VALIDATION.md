@@ -1151,22 +1151,34 @@ The tool's defaults are what every table here reports; `--min-score` and
 - **Detection-rate estimates are conditioned on track survival**, so they are
   biased upward wherever a missed track simply dies. Accurate where something
   else keeps tracks alive.
-- **`PARALLEL_ROUTE` fires in none of the fourteen scenarios.** The detector
-  wants `brush_pass_m < separation <= parallel_route_m` and a matched heading,
-  held for `parallel_scans` scans in a row. Two profiles could not satisfy the
-  distance window at all and are fixed — `VehicleConvoy` had the two bounds
-  the wrong way round, at 20 and 15, so the window was empty; `WarehouseAssets`
-  set `brush_pass_m` to 1.5 m and left `parallel_route_m` inheriting 80 m from
-  the urban preset, in a facility whose `coloc_dist_m` is 4 m. Neither was what
-  kept the detector quiet.
+- **`PARALLEL_ROUTE` fires, and almost never on the tail it was built for.**
+  The detector wants `brush_pass_m < separation <= parallel_route_m` and a
+  matched heading, held for `parallel_scans` scans in a row. Two profiles could
+  not satisfy the distance window at all and are fixed — `VehicleConvoy` had
+  the two bounds the wrong way round, at 20 and 15, so the window was empty;
+  `WarehouseAssets` set `brush_pass_m` to 1.5 m and left `parallel_route_m`
+  inheriting 80 m from the urban preset, in a facility whose `coloc_dist_m` is
+  4 m.
 
-  `anpr-corridor` exists to demonstrate it "on a genuine tail", overrides the
-  window to 15–60 m and the streak to 8, and raises nothing. Instrumented over
-  that scenario: 180 pair-scans evaluated, 102 with the heading cosine above
-  threshold, 38 satisfying all three conditions at once, and **the longest
-  unbroken run is 4** against the 8 it asks for. So the matching is real and
-  intermittent, and either the detector is stricter than a tail at a 15%
-  detection rate can satisfy or the simulated tail does not hold station well
-  enough to be one. That has not been established, and the threshold has
-  deliberately not been lowered to the observed maximum, which would be tuning
-  to the test rather than fixing anything.
+  This entry used to say the detector "fires in none of the fourteen
+  scenarios", on the strength of one seed. Over thirteen seeds of
+  `anpr-corridor`, which exists to demonstrate it on a genuine tail and
+  overrides the window to 15–60 m and the streak to 8, it raises **six events
+  on five seeds — and exactly one of the six is on the target/tail pair.** The
+  scenario's own report now separates the two counts, having previously
+  labelled every event "(tail)" without checking.
+
+  So the limitation is not that the detector is silent. It is that in a
+  single-carriageway corridor where every vehicle holds the same heading at a
+  similar speed, "matched heading at a fixed offset" is not a distinctive
+  signature, and the pairs that hold it longest are as often two items of
+  traffic, or two ghost tracks, as they are the tail. Instrumented over the
+  default seed: 217 pair-scans evaluated, 84 with the heading cosine above
+  threshold, 43 satisfying all three conditions at once, and the streaks that
+  break do so on **separation**, not heading — the cosine sits between 0.96 and
+  1.00 throughout while the separation swings from 4 m to 89 m as two sparsely
+  updated estimates drift apart between readers.
+
+  The threshold has deliberately not been lowered, which would be tuning to the
+  test. What the scenario shows is that this detector needs a domain where
+  headings differ — which is most domains, and not a corridor.

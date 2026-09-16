@@ -317,13 +317,37 @@ void run_anpr_corridor(std::uint64_t seed, bool verbose) {
     }
     Engine eng(s.engine_config);
     int parallel_events = 0;
-    s.on_report = [&](const Scenario&, int, const ScanReport& r, const Metrics&) {
-        parallel_events += static_cast<int>(r.events_of_type("PARALLEL_ROUTE").size());
+    int parallel_on_the_tail = 0;
+    // Counted apart, because "PARALLEL_ROUTE fired" and "PARALLEL_ROUTE found
+    // the tail" are different claims and this scenario exists to support the
+    // second. The label used to assert it without checking: any two tracks
+    // holding formation counted, and at 6.9 ghost tracks per scan there are
+    // plenty of candidates that are not the tail.
+    s.on_report = [&](const Scenario&, int, const ScanReport& r,
+                      const Metrics& met) {
+        const auto target_it = met.current_assignment.find("target_vehicle");
+        const auto tail_it = met.current_assignment.find("tail_vehicle");
+        for (const auto* e : r.events_of_type("PARALLEL_ROUTE")) {
+            ++parallel_events;
+            if (target_it == met.current_assignment.end() ||
+                tail_it == met.current_assignment.end()) {
+                continue;
+            }
+            const auto names = [&](const std::string& id) {
+                return std::find(e->tracks.begin(), e->tracks.end(), id) !=
+                       e->tracks.end();
+            };
+            if (names(target_it->second) && names(tail_it->second)) {
+                ++parallel_on_the_tail;
+            }
+        }
     };
     const Metrics m = run(s, eng);
-    char note[128];
-    std::snprintf(note, sizeof(note), "PARALLEL_ROUTE (tail) events raised: %d",
-                  parallel_events);
+    char note[192];
+    std::snprintf(note, sizeof(note),
+                  "PARALLEL_ROUTE events raised: %d, of which on the target/tail "
+                  "pair: %d",
+                  parallel_events, parallel_on_the_tail);
     report("anpr-corridor", m, eng, note);
 }
 

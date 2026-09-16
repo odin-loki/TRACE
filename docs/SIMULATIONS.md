@@ -101,8 +101,12 @@ simulator defect, not physics. See [VALIDATION.md](VALIDATION.md).*
 ### 4. `anpr-corridor` — plate readers along a road, one vehicle tailing another
 Fifteen readers 400 m apart. Stresses sparse point observations, and uses a
 `RoadNetwork` motion constraint to confine tracks to the carriageway between
-readers, which is what makes the tail detectable at all — `PARALLEL_ROUTE`
-fires only with it.
+readers. This page used to add "which is what makes the tail detectable at all
+— `PARALLEL_ROUTE` fires only with it"; measured over thirteen seeds the
+detector raises six events with the constraint and six without, so that was
+not true. What the constraint does buy is in the table below and in the
+scenario's own `PARALLEL_ROUTE` line, which now separates events raised from
+events raised on the target/tail pair.
 
 Run it both ways to see what the constraint is worth. Medians over eight seeds:
 
