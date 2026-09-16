@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — high_mode_threshold (Otsu split) indexes safely.
- * Mirrors src/detectors/behaviour.cpp:41-75 statement for statement.
+ * Mirrors src/detectors/behaviour.cpp:44-78 statement for statement.
  *
  * The between-class variance maximised here is
  *     w0 * w1 * (mu1 - mu0)^2      with w1 = 1 - w0,

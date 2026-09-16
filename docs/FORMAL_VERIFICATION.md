@@ -36,7 +36,7 @@ than only of the ones that look suspicious.
 
 ### The Mixed Ornstein–Uhlenbeck discretisation
 
-`src/core/particle_filter.cpp:31-37`. Velocity follows
+`src/core/particle_filter.cpp:34-40`. Velocity follows
 
     dv = -theta v dt + sigma dW
 
@@ -64,7 +64,7 @@ IEEE-754. Not a defect.
 
 ### `log_sum_exp`
 
-`src/core/pmbm.cpp:39` and `src/core/pattern_of_life.cpp:16` (identical). The
+`src/core/pmbm.cpp:42` and `src/core/pattern_of_life.cpp:19` (identical). The
 hazard in any log-sum-exp is `log(0)`, which is `-inf` and poisons every
 downstream weight. Shifting by the maximum rules it out: the maximal element
 contributes `exp(0) = 1` exactly, so the accumulator is at least 1 and at most
@@ -77,7 +77,7 @@ Non-finite inputs are handled before the shift, so an all `-inf` vector returns
 
 ### The Otsu high-mode split
 
-`src/detectors/behaviour.cpp:41`. The criterion maximised is
+`src/detectors/behaviour.cpp:44`. The criterion maximised is
 
     w_lo * (1 - w_lo) * (mean_hi - mean_lo)^2
 
@@ -103,7 +103,7 @@ not right — see below.
 
 ### The clutter posterior
 
-`src/core/pmbm.cpp:54`. For `n_unassigned ~ Poisson(r)` with a `Gamma(3, 1)`
+`src/core/pmbm.cpp:57`. For `n_unassigned ~ Poisson(r)` with a `Gamma(3, 1)`
 prior on the rate, the posterior after `n` observations summing to `S` is
 `Gamma(3 + S, 1 + n)`, mean `(3 + S) / (1 + n)` — exactly what `rate()`
 returns. Windowed rather than cumulative, deliberately, so the estimate tracks
@@ -242,7 +242,7 @@ runs.
 
 ### 2. Betweenness was normalised to [0,2] — **fixed**
 
-`src/core/network.cpp:74`. Brandes' accumulation runs its outer loop over every
+`src/core/network.cpp:77`. Brandes' accumulation runs its outer loop over every
 source, so on an undirected graph each unordered pair `{s,t}` is counted twice,
 once from each end. The raw score has to be halved before it is divided by the
 `(n-1)(n-2)/2` unordered pairs a vertex could lie between. This divided by the
@@ -341,7 +341,7 @@ same scenario is within half a point.
 
 ### 4. Dempster's rule started from a mass vector summing to three — **fixed**
 
-`src/core/threat.cpp:118`. `fuse_credibility` combines evidence over
+`src/core/threat.cpp:121`. `fuse_credibility` combines evidence over
 `{H, not-H, Theta}`. The rule itself is written correctly. The accumulator it
 started from was `(1, 1, 1)`.
 
@@ -371,7 +371,7 @@ path. It had no tests; it has four now.
 
 ### 5. Collection tasking ranked against its own objective — **fixed**
 
-`src/core/network.cpp:243`. The comment says it points a sensor at "the track
+`src/core/network.cpp:247`. The comment says it points a sensor at "the track
 that matters most and is currently least well localised". The score was
 
     modality_weight * existence / uncertainty
@@ -395,7 +395,7 @@ reliability weight.
 
 ### 6. The adaptive noise estimator converged to a square root — **fixed**
 
-`src/core/pmbm.cpp:128`. `MeasurementNoiseEstimator` learns a multiplier on
+`src/core/pmbm.cpp:131`. `MeasurementNoiseEstimator` learns a multiplier on
 each source's assumed measurement **variance** from the normalised innovation
 squared its detections produce. The multiplier was set to `mean_nis / target`.
 

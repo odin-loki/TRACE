@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — maze / camera-grid simulation.
 //
 // A maze is a cheap stand-in for a real camera estate. It gives you exactly the

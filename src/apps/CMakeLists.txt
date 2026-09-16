@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 # Console applications. Each is a thin driver over TRACE::core.
 
 add_executable(trace_maze maze_main.cpp)

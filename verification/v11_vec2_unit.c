@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — Vec2::unit() is total on finite input.
- * Mirrors include/trace/core/types.hpp:38-41:
+ * Mirrors include/trace/core/types.hpp:41-44:
  *
  *     const Real n = norm();
  *     return n > 1e-12 ? Vec2{x / n, y / n} : Vec2{0.0, 0.0};
@@ -12,7 +15,7 @@
  * for a near-stationary input is NOT a unit vector, so `a.unit().dot(b.unit())`
  * is 0 for a stationary entity -- which reads as "perpendicular", not as "no
  * information". Callers must therefore test speed before testing heading, and
- * src/detectors/behaviour.cpp:95-97 does exactly that. The claim below records
+ * src/detectors/behaviour.cpp:97-107 does exactly that. The claim below records
  * the contract rather than asserting the return is always unit-length.
  *
  * Claims:

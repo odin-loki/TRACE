@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // The simulation layer is what every performance claim in this repository rests
 // on, so its own correctness matters: if the sensors leak truth, or the scoring
 // mis-assigns tracks, every number downstream is meaningless.

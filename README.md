@@ -352,6 +352,32 @@ decayed.
   against people needs that scaffolding built around this — deliberately not
   provided as a default.
 
-## License
+## Licence
 
-AGPL-3.0, inherited from the reference implementation.
+**AGPL-3.0-or-later** — `SPDX-License-Identifier: AGPL-3.0-or-later`. The full
+text is in [`LICENSE`](LICENSE); every first-party source file carries the SPDX
+tag. Copyright 2026 Odin Loch. The licence is inherited from the reference
+implementation under `reference/`, which is the same author's work.
+
+Two consequences worth stating plainly, because they are the ones people are
+surprised by:
+
+- **Section 13 applies to services, not just to shipped binaries.** If you
+  modify TRACE and let anyone interact with it over a network — a REST
+  endpoint, a gRPC service, a web console, an internal dashboard — you owe
+  those users the complete corresponding source of *your* modified version.
+  Running it unmodified triggers no obligation; nor does running it modified
+  for yourself, with nobody else interacting with it. Nothing shipped here
+  opens a socket — every target is a local console program or a library — so
+  the clause is about what you build on top, not about what you get.
+- **The copyleft reaches the whole combined work.** Linking `trace_core` into
+  a larger program makes that program a work based on TRACE. If you need to
+  ship it under other terms, ask the copyright holder; the AGPL does not
+  grant that by itself.
+
+Third-party components, and the separate terms on the evaluation data the
+`trace_mot` target consumes, are listed in
+[`THIRD-PARTY.md`](THIRD-PARTY.md). The short version: the one vendored
+dependency (xsimd) is BSD-3-Clause and compatible; the MOTChallenge
+annotations are **not** in this repository, are fetched on demand, and carry
+non-commercial terms of their own that bind you directly.

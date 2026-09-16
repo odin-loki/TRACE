@@ -1,5 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — the Bayesian existence update on a detection.
- * Mirrors src/core/pmbm.cpp:816-819:
+ * Mirrors the update as it read BEFORE the fix. The shipped code now lives at
+ * src/core/pmbm.cpp:861-881 and carries g(z); this harness keeps the defective
+ * form so the counterexample stays reproducible:
  *
  *     const Real L = profile_->p_detection;
  *     const Real r = tracks_[i]->existence();

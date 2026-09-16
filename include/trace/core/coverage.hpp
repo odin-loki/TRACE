@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — what each sensor can see, when the deployment knows.
 //
 // The engine is handed detections and nothing else, so it has to infer things

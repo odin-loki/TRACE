@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — what the missing likelihood costs, stated as a theorem.
- * Same update as v08 (src/core/pmbm.cpp:816-819), same profile ranges, but
- * here the assertion is expected to HOLD, and holding is the bad news.
+ * Same pre-fix update as v08 (shipped code now at src/core/pmbm.cpp:861-881)
+ * and the same profile ranges, but here the assertion is expected to HOLD,
+ * and holding is the bad news.
  *
  * The shipped profiles birth a track at r_birth = 0.45 and confirm it at
- * r_confirm = 0.55 (include/trace/core/profile.hpp:85-86). This proves that a
+ * r_confirm = 0.55 (include/trace/core/profile.hpp:88-89). This proves that a
  * single detection -- of any quality, at any distance from the prediction,
  * under any clutter density the estimator can produce -- takes a newborn
  * track from 0.45 to above 0.999.

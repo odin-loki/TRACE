@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // The filter is the load-bearing component: if its units, prediction or
 // resampling are wrong, everything above it degrades in ways that look like
 // detector bugs.

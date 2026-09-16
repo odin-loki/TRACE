@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // Guards the engine's cost profile.
 //
 // This exists because the profile was wrong in a way nobody would notice from

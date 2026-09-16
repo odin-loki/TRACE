@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — scalability benchmark.
 //
 // The engine's cost is dominated by three things that grow differently with the

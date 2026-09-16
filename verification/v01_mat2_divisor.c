@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property 1a — the singularity guard in Mat2::inverse.
- * include/trace/core/types.hpp:61-63, verbatim:
+ * include/trace/core/types.hpp:64-66, verbatim:
  *     Real d = aa * cc - b * b;
  *     if (std::abs(d) < 1e-15) d = (d < 0.0 ? -1e-15 : 1e-15);
  * Proven for an ARBITRARY d, which is stronger than deriving d from a,b,c:

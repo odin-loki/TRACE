@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // Appearance evidence exists for one situation: entities whose positions are
 // genuinely indistinguishable. These tests construct that situation, because
 // in anything less crowded position alone already settles it - which is itself

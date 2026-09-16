@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property 1b — does the singularity guard sanitise a NaN determinant?
  * The guard is `if (fabs(d) < 1e-15) d = ...`. A NaN compares false against
  * everything, so it takes the else branch untouched. This harness asserts the

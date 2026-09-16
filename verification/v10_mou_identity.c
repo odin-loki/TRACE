@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — the Mixed Ornstein-Uhlenbeck discretisation is self-consistent.
- * Mirrors src/core/particle_filter.cpp:31-37:
+ * Mirrors src/core/particle_filter.cpp:34-40:
  *
  *     c.alpha[k]   = exp(-theta * dt);
  *     c.sigma_v[k] = sigma * sqrt((1 - exp(-2*theta*dt)) / (2*theta));

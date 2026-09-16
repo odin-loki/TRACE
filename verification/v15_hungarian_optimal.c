@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — the matcher returns a MINIMUM-cost matching, at any shape.
- * Mirrors src/core/assignment.cpp:23-121, including the transpose in
+ * Mirrors src/core/assignment.cpp:26-142, including the transpose in
  * `hungarian()` that puts a tall matrix back inside `hungarian_le`'s n <= m
  * precondition.
  *
@@ -18,10 +21,10 @@
  *
  * Shape is 4 rows by 3 columns: TALL, which is the case that was wrong, and
  * the case every caller actually hits --
- *   - src/sim/scenario.cpp:58 and src/apps/mot_main.cpp:94,168 match truth
+ *   - src/sim/scenario.cpp:61 and src/apps/mot_main.cpp:175,274 match truth
  *     rows to track columns, so they are tall exactly when the tracker is
  *     under-reporting, which is the regime the metrics exist to measure;
- *   - src/core/pmbm.cpp:611 matches reappearing detections to dormant tracks,
+ *   - src/core/pmbm.cpp:637 matches reappearing detections to dormant tracks,
  *     so it is tall whenever more things reappear at once than went dormant.
  *
  * Size is 3 rows by 2 columns with costs in {0,1,2} plus the two forbidden

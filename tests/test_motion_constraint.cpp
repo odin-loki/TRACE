@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // A constrained motion model is only useful if it confines the estimate without
 // distorting it, and declines to confine things that are genuinely off-network.
 #include "trace/core/motion_constraint.hpp"

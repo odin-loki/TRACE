@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — betweenness_centrality's normalisation.
- * Mirrors src/core/network.cpp:18-78. The source ends with
+ * Mirrors src/core/network.cpp:21-81. The source ends with
  *
  *     // Normalise to [0,1] for an undirected graph.
  *     const Real denom = std::max(static_cast<Real>((n-1)*(n-2)) / 2.0, 1.0);
@@ -19,9 +22,9 @@
  * Run against the pre-fix source this harness FAILS on exactly that graph.
  *
  * The consequence was confined to reporting. Both consumers are scale-free --
- * the role classifier in src/detectors/behaviour.cpp:498-513 thresholds
+ * the role classifier in src/detectors/behaviour.cpp:501-516 thresholds
  * against the upper quartile of these same values, and the recurrence test at
- * src/core/network.cpp:186 asks only whether a score exceeds zero -- so a
+ * src/core/network.cpp:204 asks only whether a score exceeds zero -- so a
  * uniform factor cancelled in both. NetworkReport, which publishes the number,
  * was the one place it did not.
  */

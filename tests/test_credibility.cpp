@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // Per-source trust. Every test here exists because the original mechanism -
 // "does this source's report fit the track it was assigned to?" - is circular:
 // a sensor that has been steering a track fits it perfectly however wrong it

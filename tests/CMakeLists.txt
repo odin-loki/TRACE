@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 # Self-contained test binaries - no external framework, so the suite runs
 # anywhere the engine builds.
 

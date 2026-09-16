@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // End-to-end check on the tracking core: can it hold identity on moving
 // targets, in clutter, through missed detections?
 #include "trace/core/pmbm.hpp"

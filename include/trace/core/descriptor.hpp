@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — appearance descriptors.
 //
 // Kinematics alone cannot say which of two people who just crossed is which.

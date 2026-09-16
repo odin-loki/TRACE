@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 # Qt operator console. Built only when TRACE_WITH_QT is on.
 
 find_package(Qt6 6.4 COMPONENTS Widgets QUIET)

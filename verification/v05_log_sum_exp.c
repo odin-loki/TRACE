@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — log_sum_exp is numerically safe.
- * Mirrors src/core/pmbm.cpp:39-46 and src/core/pattern_of_life.cpp:16-23
+ * Mirrors src/core/pmbm.cpp:42-49 and src/core/pattern_of_life.cpp:19-26
  * (the two copies are identical):
  *
  *     if (v.empty()) return -inf;

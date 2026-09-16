@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
 # TRACE — run the formal proof suite.
 #
 #   ./run.sh              every harness, ESBMC where it discharges, else CBMC

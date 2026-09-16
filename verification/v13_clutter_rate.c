@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — the clutter estimator's posterior is well-formed.
- * Mirrors src/core/pmbm.cpp:54-60 and include/trace/core/pmbm.hpp:29-33:
+ * Mirrors src/core/pmbm.cpp:57-63 and include/trace/core/pmbm.hpp:32-36:
  *
  *     window_.push_back(max(0, n_unassigned));
  *     if (window_.size() > 20) window_.pop_front();
@@ -32,7 +35,7 @@
  */
 #include "verif.h"
 
-/* The source's window is 20 scans (src/core/pmbm.cpp:18). Eight is enough to
+/* The source's window is 20 scans (src/core/pmbm.cpp:21). Eight is enough to
  * exercise every claim below - each is monotone in the window length, so no
  * claim distinguishes 8 from 20 - and keeps the instance solvable. */
 #define W 8

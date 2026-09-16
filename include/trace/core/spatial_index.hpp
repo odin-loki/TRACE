@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — uniform-grid spatial index.
 //
 // Five stages of the pipeline ask the same question every scan: which pairs of

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property 2 — std::clamp(v, lo, hi) is v < lo ? lo : (hi < v ? hi : v).
  * Track::update_hit/update_miss and PmbmManager both wrap the existence update
  * in std::clamp(..., 0.0, 1.0), which reads like a sanitiser. Assert that it

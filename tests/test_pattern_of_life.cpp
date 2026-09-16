@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // Pattern of life drives reacquisition, the loiter threshold, cover stops and
 // one of the three convergence predictors, so its failure modes are subtle.
 #include "trace/core/pattern_of_life.hpp"

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // The whole simulation suite rests on these draws being correct and
 // reproducible, so they get checked directly.
 #include "trace/core/rng.hpp"

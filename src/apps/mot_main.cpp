@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — MOTChallenge replay.
 //
 // The only numbers in this repository not produced by TRACE's own simulator.

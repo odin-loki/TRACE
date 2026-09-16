@@ -304,19 +304,24 @@ What this project does **not** do, and is honest about:
 
 ---
 
-## Related work in this repo
+## Related work
 
-| Folder | Relationship |
+These are sibling projects of the same author, **not** part of this
+repository. The table survives from the collection ARIA-INTEL was first
+published in; the links it used to carry pointed at folders that do not exist
+here, so they have been removed rather than left broken.
+
+| Project | Relationship |
 |---|---|
-| [`../Filtering/`](../Filtering/) | GH-SR-IMM heavy-tailed multi-target tracking — complementary filter family; shares the IMM motion-model idea |
-| [`../Statistical Generation/`](../Statistical%20Generation/) | Universal Statistical Generator — underpins distributional reasoning in threat scoring |
-| [`../Battle Sim/`](../Battle%20Sim/) | Tactical reasoning over tracks ARIA-INTEL would deliver |
-| [`../Threat Asessments/`](../Threat%20Asessments/) | Threat-assessment portfolio adjacent to the tradecraft/threat-scoring output |
+| Filtering | GH-SR-IMM heavy-tailed multi-target tracking — complementary filter family; shares the IMM motion-model idea |
+| Statistical Generation | Universal Statistical Generator — underpins distributional reasoning in threat scoring |
+| Battle Sim | Tactical reasoning over tracks ARIA-INTEL would deliver |
+| Threat Assessments | Threat-assessment portfolio adjacent to the tradecraft/threat-scoring output |
 
 ---
 
 ## License
 
-AGPL-3.0 — see [`../modified-license.md`](../modified-license.md) at the repository root.
+AGPL-3.0-or-later — see [`../LICENSE`](../LICENSE) at the repository root.
 
 [← Back to main README](../README.md)

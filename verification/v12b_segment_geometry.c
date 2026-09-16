@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — the road-network projection lands on the road (part 2 of 2).
  * The other half of v12, carrying the two claims that do NOT discharge:
  *

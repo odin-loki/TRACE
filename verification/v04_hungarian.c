@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property 3, corrected translation — the Jonker-Volgenant/Hungarian matcher
- * in src/core/assignment.cpp:15-88.
+ * in src/core/assignment.cpp:18-142.
  *
  * The earlier harness (p3_hungarian.c) used a FINITE integer sentinel
  * INF = 1000000 for a non-finite cost. That is not what the source does:

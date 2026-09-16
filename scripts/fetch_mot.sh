@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
 # Fetch MOTChallenge annotations for TRACE's real-data replay.
 #
 # Only the label archives are downloaded (~30 MB total). TRACE consumes

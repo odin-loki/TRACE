@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — Pattern of Life.
 //
 // A per-entity Gaussian mixture over [hour-of-day, x, y]. It answers three

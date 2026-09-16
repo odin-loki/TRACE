@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — the built-in detector set.
 //
 // Eight detectors ship by default. Each one turns a kinematic pattern into a

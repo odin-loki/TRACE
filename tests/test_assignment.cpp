@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // Scoring is itself an assignment problem. If it is wrong, every performance
 // number in this repository is wrong with it, so it gets checked against cases
 // whose answer can be worked out by hand.

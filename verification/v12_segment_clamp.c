@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 /* Property — the road-network projection lands on the road (part 1 of 2).
- * Mirrors src/core/motion_constraint.cpp:11-18:
+ * Mirrors src/core/motion_constraint.cpp:14-21:
  *
  *     const Vec2 ab = b - a;
  *     const Real len_sq = ab.norm_sq();

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
 // TRACE — deterministic random number generation.
 //
 // Every stochastic step in the engine draws from an explicitly seeded Rng so a
