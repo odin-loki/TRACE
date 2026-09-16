@@ -6,6 +6,8 @@
 // detector bugs.
 #include "trace/core/particle_filter.hpp"
 
+#include <array>
+#include <cmath>
 #include <cstdio>
 
 #include "test_harness.hpp"
@@ -28,6 +30,117 @@ void test_mou_constants_are_si() {
             CHECK_NEAR(steady_speed, intended, intended * 1e-6);
             CHECK(std::isfinite(c.alpha[k]));
             CHECK(c.alpha[k] >= 0.0 && c.alpha[k] <= 1.0);
+        }
+    }
+}
+
+/// The first two moments of an OU velocity and its integral, obtained by
+/// integrating their own ODEs rather than by any closed form.
+///
+/// With dv = -theta v dt + sigma dW and x the integral of v,
+///
+///   d/dt E[v]   = -theta E[v]
+///   d/dt E[v^2] = -2 theta E[v^2] + sigma^2
+///   d/dt E[xv]  = E[v^2] - theta E[xv]
+///   d/dt E[x^2] = 2 E[xv]
+///   d/dt E[x]   = E[v]
+///
+/// RK4 at a few thousand steps settles these to far better than the tolerances
+/// below, and nothing in it comes from the code under test. Deterministic, so
+/// there is no Monte-Carlo error to budget for either.
+struct OuMoments { Real mean_x; Real var_x; Real cov_xv; Real var_v; };
+
+OuMoments ou_moments(Real theta, Real sigma, Real dt, Real v0, int steps = 4000) {
+    // y = [E v, E v^2, E xv, E x^2, E x]
+    std::array<Real, 5> y{v0, v0 * v0, 0.0, 0.0, 0.0};
+    const auto deriv = [&](const std::array<Real, 5>& z) {
+        return std::array<Real, 5>{-theta * z[0],
+                                   -2.0 * theta * z[1] + sigma * sigma,
+                                   z[1] - theta * z[2],
+                                   2.0 * z[2],
+                                   z[0]};
+    };
+    const auto axpy = [](const std::array<Real, 5>& a, Real c,
+                         const std::array<Real, 5>& b) {
+        std::array<Real, 5> r{};
+        for (int i = 0; i < 5; ++i) r[i] = a[i] + c * b[i];
+        return r;
+    };
+    const Real h = dt / steps;
+    for (int n = 0; n < steps; ++n) {
+        const auto k1 = deriv(y);
+        const auto k2 = deriv(axpy(y, h / 2.0, k1));
+        const auto k3 = deriv(axpy(y, h / 2.0, k2));
+        const auto k4 = deriv(axpy(y, h, k3));
+        for (int i = 0; i < 5; ++i) {
+            y[i] += (h / 6.0) * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
+        }
+    }
+    return OuMoments{y[4], y[3] - y[4] * y[4], y[2] - y[4] * y[0],
+                     y[1] - y[0] * y[0]};
+}
+
+void test_position_step_is_the_exact_ou_integral() {
+    // The position half of the MOU step used to be a trapezoid over the
+    // velocity step: x += (v + v')/2 * dt. That is the right answer only while
+    // `theta * dt` is small. The exact mean is v (1 - alpha)/theta, and the
+    // trapezoid's v dt (1 + alpha)/2 exceeds it by 8% at theta*dt = 1, 31% at
+    // 2, and a factor of five at 10 - always upwards, so a coasting track ran
+    // too far and a reacquisition gate derived from it opened too wide.
+    //
+    // Four shipped profiles sit past theta*dt = 1 in at least one regime, and
+    // OrganisedCrimeNetwork - a 300 s scan against a 30 s stationary regime -
+    // sits at 10.
+    //
+    // Checked against moments integrated from the SDE itself, so this test
+    // shares no algebra with the code it checks.
+    struct Case { const char* what; Real theta; Real sigma; Real dt; };
+    const Case cases[] = {
+        {"CityCameraSurveillance walking", 0.125, 1.4 * std::sqrt(2.0 * 0.125), 1.0},
+        {"UrbanHUMINT foot", 1.0 / 90.0, 1.4 * std::sqrt(2.0 / 90.0), 60.0},
+        {"UrbanHUMINT stationary", 1.0 / 30.0, 0.2 * std::sqrt(2.0 / 30.0), 60.0},
+        {"OrganisedCrimeNetwork stationary", 1.0 / 30.0, 0.2 * std::sqrt(2.0 / 30.0), 300.0},
+        {"WildlifeTelemetry fleeing", 1.0 / 7200.0, 6.0 * std::sqrt(2.0 / 7200.0), 14400.0},
+    };
+
+    for (const auto& c : cases) {
+        DomainProfile p = UrbanHUMINT();
+        p.scan_dt_s = c.dt;
+        for (int k = 0; k < kNumModels; ++k) {
+            p.mou_models[k].theta = c.theta;
+            p.mou_models[k].sigma = c.sigma;
+        }
+        const MouConstants mou = MouConstants::from(p);
+        const Real v0 = 1.0;
+        const OuMoments m = ou_moments(c.theta, c.sigma, c.dt, v0);
+
+        const Real var_x = mou.x_sig1[0] * mou.x_sig1[0] +
+                           mou.x_sig2[0] * mou.x_sig2[0];
+        const Real cov = mou.x_sig1[0] * mou.sigma_v[0];
+        const Real u = c.theta * c.dt;
+        const Real trapezoid = c.dt * (1.0 + mou.alpha[0]) / 2.0;
+
+        std::printf("  %-34s theta*dt %6.3f  mean %9.3f (ode %9.3f, "
+                    "trapezoid %9.3f)  sd_x %8.3f (ode %8.3f)\n",
+                    c.what, u, mou.x_mean[0], m.mean_x, trapezoid,
+                    std::sqrt(var_x), std::sqrt(m.var_x));
+
+        CHECK_NEAR(mou.x_mean[0], m.mean_x, std::abs(m.mean_x) * 1e-6);
+        CHECK_NEAR(var_x, m.var_x, std::abs(m.var_x) * 1e-5);
+        CHECK_NEAR(cov, m.cov_xv, std::abs(m.cov_xv) * 1e-5 + 1e-12);
+        // sigma_v is the other half of the same discretisation; check it here
+        // too, since the split of var_x into correlated and independent parts
+        // is only meaningful if it is right.
+        CHECK_NEAR(mou.sigma_v[0] * mou.sigma_v[0], m.var_v,
+                   std::abs(m.var_v) * 1e-5);
+        // The independent remainder must be a real number, not a rescued NaN.
+        CHECK(mou.x_sig2[0] >= 0.0);
+        CHECK(std::isfinite(mou.x_sig2[0]));
+
+        // And the old expression must be visibly wrong wherever theta*dt is
+        // not small - otherwise this test is not testing anything.
+        if (u > 1.0) {
+            CHECK(trapezoid > m.mean_x * 1.05);
         }
     }
 }
@@ -138,6 +251,7 @@ void test_determinism() {
 
 int main() {
     test_mou_constants_are_si();
+    test_position_step_is_the_exact_ou_integral();
     test_predict_moves_at_modelled_speed();
     test_update_pulls_to_measurement();
     test_resampling_keeps_weights_normalised();

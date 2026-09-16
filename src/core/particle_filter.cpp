@@ -33,10 +33,37 @@ MouConstants MouConstants::from(const DomainProfile& p, Real dt) {
     for (int k = 0; k < kNumModels; ++k) {
         const Real theta = std::max(p.mou_models[k].theta, 1e-6);
         const Real sigma = p.mou_models[k].sigma;
-        c.alpha[k] = std::exp(-theta * dt);
+        const Real a = std::exp(-theta * dt);
+        c.alpha[k] = a;
         c.sigma_v[k] =
             sigma * std::sqrt((1.0 - std::exp(-2.0 * theta * dt)) / (2.0 * theta));
         c.ss_vvar[k] = sigma * sigma / (2.0 * theta);
+
+        // The position half, exactly. With v(t) an OU process,
+        //
+        //   X(dt) = v0 (1-a)/theta + (sigma/theta) INT_0^dt (1 - e^{-theta u}) dW
+        //
+        // so the displacement is Gaussian with
+        //
+        //   mean  = v0 (1-a)/theta
+        //   var   = (sigma/theta)^2 [ dt - 2(1-a)/theta + (1-a^2)/(2 theta) ]
+        //   cov   = (sigma^2/(2 theta^2)) (1-a)^2      against v(dt) - a v0
+        //
+        // Splitting that covariance out lets one standard normal serve both
+        // the velocity step and the part of the displacement that must move
+        // with it; the remainder is independent. Two draws per axis, which is
+        // what the trapezoid cost as well.
+        const Real var_x = (sigma * sigma / (theta * theta)) *
+                           (dt - 2.0 * (1.0 - a) / theta +
+                            (1.0 - a * a) / (2.0 * theta));
+        const Real cov_xv = (sigma * sigma / (2.0 * theta * theta)) *
+                            (1.0 - a) * (1.0 - a);
+        c.x_mean[k] = (1.0 - a) / theta;
+        c.x_sig1[k] = c.sigma_v[k] > 1e-12 ? cov_xv / c.sigma_v[k] : 0.0;
+        // Rounding can take this fractionally below zero when theta*dt is tiny
+        // and the two terms nearly cancel; the true value cannot be negative.
+        c.x_sig2[k] =
+            std::sqrt(std::max(var_x - c.x_sig1[k] * c.x_sig1[k], Real{0.0}));
     }
     return c;
 }
@@ -57,6 +84,9 @@ ParticleFilter::ParticleFilter(const DomainProfile& profile,
     w_.resize(n_);
     scratch_a_.resize(n_);
     scratch_b_.resize(n_);
+    scratch_m_.resize(n_);
+    scratch_c_.resize(n_);
+    scratch_d_.resize(n_);
     model_idx_.resize(n_);
     mu_.fill(1.0 / kNumModels);
 }
@@ -97,6 +127,27 @@ void ParticleFilter::predict() {
     }
     for (auto& m : new_mu) m /= mu_sum;
 
+    // One MOU step, exactly:
+    //
+    //   v' = alpha v + sigma_v e1
+    //   x' = x + x_mean v + x_sig1 e1 + x_sig2' e2
+    //
+    // e1 and e2 are independent standard normals, and the displacement's
+    // dependence on the velocity draw is carried by x_sig1 rather than by
+    // reusing v'. See MouConstants for the derivation and for what the
+    // trapezoid this replaced cost at large `theta dt`.
+    //
+    // Jitter keeps the cloud from collapsing between measurements; scaling it
+    // to the sensor's own noise keeps it meaningful across domains. It is
+    // folded into the independent coefficient rather than added as a third
+    // draw, so the step still costs two normals per axis.
+    const Real jitter_m = std::max(profile_->pos_noise_m * 0.3, 1e-3);
+    std::array<Real, kNumModels> sig2_eff{};
+    for (int k = 0; k < kNumModels; ++k) {
+        sig2_eff[k] =
+            std::sqrt(mou_.x_sig2[k] * mou_.x_sig2[k] + jitter_m * jitter_m);
+    }
+
     // Draw each particle's regime, then expand to per-particle OU constants.
     // The gather is scalar and cheap; the arithmetic below is the hot part.
     for (std::size_t i = 0; i < n_; ++i) {
@@ -104,13 +155,11 @@ void ParticleFilter::predict() {
         model_idx_[i] = static_cast<int>(k);
         scratch_a_[i] = mou_.alpha[k];
         scratch_b_[i] = mou_.sigma_v[k];
+        scratch_m_[i] = mou_.x_mean[k];
+        scratch_c_[i] = mou_.x_sig1[k];
+        scratch_d_[i] = sig2_eff[k];
     }
 
-    // v' = alpha*v + sigma*eps ; x' = x + (v + v')/2 * dt + jitter (trapezoid)
-    const Real dt = std::max(profile_->scan_dt_s, 1e-6);
-    // Jitter keeps the cloud from collapsing between measurements; scaling it
-    // to the sensor's own noise keeps it meaningful across domains.
-    const Real jitter_m = std::max(profile_->pos_noise_m * 0.3, 1e-3);
     const std::size_t lanes = simd::kLanes;
     const std::size_t vec_end = (n_ / lanes) * lanes;
 
@@ -121,18 +170,19 @@ void ParticleFilter::predict() {
 
         const simd::Batch a  = simd::load_u(&scratch_a_[i]);
         const simd::Batch s  = simd::load_u(&scratch_b_[i]);
+        const simd::Batch m  = simd::load_u(&scratch_m_[i]);
+        const simd::Batch c1 = simd::load_u(&scratch_c_[i]);
+        const simd::Batch c2 = simd::load_u(&scratch_d_[i]);
         const simd::Batch vx = simd::load_u(&vx_[i]);
         const simd::Batch vy = simd::load_u(&vy_[i]);
 
         const simd::Batch nvx = simd::fma_(a, vx, s * ex);
         const simd::Batch nvy = simd::fma_(a, vy, s * ey);
 
-        const simd::Batch half_dt{0.5 * dt};
-        const simd::Batch jit{jitter_m};
-        const simd::Batch nx =
-            simd::fma_(half_dt, vx + nvx, simd::load_u(&x_[i]) + jit * jx);
-        const simd::Batch ny =
-            simd::fma_(half_dt, vy + nvy, simd::load_u(&y_[i]) + jit * jy);
+        const simd::Batch nx = simd::fma_(
+            m, vx, simd::load_u(&x_[i]) + simd::fma_(c1, ex, c2 * jx));
+        const simd::Batch ny = simd::fma_(
+            m, vy, simd::load_u(&y_[i]) + simd::fma_(c1, ey, c2 * jy));
 
         simd::store_u(&x_[i], nx);
         simd::store_u(&y_[i], ny);
@@ -141,10 +191,14 @@ void ParticleFilter::predict() {
     }
 
     for (std::size_t i = vec_end; i < n_; ++i) {
-        const Real nvx = scratch_a_[i] * vx_[i] + scratch_b_[i] * rng_.normal();
-        const Real nvy = scratch_a_[i] * vy_[i] + scratch_b_[i] * rng_.normal();
-        x_[i] += 0.5 * (vx_[i] + nvx) * dt + jitter_m * rng_.normal();
-        y_[i] += 0.5 * (vy_[i] + nvy) * dt + jitter_m * rng_.normal();
+        const Real ex = rng_.normal();
+        const Real ey = rng_.normal();
+        const Real nvx = scratch_a_[i] * vx_[i] + scratch_b_[i] * ex;
+        const Real nvy = scratch_a_[i] * vy_[i] + scratch_b_[i] * ey;
+        x_[i] += scratch_m_[i] * vx_[i] + scratch_c_[i] * ex +
+                 scratch_d_[i] * rng_.normal();
+        y_[i] += scratch_m_[i] * vy_[i] + scratch_c_[i] * ey +
+                 scratch_d_[i] * rng_.normal();
         vx_[i] = nvx;
         vy_[i] = nvy;
     }

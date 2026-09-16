@@ -35,6 +35,26 @@ struct MouConstants {
     std::array<Real, kNumModels> sigma_v{};  ///< velocity diffusion per scan
     std::array<Real, kNumModels> ss_vvar{};  ///< steady-state velocity variance
 
+    /// The exact discretisation of the POSITION half of the same process.
+    ///
+    /// Integrating an OU velocity over one scan gives a Gaussian displacement
+    /// whose mean is `x_mean * v` and whose noise is correlated with the
+    /// velocity draw that produced it. Writing it out:
+    ///
+    ///   v' = alpha v + sigma_v e1
+    ///   dx = x_mean v + x_sig1 e1 + x_sig2 e2       e1, e2 ~ N(0,1) iid
+    ///
+    /// The mean coefficient is `(1 - alpha)/theta`, NOT `dt (1 + alpha)/2`.
+    /// The trapezoid this replaced agrees with it to second order in
+    /// `theta dt` and diverges after that, always upwards: +8% at `theta dt`
+    /// of 1, +31% at 2, and a factor of five at 10. Several shipped profiles
+    /// live out there - `OrganisedCrimeNetwork` samples every 300 s with a
+    /// stationary regime that holds its heading for 30, so its coasting
+    /// prediction ran five times too far.
+    std::array<Real, kNumModels> x_mean{};   ///< metres of drift per m/s held
+    std::array<Real, kNumModels> x_sig1{};   ///< noise shared with the velocity draw
+    std::array<Real, kNumModels> x_sig2{};   ///< the independent remainder
+
     /// `dt` defaults to the profile's own scan period.
     static MouConstants from(const DomainProfile& p, Real dt = -1.0);
 };
@@ -117,7 +137,11 @@ private:
     std::size_t n_{320};
 
     std::vector<Real> x_, y_, vx_, vy_, w_;
-    std::vector<Real> scratch_a_, scratch_b_;   // per-particle alpha / sigma
+    // Per-particle motion constants, gathered once per predict from the
+    // regime each particle drew. Five of them, because the position step is
+    // the exact integral of the velocity step rather than a trapezoid over it.
+    std::vector<Real> scratch_a_, scratch_b_;   // alpha, sigma_v
+    std::vector<Real> scratch_m_, scratch_c_, scratch_d_;  // x_mean, x_sig1, x_sig2
     std::vector<int>  model_idx_;
 
     std::array<Real, kNumModels> mu_{};

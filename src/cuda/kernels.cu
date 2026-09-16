@@ -5,7 +5,7 @@
 //
 // Compiled only when TRACE_WITH_CUDA is on and nvcc is present. The CPU path in
 // src/core/ is the reference behaviour; these kernels must match it, including
-// the trapezoidal position integration and the SI unit convention.
+// the exact OU position integral and the SI unit convention.
 
 #include <cuda_runtime.h>
 
@@ -100,16 +100,26 @@ __global__ void propagate_kernel(ParticleBatch* batches, std::size_t n_batches,
 
     const double a = pb.alpha[i];
     const double s = pb.sigma_v[i];
+    const double m = pb.x_mean[i];
+    const double c1 = pb.x_sig1[i];
+    // The jitter floor is folded in here rather than drawn separately, exactly
+    // as ParticleFilter::predict does it, so both paths consume two normals
+    // per axis and produce the same distribution.
+    const double c2 = sqrt(pb.x_sig2[i] * pb.x_sig2[i] + jitter_m * jitter_m);
     const double vx = pb.vx[i];
     const double vy = pb.vy[i];
 
-    // Must match ParticleFilter::predict exactly: OU velocity step, then
-    // trapezoidal position integration over the real scan period.
+    // Must match ParticleFilter::predict exactly: OU velocity step, then the
+    // exact integral of that velocity over the real scan period. `dt` no
+    // longer appears: the scan period is baked into alpha, sigma_v and the
+    // three position constants when MouConstants is built, and taking it from
+    // two places at once is how the CPU and GPU paths would drift apart.
+    (void)dt;
     const double nvx = fma(a, vx, s * ex);
     const double nvy = fma(a, vy, s * ey);
 
-    pb.x[i] += 0.5 * (vx + nvx) * dt + jitter_m * jx;
-    pb.y[i] += 0.5 * (vy + nvy) * dt + jitter_m * jy;
+    pb.x[i] += fma(m, vx, fma(c1, ex, c2 * jx));
+    pb.y[i] += fma(m, vy, fma(c1, ey, c2 * jy));
     pb.vx[i] = nvx;
     pb.vy[i] = nvy;
 }

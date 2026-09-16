@@ -53,6 +53,14 @@ struct ParticleBatch {
     Real* vy{nullptr};
     const Real* alpha{nullptr};    ///< per-particle OU velocity retention
     const Real* sigma_v{nullptr};  ///< per-particle OU velocity diffusion
+    /// The position half of the same step - see MouConstants. Supplying these
+    /// rather than integrating the velocity on the device is what keeps the
+    /// two paths identical; a trapezoid here and the exact integral there
+    /// would diverge by a factor of five on a profile like
+    /// OrganisedCrimeNetwork.
+    const Real* x_mean{nullptr};   ///< metres of drift per m/s held
+    const Real* x_sig1{nullptr};   ///< noise shared with the velocity draw
+    const Real* x_sig2{nullptr};   ///< the independent remainder
     std::size_t n{0};
 };
 
@@ -61,6 +69,11 @@ struct ParticleBatch {
 /// Returns false if CUDA is unavailable or the batch is too small to be worth
 /// it, in which case the caller must run the CPU path. Never a hard failure:
 /// the GPU is an optimisation, not a dependency.
+///
+/// `dt` is accepted for source compatibility and is no longer read: the scan
+/// period is baked into the per-particle constants when MouConstants is built,
+/// and taking it from two places at once is how the CPU and GPU paths would
+/// drift apart.
 bool propagate_batches(ParticleBatch* batches, std::size_t n_batches, Real dt,
                        Real jitter_m, std::uint64_t seed);
 
