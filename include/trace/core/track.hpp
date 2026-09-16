@@ -120,11 +120,46 @@ public:
     [[nodiscard]] Real born_at() const { return born_at_; }
     [[nodiscard]] Real last_seen() const { return last_seen_; }
     [[nodiscard]] int age() const { return age_; }
+    /// Detections accepted, counting each sensor separately.
     [[nodiscard]] int hits() const { return n_hit_; }
+
+    /// Scans in which this track was detected at all, counting a scan once
+    /// however many sensors reported it. This is the numerator of a rate;
+    /// `hits()` is not.
+    [[nodiscard]] int hit_scans() const { return n_hit_scans_; }
     [[nodiscard]] int misses() const { return n_miss_; }
-    [[nodiscard]] Real measurement_rate() const { return mrate_; }
+    /// Fraction of the scans this track has existed for in which it was
+    /// detected. In [0,1] by construction.
+    ///
+    /// Counted per SCAN, not per detection. `update_hit` runs once for every
+    /// observation in a scan's group, so a track under four overlapping
+    /// sensors used to score four hits against one scan of age and report a
+    /// "rate" of 4.0. Both thresholds tested against it - the group-spawn test
+    /// at 0.85 and the merge test at 0.55 - were then true for any track with
+    /// more than one sensor on it, whatever its actual detection history.
+    ///
+    /// Computed on demand rather than cached at the last hit. A cached value
+    /// is stale by exactly the length of the current coast, so a track that
+    /// has not been seen for twenty scans went on reporting the rate it had
+    /// when it was last detected - high, and wrong in the same direction as
+    /// the per-detection count was.
+    ///
+    /// The denominator is `age_ + 1`, not `age_`. A track is born during a
+    /// scan and detected in that same scan, so it has existed for one scan
+    /// when its age is zero; `predict()` increments age at the start of each
+    /// scan after. Dividing by `age_` counted the scan of birth in the
+    /// numerator and not the denominator, which on its own put a
+    /// perfectly-detected track at 2.0 on its second scan and left it above 1
+    /// for the rest of its life.
+    [[nodiscard]] Real measurement_rate() const {
+        return static_cast<Real>(n_hit_scans_) / static_cast<Real>(age_ + 1);
+    }
+    /// As `measurement_rate`, kept separate because callers read it as a
+    /// density rather than a rate. The `min` used to be load-bearing, clamping
+    /// a per-detection count that could exceed 1; it is now a guard only.
     [[nodiscard]] Real detection_density() const {
-        return std::min(1.0, static_cast<Real>(n_hit_) / std::max(age_, 1));
+        return std::min(1.0, static_cast<Real>(n_hit_scans_) /
+                                 static_cast<Real>(age_ + 1));
     }
     [[nodiscard]] Real mean_observation_quality() const;
 
@@ -168,8 +203,11 @@ private:
     Real last_seen_{0.0};
     int age_{0};
     int n_hit_{0};
+    /// Scans in which at least one sensor reported this track, and the last
+    /// such scan, so a multi-sensor scan is counted once.
+    int n_hit_scans_{0};
+    int last_hit_scan_{-1};
     int n_miss_{0};
-    Real mrate_{0.0};
 
     std::deque<TrackSample> history_;
     std::deque<Real> obs_weights_;

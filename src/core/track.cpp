@@ -111,7 +111,8 @@ void Track::update_hit(const Observation& obs, Real scan_dt) {
 
     last_obs_pos_ = pos;
     last_obs_ts_ = obs.timestamp;
-    mrate_ = static_cast<Real>(n_hit_) / std::max(age_, 1);
+    // The rate itself is updated in note_hit_scan, which is the only place
+    // that knows which scan this detection belongs to.
 }
 
 void Track::update_miss(Real p_detect) {
@@ -134,6 +135,11 @@ void Track::update_threat(Real score) {
 }
 
 void Track::note_hit_scan(int scan, const std::string& source) {
+    // One scan counts once, however many sensors reported it in that scan.
+    if (scan != last_hit_scan_) {
+        last_hit_scan_ = scan;
+        ++n_hit_scans_;
+    }
     hit_scans_.push_back(HitRecord{scan, std::hash<std::string>{}(source)});
     if (hit_scans_.size() > 24) hit_scans_.pop_front();
 }
@@ -172,11 +178,16 @@ void Track::absorb(const Track& other) {
         appearance_ = other.appearance_;
     }
     n_hit_ += other.n_hit_;
+    // The merged track existed for the union of the two spans, so the scans it
+    // was seen in is at most the sum and at least the larger. Taking the max is
+    // the conservative reading: it never claims a detection rate the evidence
+    // does not support.
+    n_hit_scans_ = std::max(n_hit_scans_, other.n_hit_scans_);
+    last_hit_scan_ = std::max(last_hit_scan_, other.last_hit_scan_);
     born_at_ = std::min(born_at_, other.born_at_);
     last_seen_ = std::max(last_seen_, other.last_seen_);
     r_ = std::max(r_, other.r_);
     pi_r_ = std::max(pi_r_, other.pi_r_);
-    mrate_ = static_cast<Real>(n_hit_) / std::max(age_, 1);
     if (!parent_id_.has_value() && other.parent_id_.has_value()) {
         parent_id_ = other.parent_id_;
     }

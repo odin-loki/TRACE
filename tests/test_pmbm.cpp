@@ -527,6 +527,50 @@ void test_existence_responds_to_fit() {
     CHECK(tight > 0.9);
 }
 
+void test_measurement_rate_is_a_rate() {
+    // `measurement_rate()` is the fraction of scans a track has existed for in
+    // which it was detected, so it cannot exceed 1. Two things used to let it.
+    //
+    // `update_hit` runs once per observation in a scan's group, so a track
+    // under four overlapping sensors scored four hits against one scan of age.
+    // And the denominator was `age_`, which is zero on the scan a track is
+    // born in even though the track was detected in that scan - counting the
+    // birth scan in the numerator and not the denominator.
+    //
+    // Together they put a perfectly-detected four-sensor track at 8.0. Both
+    // thresholds tested against this - the group-spawn test at 0.85 and the
+    // merge test at 0.55 - were then true for any track with more than one
+    // sensor on it, whatever its detection history.
+    const DomainProfile profile = UrbanHUMINT();
+    for (int n_sensors : {1, 2, 4}) {
+        PmbmManager pmbm(profile, Area{-5000, 5000, -5000, 5000}, 5);
+        Real worst = 0.0;
+        Real last = 0.0;
+        for (int i = 0; i < 20; ++i) {
+            std::vector<Observation> obs;
+            for (int s = 0; s < n_sensors; ++s) {
+                obs.push_back(Observation{
+                    "o" + std::to_string(i) + "_" + std::to_string(s),
+                    static_cast<Real>(i) * profile.scan_dt_s, Vec2{0.0, 0.0},
+                    Modality::GEOINT, 0.9, "CAM" + std::to_string(s)});
+            }
+            pmbm.predict();
+            pmbm.update(obs, static_cast<Real>(i) * profile.scan_dt_s);
+            for (const auto& t : pmbm.all_tracks()) {
+                worst = std::max(worst, t->measurement_rate());
+                last = t->measurement_rate();
+                CHECK(t->detection_density() <= 1.0);
+            }
+        }
+        std::printf("  measurement_rate with %d sensor(s): max %.3f, final %.3f\n",
+                    n_sensors, worst, last);
+        CHECK(worst <= 1.0 + 1e-9);
+        // Detected in every scan it existed for, so the rate is exactly 1
+        // however many sensors were doing the detecting.
+        CHECK(std::abs(last - 1.0) < 1e-9);
+    }
+}
+
 int main() {
     test_overlapping_sensors_do_not_spawn_duplicates();
     test_two_entities_one_sensor_stay_separate();
@@ -538,5 +582,6 @@ int main() {
     test_reacquisition_is_one_to_one();
     test_vague_tracks_do_not_win_reacquisition();
     test_existence_responds_to_fit();
+    test_measurement_rate_is_a_rate();
     return trace::test::summary("test_pmbm");
 }

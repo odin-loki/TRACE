@@ -10,10 +10,10 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Eleven did not, and are set out below with
-the evidence. All eleven are now fixed.
+Ten derivations came back sound. Twelve did not, and are set out below with
+the evidence. All twelve are now fixed.
 
-**Five of the eleven are in the scorer, not the engine** — the code that
+**Five of the twelve are in the scorer, not the engine** — the code that
 decides which track corresponds to which real entity, what counts as the
 tracker changing its mind, which ground-truth identity is which, and what to do
 about the places the benchmark declined to annotate. Not one of them changes
@@ -21,12 +21,13 @@ how TRACE tracks anything. All five change what this repository was reporting
 about it, and together they move MOT17 MOTA from 48.2% to 54.3% without a
 single line of the engine being touched.
 
-That ratio is the most useful thing here: nearly half the defects were in the
-instrument rather than in the thing being measured. Of the six that were in the
-engine, three were errors of dimension — a probability compared against a
+That ratio is the most useful thing here: close to half the defects were in the
+instrument rather than in the thing being measured. Of the seven that were in
+the engine, four were errors of dimension — a probability compared against a
 density, metres per second integrated as metres per scan, a walking pace used
-as an aircraft's speed — which is what makes "do the units agree" worth asking
-of every formula rather than only of the ones that look suspicious.
+as an aircraft's speed, a count of detections divided by a count of scans —
+which is what makes "do the units agree" worth asking of every formula rather
+than only of the ones that look suspicious.
 
 ---
 
@@ -635,6 +636,41 @@ Monte Carlo scenarios are prone to. The remedy for a domain in that position is
 setting it here to recover the number would be fitting to the scenario rather
 than to the domain.
 
+### 12. A rate that could reach eight — **fixed**
+
+`include/trace/core/track.hpp`. `measurement_rate()` is documented and read as
+the fraction of scans a track has existed for in which it was detected, so it
+cannot exceed 1. Two independent errors let it reach 8.
+
+`update_hit` runs once for every observation in a scan's group, so a track
+under four overlapping sensors scored four hits against one scan of age. And
+the denominator was `age_`, which is zero on the scan a track is born in even
+though the track was detected in that scan — the birth scan counted in the
+numerator and not the denominator. That second one alone put a
+perfectly-detected single-sensor track at 2.0 on its second scan and kept it
+above 1 for life.
+
+Measured on a track detected in every scan:
+
+| sensors on the track | before | after |
+|---|---|---|
+| 1 | 2.0 | **1.000** |
+| 2 | 4.0 | **1.000** |
+| 4 | 8.0 | **1.000** |
+
+The consequence is that both thresholds tested against it were vacuous. The
+group-spawn test asks for a measurement rate above 0.85 and the merge test for
+one above 0.55; every track with more than one sensor on it passed both,
+whatever its detection history, and so did every single-sensor track past its
+second scan. Counting hit scans rather than detections, and dividing by the
+scans the track has actually existed for, makes both mean what they say.
+
+Almost nothing moves as a result — over seven seeds, total recovery 1491.3 to
+1491.2, ghost tracks 2,389 to 2,379, identity switches 1,362 to 1,350 — because
+the shipped scenarios mostly feed a track from one sensor at a time. The value
+of the fix is not in those numbers; it is that two decisions which were being
+taken unconditionally are now taken on evidence.
+
 ---
 
 ## Not a formula error, and fixed anyway
@@ -719,7 +755,7 @@ them. Quantifying over a superset of the reachable values is both the cheaper
 encoding and the stronger statement, which is the one generalisable technique
 to come out of this exercise.
 
-Of the eleven findings, exactly one — the existence update — was found by a
+Of the twelve findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
 the formula is supposed to compute and comparing. Model checking earned its
 place by settling things reading could not, in both directions. It proved the
