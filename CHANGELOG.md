@@ -10,7 +10,7 @@ detail than a changelog can carry, so each entry points at where the working is:
 [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) for the port, and
 [docs/VALIDATION.md](docs/VALIDATION.md) for every measurement.
 
-## 0.2.0
+## 0.2.0 — 2026-09-16
 
 The first release that can be licensed, installed, consumed and audited.
 
