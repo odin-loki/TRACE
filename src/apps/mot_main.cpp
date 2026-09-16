@@ -69,10 +69,17 @@ struct ClearMot {
     /// MOTChallenge numbers its ground-truth identities from 1 within each
     /// sequence, so person 1 of MOT17-02 and person 1 of MOT17-04 are
     /// different people wearing the same integer. Pooled on the raw id, the
-    /// 2,388 identities of the MOT17 train split collapse into 188 buckets and
-    /// the OVERALL mostly-tracked and mostly-lost figures describe blended
-    /// pseudo-identities that correspond to nobody. Per-sequence figures were
-    /// never affected; only the pooled ones.
+    /// 1,638 identities this scorer counts across the MOT17 train split
+    /// collapse into 170 buckets, and the OVERALL mostly-tracked and
+    /// mostly-lost figures describe blended pseudo-identities that correspond
+    /// to nobody. Per-sequence figures were never affected; only the pooled
+    /// ones.
+    ///
+    /// (1,638 and 170, not the 2,388 and 188 this comment used to give. Those
+    /// count every row in the gt.txt files; a row whose flag or class is not 1
+    /// goes to the ignore set rather than to `truth`, so it is never pooled.
+    /// The ratio is 9.6:1 either way and the conclusion does not turn on it,
+    /// but a number in a comment should be the number the code produces.)
     std::map<std::pair<int, int>, long> gt_frames;
     std::map<std::pair<int, int>, long> matched_frames;
 

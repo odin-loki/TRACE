@@ -133,12 +133,19 @@ and 3.5% to **29.8%** and **26.2%**, and that is a fourth defect rather than a
 consequence of the first three. Both figures are pooled over ground-truth
 identities, and MOTChallenge numbers its identities from 1 within each
 sequence — so person 1 of MOT17-02 and person 1 of MOT17-04 were being added
-together. The 2,388 identities of the train split collapsed into 188 buckets,
-and a bucket blending a well-tracked person with an untracked one lands in the
-middle band that is neither mostly-tracked nor mostly-lost. Almost everything
+together. The 1,638 identities this scorer counts across the train split
+collapsed into 170 buckets, and a bucket blending a well-tracked person with an
+untracked one lands in the middle band that is neither mostly-tracked nor
+mostly-lost. Almost everything
 ended up in that band, which is why both figures were small. Keying by
 (sequence, identity) separates them again. The per-sequence figures in the
 tables below were never affected; only the pooled ones were.
+
+(This paragraph used to say 2,388 and 188. Those are the identity counts over
+every row of the gt.txt files; a row whose flag or class is not 1 goes to the
+ignore set rather than to the ground truth, so 1,638 and 170 are what the
+scorer actually pools. A 9.6:1 collapse rather than a 12.7:1 one, and the same
+conclusion — but the figure quoted should be the one the code produces.)
 
 The simulator figures elsewhere in this document are affected far less, and
 were checked rather than assumed: across all twelve scenarios the fix moves

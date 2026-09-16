@@ -339,10 +339,19 @@ std::vector<RendezvousWarning> RendezvousWarner::rendezvous(
 
             // Independent methods agreeing is real corroboration, so it lifts
             // confidence; but never past certainty.
+            //
+            // And the priority has to be recomputed from it. `priority_from_eta`
+            // keys on confidence at 0.5, 0.4 and 0.3, and each method set the
+            // priority from its OWN confidence before this boost existed - so a
+            // warning corroborated from 0.45 to 0.52 kept the HIGH it was given
+            // alone and never became IMMEDIATE. Corroboration that moves the
+            // number an operator is shown but not the band they act on is
+            // corroboration that does nothing.
             if (n_agree > 1) {
                 best->confidence =
                     std::min(0.99, best->confidence * (1.0 + 0.15 * (n_agree - 1)));
                 best->method += "+" + std::to_string(n_agree - 1);
+                best->priority = priority_from_eta(best->eta_s, best->confidence);
             }
             if (best->eta_s <= p.rv_warning_horizon_s) out.push_back(*best);
         }

@@ -47,10 +47,6 @@ private:
     std::map<std::pair<std::string, std::string>, int> contact_streak_;
 };
 
-/// Predicts meetings ahead of time by stacking three independent methods:
-/// straight-line intercept, closure-rate extrapolation, and pattern-of-life
-/// cross-prediction. They fail in different circumstances, so running all three
-/// and taking the most confident covers far more cases than any one alone.
 /// Least-squares velocity over a track's recent history, in metres per SCAN.
 ///
 /// Declared here rather than kept private to rendezvous.cpp because it carries
@@ -60,6 +56,10 @@ private:
 /// regressing against the sample index instead of the sample timestamp cost.
 Vec2 fitted_velocity(const Track& t, Real scan_dt, std::size_t window = 6);
 
+/// Predicts meetings ahead of time by stacking three independent methods:
+/// straight-line intercept, closure-rate extrapolation, and pattern-of-life
+/// cross-prediction. They fail in different circumstances, so running all three
+/// and taking the most confident covers far more cases than any one alone.
 class RendezvousWarner final : public Detector {
 public:
     [[nodiscard]] std::string name() const override { return "RendezvousWarner"; }
