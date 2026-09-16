@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The configuration the README tells a newcomer to build.
+          - name: release
+            cmake_args: -DCMAKE_BUILD_TYPE=Release
+          # Without -march=native the SIMD width changes, and with it the
+          # random stream the particle filter consumes. Both paths are built
+          # because both are shipped, and the numbers differ slightly between
+          # them - see docs/VALIDATION.md, "Reproducing".
+          - name: portable (no -march=native)
+            cmake_args: -DCMAKE_BUILD_TYPE=Release -DTRACE_NATIVE_ARCH=OFF
+          # Scalar fallback: xsimd off, so the vectorised kernels compile out
+          # and the scalar tails carry everything.
+          - name: scalar (no xsimd)
+            cmake_args: -DCMAKE_BUILD_TYPE=Release -DTRACE_WITH_XSIMD=OFF
+          - name: sanitizers
+            cmake_args: >-
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer
+              -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-13
+          echo "CXX=g++-13" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: ctest --test-dir build --output-on-failure -j2
+
+      # The engine's own headline demo, run to completion. It is deterministic
+      # under a fixed seed on a given build, so a crash or a hang here is a real
+      # regression rather than a flake.
+      - name: Maze demo
+        run: ./build/src/apps/trace_maze > /dev/null
+
+      - name: All scenarios
+        run: ./build/src/apps/trace_sim --all --seed 7 > /dev/null
+
+  proofs:
+    name: bounded model checking
+    runs-on: ubuntu-latest
+    # CBMC discharges thirteen of the sixteen harnesses on its own; ESBMC is
+    # not packaged, so the suite runs CBMC-only here and the ESBMC-preferred
+    # harnesses are reported rather than counted.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install CBMC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cbmc
+      # Plain invocation: harnesses whose preferred checker is absent are
+      # reported as SKIP and not counted, so the job checks what CBMC can
+      # check without pretending to cover the rest.
+      - name: Run the proof suite
+        run: TIMEOUT=1500 ./verification/run.sh

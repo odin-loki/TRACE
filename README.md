@@ -29,13 +29,22 @@ cmake --build build
 ctest --test-dir build               # the test suite
 ```
 
-Only a C++23 compiler and CMake are required. xsimd is vendored. CUDA and Qt are
-optional and off by default.
+Only a C++23 compiler and CMake are required. xsimd is vendored, and
+`-DTRACE_WITH_XSIMD=OFF` builds a scalar fallback that produces the same
+results to within the Monte Carlo noise (see
+[docs/VALIDATION.md](docs/VALIDATION.md), "Reproducing").
+
+Qt is optional and off by default:
 
 ```bash
-cmake -S . -B build -DTRACE_WITH_CUDA=ON -DTRACE_WITH_QT=ON
+cmake -S . -B build -DTRACE_WITH_QT=ON
 ./build/src/apps/gui/trace_console   # live operator console
 ```
+
+`-DTRACE_WITH_CUDA=ON` compiles `src/cuda/kernels.cu`, but **nothing in the
+engine calls it**: `trace::cuda` is referenced only by its own stub. The switch
+is scaffolding for a GPU path that does not exist yet, and turning it on changes
+nothing about how the engine runs.
 
 ---
 
@@ -77,7 +86,7 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **54.4%** | **108.3%** |
+| MOT17 train, 21 sequences | 336,891 | **54.4%** | **108.4%** |
 | MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **63.7%** | **114.6%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every

@@ -699,10 +699,19 @@ are computed from it, so the warning offered four times the time that actually
 remained. The samples already carry a timestamp; the fit now uses it, and
 converts to metres per scan at the end.
 
-What is left after the fix is spread, not bias: a six-sample window spans fewer
-scans when several sensors report each one, so the baseline is shorter and the
-fit noisier. Widening the window to span a fixed number of scans rather than
-samples would reduce it.
+What was left after that fix was spread rather than bias, and it turned out to
+matter: a six-**sample** window spans six scans under one sensor and a scan and
+a half under four, and a velocity fit over a scan and a half is dominated by
+measurement noise. The answer then depended not only on how many sensors were
+watching but on the SIMD width the binary was compiled for — the scalar build
+read a four-sensor target at **1.75×** its true speed where the vectorised one
+read 1.13×. That was found by adding CI and building the scalar configuration,
+not by reading.
+
+The window is now a span of **time**. The same three cases read 1.01, 1.02 and
+1.03 on a vectorised build and 0.96, 1.01 and 1.00 on a scalar one — the fit
+means the same thing whoever is watching and whatever it was compiled for, and
+more sensors now buy a better-conditioned fit rather than a shorter one.
 
 **Nothing measurable moves.** Not one of the fourteen scenarios changes by a
 single ghost track or identity switch over seven seeds, and MOT17 is identical

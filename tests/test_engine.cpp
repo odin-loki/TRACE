@@ -411,10 +411,13 @@ void test_fitted_velocity_is_metres_per_scan() {
         const Real ratio = v.x / truth_per_scan;
         std::printf("  fitted_velocity, %d sensor(s): %.1f m/scan of %.1f (ratio %.2f)\n",
                     n_sensors, v.x, truth_per_scan, ratio);
-        // Within a quarter of the truth however many sensors are reporting.
-        // Against the index regression the four-sensor case read 0.26.
-        CHECK(ratio > 0.75);
-        CHECK(ratio < 1.25);
+        // Within 15% however many sensors are reporting, and on any build.
+        // Against the index regression the four-sensor case read 0.26; with a
+        // sample-count window rather than a time window it read 1.13 on the
+        // vectorised build and 1.75 on the scalar one, which is what made the
+        // window a span of time.
+        CHECK(ratio > 0.85);
+        CHECK(ratio < 1.15);
     }
 }
 

@@ -41,18 +41,37 @@ Priority priority_from_eta(Real eta_s, Real confidence) {
 /// 123 m/scan, two gave 45.8 and four gave 31.0 - under-reading the speed by
 /// nearly four times under the overlapping coverage this detector is most
 /// likely to be used in. Convergence ETAs are computed from this, so the
-/// warning said an hour where the truth was a quarter of that. Against the
-/// timestamp the same three cases give 1.02, 0.84 and 1.13 times the truth:
-/// the bias is gone, and what is left is the shorter time baseline a
-/// sample-count window spans when several sensors report the same scan. That
-/// is noise rather than error, and widening the window to span a fixed number
-/// of scans instead of samples would reduce it.
+/// warning said an hour where the truth was a quarter of that.
+///
+/// Regressing against the timestamp removes the bias, and taking the window as
+/// a span of TIME rather than a count of samples removes what was left. The
+/// same three cases now read 1.01, 1.02 and 1.03 times the truth on a
+/// vectorised build and 0.96, 1.01 and 1.00 on a scalar one - where with a
+/// sample-count window they read 1.13 and 1.75 respectively for four sensors,
+/// which is how the difference was noticed at all.
 Vec2 fitted_velocity(const Track& t, Real scan_dt, std::size_t window) {
     const auto& h = t.history();
     if (h.size() < 3) return t.velocity() * scan_dt;
 
-    const std::size_t take = std::min(window, h.size());
-    const std::size_t start = h.size() - take;
+    // `window` counts SCANS, not samples. History is appended once per
+    // detection, so a sample count spans however many scans the sensors
+    // happened to supply: six samples is six scans under one sensor and a
+    // scan and a half under four. A velocity fit over a scan and a half is
+    // dominated by measurement noise, and the answer then depends on how many
+    // sensors are watching and even on the SIMD width the binary was compiled
+    // for - the scalar build read a four-sensor target at 1.75x its true speed
+    // where the vectorised one read 1.13x.
+    //
+    // Taking a fixed span of TIME instead makes the fit mean the same thing
+    // whoever is watching. Everything inside the span is used, so more sensors
+    // now buy a better-conditioned fit rather than a shorter one.
+    const Real span = static_cast<Real>(window) * scan_dt;
+    const Real newest = h.back().timestamp;
+    std::size_t start = h.size();
+    while (start > 0 && newest - h[start - 1].timestamp <= span) --start;
+    // Three points minimum, whatever the span says, or there is no line to fit.
+    if (h.size() - start < 3) start = h.size() - std::min<std::size_t>(3, h.size());
+    const std::size_t take = h.size() - start;
     const auto n = static_cast<Real>(take);
 
     // Times relative to the first sample kept, so the normal equations stay
