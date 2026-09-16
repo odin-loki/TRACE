@@ -9,6 +9,7 @@
 #include "trace/core/engine.hpp"
 #include "trace/core/threat.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 
@@ -466,6 +467,58 @@ void test_fusion_with_no_evidence_is_uncommitted() {
 
 }  // namespace
 
+void test_credibility_evidence_set_is_scaled_to_the_domain() {
+    // The evidence behind a track's credibility is "observations near it", and
+    // near was 120 metres flat for every domain. Against each profile's own
+    // association gate - what an entity can cover in one scan plus three sigma
+    // of sensor noise - that constant runs from 0.001x on WildlifeTelemetry to
+    // 112x on SportsPitch.
+    //
+    // At the top end it means every observation in the scene is evidence about
+    // every track. Six players on a pitch, one of them reported by a poor
+    // source at confidence 0.30 and the rest at 0.95: with a 120 m radius all
+    // six evidence sets are the same set, the one poor source is diluted by the
+    // five good ones, and ALL SIX come back at belief 1.000. The fusion cannot
+    // discriminate because it is not being shown different evidence.
+    EngineConfig cfg;
+    cfg.profile = SportsPitch();
+    cfg.area = Area{-60.0, 60.0, -40.0, 40.0};
+    Engine eng(cfg);
+
+    const Real dt = cfg.profile.scan_dt_s;
+    std::vector<TargetReport> final_targets;
+    for (int s = 0; s < 200; ++s) {
+        std::vector<Observation> obs;
+        for (int e = 0; e < 6; ++e) {
+            Observation o;
+            o.source_id = "cam";
+            o.timestamp = static_cast<Real>(s) * dt;
+            o.position = Vec2{-30.0 + 0.15 * static_cast<Real>(s),
+                              -15.0 + 6.0 * static_cast<Real>(e)};
+            o.modality = Modality::GEOINT;
+            o.confidence = (e == 0) ? 0.30 : 0.95;
+            obs.push_back(o);
+        }
+        const ScanReport r = eng.ingest(obs, static_cast<Real>(s) * dt);
+        if (s == 199) final_targets = r.targets;
+    }
+
+    CHECK(final_targets.size() >= 4);
+    Real lowest = 2.0, highest = -1.0;
+    for (const auto& t : final_targets) {
+        lowest = std::min(lowest, t.credibility.belief);
+        highest = std::max(highest, t.credibility.belief);
+        CHECK(t.credibility.belief >= 0.0 && t.credibility.belief <= 1.0);
+        CHECK(t.credibility.plausibility >= t.credibility.belief - 1e-9);
+    }
+    std::printf("  credibility across six tracks, one poorly sourced: "
+                "%.3f to %.3f\n", lowest, highest);
+
+    // The badly-sourced track has to be distinguishable from the other five.
+    // With the flat radius every one of them was exactly 1.000.
+    CHECK(highest - lowest > 0.05);
+}
+
 int main() {
     test_biased_sensor_is_identified();
     test_sound_estate_flags_nobody();
@@ -480,5 +533,6 @@ int main() {
     test_fusion_discriminates();
     test_fusion_reports_conflict_only_when_sources_disagree();
     test_fusion_with_no_evidence_is_uncommitted();
+    test_credibility_evidence_set_is_scaled_to_the_domain();
     return trace::test::summary("test_credibility");
 }

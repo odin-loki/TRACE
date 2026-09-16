@@ -15,7 +15,25 @@ namespace trace {
 namespace {
 
 constexpr std::size_t kObsCacheDepth = 20;
-constexpr Real kObsCacheRadius = 120.0;
+/// How far from a track an observation may be and still count as evidence
+/// ABOUT that track, for the credibility fusion.
+///
+/// This was 120 metres, flat, for every domain. Against each profile's own
+/// association gate - the distance an entity can actually cover in one scan,
+/// plus three standard deviations of sensor noise - that constant runs from
+/// 0.001x on WildlifeTelemetry and Maritime to 112x on SportsPitch. At the
+/// bottom end almost no observation qualified and credibility was fused from
+/// nothing; at the top end every observation in the scene counted as evidence
+/// about every track. It was the right number for roughly one domain.
+///
+/// Derived per profile now, by the same rule the birth gate uses.
+Real obs_cache_radius(const DomainProfile& p) {
+    Real fastest = 0.0;
+    for (const auto& m : p.mou_models) {
+        fastest = std::max(fastest, m.sigma / std::sqrt(2.0 * std::max(m.theta, 1e-6)));
+    }
+    return std::max(fastest * p.scan_dt_s + 3.0 * p.pos_noise_m, 1e-3);
+}
 
 std::string fmt(const char* spec, auto... args) {
     char buf[256];
@@ -77,11 +95,12 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     stages.emplace_back("track+associate", lap());
 
     // Keep the recent evidence behind each track for the credibility fusion.
+    const Real cache_radius = obs_cache_radius(config_.profile);
     for (const auto& t : confirmed) {
         auto& cache = obs_cache_[t->id()];
         for (const auto& o : observations) {
             if (!o.has_position()) continue;
-            if (distance(*o.position, t->position()) < kObsCacheRadius) {
+            if (distance(*o.position, t->position()) < cache_radius) {
                 cache.push_back(o);
             }
         }
