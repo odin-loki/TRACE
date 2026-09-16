@@ -74,8 +74,19 @@ DomainProfile VehicleConvoy() {
     p.p_detection = 0.92;
     p.rv_threshold_m = 30.0;
     p.rv_warning_horizon_s = 300.0;
-    p.brush_pass_m = 20.0;
-    p.parallel_route_m = 15.0;
+    // PARALLEL_ROUTE needs `brush_pass_m < separation <= parallel_route_m`.
+    // These two were the wrong way round - 20 and 15 - so the window was empty
+    // and the detector could not fire under this profile at all. The
+    // `anpr-corridor` scenario exists to exercise "the parallel-route detector
+    // on a genuine tail" and its own summary read "events raised: 0".
+    //
+    // Swapping them would give a 5 m window against `pos_noise_m` of 3, so a
+    // separation noise of 3*sqrt(2) = 4.2 m - alive by the letter and still
+    // dead in practice. These are set from the profile's own neighbouring
+    // scales instead: vehicles hold 20-50 m on a road, `chokepoint_m` is 25
+    // and `coloc_dist_m` is 100, so "together, not touching" is 15 to 50.
+    p.brush_pass_m = 15.0;
+    p.parallel_route_m = 50.0;
     p.parallel_vel_cos = 0.99;
     p.coloc_dist_m = 100.0;
     p.hvl_radius_m = 500.0;
@@ -252,6 +263,13 @@ DomainProfile WarehouseAssets() {
     p.rv_threshold_m = 2.0;          // asset meets handler
     p.rv_warning_horizon_s = 120.0;
     p.brush_pass_m = 1.5;
+    // Set explicitly, because the default is the URBAN one. Every other
+    // distance in this profile is single-digit metres - `coloc_dist_m` 4,
+    // `chokepoint_m` 3, `rv_threshold_m` 2 - while `parallel_route_m` was
+    // inheriting 80 m from `UrbanHUMINT`, so "moving together" meant anywhere
+    // in the same building and PARALLEL_ROUTE fired on any two assets that
+    // happened to be in motion.
+    p.parallel_route_m = 4.0;
     p.mode_trans_m = 3.0;            // pallet moves forklift -> conveyor
     p.mode_trans_scans = 3;
     p.loiter_min_s = 1800.0;         // dwell here means stalled inventory

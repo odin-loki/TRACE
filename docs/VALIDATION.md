@@ -1003,3 +1003,22 @@ The tool's defaults are what every table here reports; `--min-score` and
 - **Detection-rate estimates are conditioned on track survival**, so they are
   biased upward wherever a missed track simply dies. Accurate where something
   else keeps tracks alive.
+- **`PARALLEL_ROUTE` fires in none of the fourteen scenarios.** The detector
+  wants `brush_pass_m < separation <= parallel_route_m` and a matched heading,
+  held for `parallel_scans` scans in a row. Two profiles could not satisfy the
+  distance window at all and are fixed — `VehicleConvoy` had the two bounds
+  the wrong way round, at 20 and 15, so the window was empty; `WarehouseAssets`
+  set `brush_pass_m` to 1.5 m and left `parallel_route_m` inheriting 80 m from
+  the urban preset, in a facility whose `coloc_dist_m` is 4 m. Neither was what
+  kept the detector quiet.
+
+  `anpr-corridor` exists to demonstrate it "on a genuine tail", overrides the
+  window to 15–60 m and the streak to 8, and raises nothing. Instrumented over
+  that scenario: 180 pair-scans evaluated, 102 with the heading cosine above
+  threshold, 38 satisfying all three conditions at once, and **the longest
+  unbroken run is 4** against the 8 it asks for. So the matching is real and
+  intermittent, and either the detector is stricter than a tail at a 15%
+  detection rate can satisfy or the simulated tail does not hold station well
+  enough to be one. That has not been established, and the threshold has
+  deliberately not been lowered to the observed maximum, which would be tuning
+  to the test rather than fixing anything.
