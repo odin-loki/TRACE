@@ -29,8 +29,13 @@ option(TRACE_BUILD_TESTS "Build the test suite"                 ON)
 if(TRACE_WITH_XSIMD)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include/xsimd/xsimd.hpp")
         add_library(trace_xsimd INTERFACE)
+        # Split, because an absolute source path in an exported target is a
+        # path on the machine that built it and nowhere else. The vendored
+        # headers are installed alongside TRACE's own below.
         target_include_directories(trace_xsimd SYSTEM INTERFACE
-            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include")
+            "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include>"
+            "$<INSTALL_INTERFACE:include/trace_vendor>")
+        set(TRACE_XSIMD_VENDORED ON)
         message(STATUS "TRACE: using vendored xsimd")
     else()
         find_package(xsimd QUIET)
@@ -134,6 +139,97 @@ add_subdirectory(src/apps)
 if(TRACE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# ---------------------------------------------------------------------------
+# Install and export
+# ---------------------------------------------------------------------------
+#
+# There were none of these. `trace_core` declared `$<INSTALL_INTERFACE:include>`,
+# which is only meaningful to an install that exports it, so `cmake --install`
+# produced nothing and no consumer could `find_package(TRACE)`. A library that
+# cannot be installed is a library that can only be vendored.
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+# EXPORT_NAME so the installed target is `TRACE::core`, which is the alias the
+# in-tree build offers and the name the documentation gives. Without it the
+# export takes the raw target name and a consumer gets `TRACE::trace_core`:
+# find_package succeeds, target_link_libraries fails, and the difference is
+# invisible until somebody actually consumes the package.
+set(TRACE_EXPORT_TARGETS trace_core)
+set_target_properties(trace_core PROPERTIES EXPORT_NAME core)
+if(TRACE_WITH_XSIMD AND TARGET trace_xsimd)
+    list(APPEND TRACE_EXPORT_TARGETS trace_xsimd)
+    set_target_properties(trace_xsimd PROPERTIES EXPORT_NAME xsimd)
+endif()
+if(TRACE_WITH_CUDA AND TARGET trace_cuda)
+    list(APPEND TRACE_EXPORT_TARGETS trace_cuda)
+    set_target_properties(trace_cuda PROPERTIES EXPORT_NAME cuda)
+endif()
+
+install(TARGETS ${TRACE_EXPORT_TARGETS}
+    EXPORT TRACETargets
+    ARCHIVE  DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    LIBRARY  DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    RUNTIME  DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/trace"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+    FILES_MATCHING PATTERN "*.hpp")
+
+if(TRACE_XSIMD_VENDORED)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include/xsimd"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/trace_vendor"
+        FILES_MATCHING PATTERN "*.hpp")
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/LICENSE"
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}"
+        RENAME "LICENSE.xsimd")
+endif()
+
+# AGPL section 4 requires the licence to travel with the work.
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/THIRD-PARTY.md"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+
+install(EXPORT TRACETargets
+    FILE TRACETargets.cmake
+    NAMESPACE TRACE::
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TRACE")
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/TRACEConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TRACEConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/TRACEConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TRACE")
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/TRACEConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/TRACEConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TRACE")
+
+# `-march=native` is PUBLIC, so it reaches anything that links this target - and
+# it means the CONSUMER's machine, not the one that built the archive. With
+# xsimd on, the SIMD lane count decides sizeof(simd::Batch), so an archive built
+# on one microarchitecture and consumed on another disagrees with its own
+# headers about the layout of a type crossing the boundary. That is a silent
+# ODR violation, and it is not hypothetical: it produced several convincing
+# false measurements during this project's own audit before it was diagnosed.
+#
+# `trace::abi::compatible()` turns that into something a consumer can detect.
+# This warning is so they know to ask.
+if(TRACE_NATIVE_ARCH AND TRACE_WITH_XSIMD)
+    message(STATUS
+        "TRACE: -march=native + xsimd - this build is ABI-specific to this "
+        "machine's SIMD width. For an installed or redistributed package "
+        "configure with -DTRACE_NATIVE_ARCH=OFF, or check "
+        "trace::abi::compatible() at startup.")
 endif()
 
 message(STATUS "TRACE ${PROJECT_VERSION}")

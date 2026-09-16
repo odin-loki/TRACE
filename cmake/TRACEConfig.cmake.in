@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/TRACETargets.cmake")
+
+# A build with TRACE_WITH_XSIMD and -march=native is ABI-specific to the SIMD
+# width of the machine that produced it: the lane count decides
+# sizeof(trace::simd::Batch). Link against such an archive from a translation
+# unit compiled for a different microarchitecture and the two disagree about
+# the layout of a type that crosses the boundary, silently. Call
+# trace::abi::compatible() once at startup if you did not build this yourself.
+set(TRACE_BUILT_WITH_XSIMD @TRACE_WITH_XSIMD@)
+set(TRACE_BUILT_WITH_NATIVE_ARCH @TRACE_NATIVE_ARCH@)
+
+check_required_components(TRACE)

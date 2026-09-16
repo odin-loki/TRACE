@@ -29,6 +29,27 @@ cmake --build build
 ctest --test-dir build               # the test suite
 ```
 
+### Using it from another project
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTRACE_NATIVE_ARCH=OFF
+cmake --build build && cmake --install build --prefix /usr/local
+```
+
+```cmake
+find_package(TRACE 0.1 REQUIRED)
+target_link_libraries(your_target PRIVATE TRACE::core)
+```
+
+`-DTRACE_NATIVE_ARCH=OFF` is not optional advice for an installed build. With
+xsimd on, `-march=native` decides the SIMD lane count and therefore
+`sizeof(trace::simd::Batch)`, and that flag is PUBLIC — so it means *your*
+machine, not the one that built the archive. Link an AVX-512 build from a
+translation unit compiled for something older and the two disagree about the
+layout of a type crossing the boundary, silently. Turning native off makes the
+question moot; if you cannot, call `trace::abi::compatible()` once at startup,
+which compares the two and is the whole cost of finding out.
+
 Only a C++23 compiler and CMake are required. xsimd is vendored, and
 `-DTRACE_WITH_XSIMD=OFF` builds a scalar fallback that produces the same
 results to within the Monte Carlo noise (see

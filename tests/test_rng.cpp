@@ -3,6 +3,7 @@
 
 // The whole simulation suite rests on these draws being correct and
 // reproducible, so they get checked directly.
+#include "trace/backend/simd.hpp"
 #include "trace/core/rng.hpp"
 
 #include <vector>
@@ -92,7 +93,36 @@ void test_poisson_and_beta() {
 
 }  // namespace
 
+void test_abi_tag_matches_the_library() {
+    // `simd::Batch` is `xsimd::batch<Real>`, whose lane count follows the
+    // architecture the compiler targeted, and `-march=native` is PUBLIC on
+    // trace_core - native meaning the CONSUMER's machine. An archive built on
+    // one microarchitecture, linked from a unit compiled for another,
+    // disagrees with its own headers about the size of a type crossing the
+    // boundary. No diagnostic, no crash, wrong numbers.
+    //
+    // It happened here, during this project's own audit: probes built with
+    // different flags reported negative covariance determinants, an effective
+    // sample size below one, and denormal velocities. All artefacts, all
+    // retracted, a day spent. `trace::abi::compatible()` is one comparison.
+    //
+    // This test is trivially true in-tree - the suite compiles with the
+    // library's own flags - and that is the point: it pins the mechanism so a
+    // change that breaks the correspondence is caught here rather than by a
+    // consumer reading nonsense.
+    std::printf("  abi: %s, %zu lane(s), header %u, library %u\n",
+                simd::backend_name(), simd::kLanes,
+                abi::header_tag(), abi::library_tag());
+    CHECK(abi::compatible());
+    CHECK(abi::header_tag() == abi::library_tag());
+    // The tag must actually encode the lane count, or it cannot detect the
+    // thing it exists for.
+    CHECK((abi::header_tag() >> 1U) == static_cast<unsigned>(simd::kLanes));
+    CHECK(((abi::header_tag() & 1U) != 0U) == simd::kEnabled);
+}
+
 int main() {
+    test_abi_tag_matches_the_library();
     std::printf("simd backend: %s (%zu lanes)\n", simd::backend_name(),
                 simd::kLanes);
     test_scalar_moments();

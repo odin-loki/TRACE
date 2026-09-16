@@ -123,3 +123,43 @@ inline constexpr const char* backend_name() { return "scalar"; }
 #endif
 
 }  // namespace trace::simd
+
+namespace trace::abi {
+
+/// Is this translation unit compiled against the same SIMD ABI the library was
+/// built with?
+///
+/// `simd::Batch` is `xsimd::batch<Real>`, whose LANE COUNT - and therefore
+/// whose size - follows the architecture the compiler was told to target.
+/// `-march=native` is PUBLIC on `trace_core`, and native means the consumer's
+/// machine, not the one that produced the archive. Link an AVX-512 build from
+/// a translation unit compiled for SSE2 and the two disagree about the layout
+/// of a type that crosses the boundary: no diagnostic, no crash, just wrong
+/// numbers read out of live objects.
+///
+/// This is not hypothetical. It happened during this project's own audit and
+/// produced several convincing false findings - negative covariance
+/// determinants, an effective sample size below one, denormal velocities - all
+/// of them artefacts of a probe built with different flags, all retracted. The
+/// cost of finding that out was a day; the cost of checking is a comparison.
+///
+/// Build with `-DTRACE_NATIVE_ARCH=OFF` to make the question moot, or call
+/// this once at startup if you did not build the library yourself.
+///
+/// @{
+
+/// The ABI-affecting configuration of the HEADERS this unit sees.
+[[nodiscard]] inline constexpr unsigned header_tag() {
+    return (static_cast<unsigned>(simd::kLanes) << 1U) | (simd::kEnabled ? 1U : 0U);
+}
+
+/// The same, as the LIBRARY was compiled. Defined in the library, so it carries
+/// the library's answer rather than this unit's.
+[[nodiscard]] unsigned library_tag();
+
+/// True when the two agree. False means the numbers cannot be trusted.
+[[nodiscard]] inline bool compatible() { return header_tag() == library_tag(); }
+
+/// @}
+
+}  // namespace trace::abi
