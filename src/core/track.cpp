@@ -7,8 +7,14 @@
 #include <cmath>
 #include <functional>
 #include <numeric>
+#include <vector>
 
 namespace trace {
+
+/// How many recent (scan, source) hits a track remembers. Read by
+/// `shares_hit_scan_with` and `shares_source_with`, which decide whether two
+/// tracks may merge, and by `absorb`, which has to respect the same bound.
+constexpr std::size_t kMaxHitRecords = 24;
 namespace {
 
 /// Existence update constants, ported from the reference implementation.
@@ -144,7 +150,7 @@ void Track::note_hit_scan(int scan, const std::string& source) {
         ++n_hit_scans_;
     }
     hit_scans_.push_back(HitRecord{scan, std::hash<std::string>{}(source)});
-    if (hit_scans_.size() > 24) hit_scans_.pop_front();
+    while (hit_scans_.size() > kMaxHitRecords) hit_scans_.pop_front();
 }
 
 bool Track::shares_hit_scan_with(const Track& other) const {
@@ -196,6 +202,29 @@ void Track::absorb(const Track& other) {
     age_ = std::max(age_, other.age_);
     n_hit_scans_ = std::max(n_hit_scans_, other.n_hit_scans_);
     last_hit_scan_ = std::max(last_hit_scan_, other.last_hit_scan_);
+    // A confirmation is a fact about the entity, not about which of two track
+    // objects happened to survive the merge. Leaving it behind let a merge
+    // silently un-confirm an identity that `prune` and the report both read
+    // `ever_confirmed()` to decide the fate of.
+    ever_confirmed_ = ever_confirmed_ || other.ever_confirmed_;
+    // The absorbed track's hit records go too. They are what
+    // `shares_hit_scan_with` and `shares_source_with` test, so discarding them
+    // threw away exactly the evidence that decides whether the NEXT merge is
+    // legitimate - the survivor came out looking as though it had never been
+    // fed by the absorbed track's sensors. Merged newest-last and trimmed to
+    // the same bound `note_hit_scan` keeps.
+    if (!other.hit_scans_.empty()) {
+        std::vector<HitRecord> merged(hit_scans_.begin(), hit_scans_.end());
+        merged.insert(merged.end(), other.hit_scans_.begin(), other.hit_scans_.end());
+        std::sort(merged.begin(), merged.end(),
+                  [](const HitRecord& a, const HitRecord& b) { return a.scan < b.scan; });
+        if (merged.size() > kMaxHitRecords) {
+            merged.erase(merged.begin(),
+                         merged.begin() +
+                             static_cast<long>(merged.size() - kMaxHitRecords));
+        }
+        hit_scans_.assign(merged.begin(), merged.end());
+    }
     born_at_ = std::min(born_at_, other.born_at_);
     last_seen_ = std::max(last_seen_, other.last_seen_);
     r_ = std::max(r_, other.r_);
@@ -212,7 +241,9 @@ Real Track::mean_observation_quality() const {
 }
 
 Vec2 Track::smoothed_velocity(std::size_t n) const {
-    if (history_.empty()) return velocity();
+    // `take` of zero divided by zero. Guarded on `history_.empty()` only, so
+    // the one input that produced it - n == 0 - was the one input not checked.
+    if (history_.empty() || n == 0) return velocity();
     const std::size_t take = std::min(n, history_.size());
     Vec2 acc{};
     for (std::size_t i = history_.size() - take; i < history_.size(); ++i) {

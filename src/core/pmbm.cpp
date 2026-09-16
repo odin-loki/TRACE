@@ -1190,15 +1190,6 @@ void PmbmManager::merge_duplicates() {
     }
     tracks_ = std::move(keep);
 
-    // Per-track state for identities that are gone for good. `feeders_` is
-    // keyed by track id and was never cleared, so it kept a row for every
-    // track ever created.
-    {
-        const std::set<std::string> live = known_ids();
-        for (auto it = feeders_.begin(); it != feeders_.end();) {
-            it = live.count(it->first) != 0 ? std::next(it) : feeders_.erase(it);
-        }
-    }
 }
 
 void PmbmManager::prune(Real timestamp) {
@@ -1256,6 +1247,20 @@ void PmbmManager::prune(Real timestamp) {
     std::erase_if(dormant_, [&](const DormantEntry& d) {
         return scan_ - d.dormant_since_scan >= profile_->dormant_timeout;
     });
+
+    // Per-track state for identities that are gone for good. `feeders_` is
+    // keyed by track id and was never cleared, so it kept a row for every track
+    // ever created.
+    //
+    // This sweep lived at the bottom of `merge_duplicates()`, which opens with
+    // `if (tracks_.size() < 2) return;` - so in exactly the scene where there
+    // is least to merge, and where tracks are most likely to have just died,
+    // nothing was swept at all. `prune` is where retirement happens and it
+    // always runs, which is where a retirement sweep belongs.
+    const std::set<std::string> live = known_ids();
+    for (auto it = feeders_.begin(); it != feeders_.end();) {
+        it = live.count(it->first) != 0 ? std::next(it) : feeders_.erase(it);
+    }
 }
 
 std::vector<TrackPtr> PmbmManager::confirmed() const {

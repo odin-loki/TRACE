@@ -174,8 +174,19 @@ public:
         return threat_history_;
     }
 
-    /// Mean velocity over the last `n` history samples, in metres per scan.
-    /// More stable than the instantaneous filter velocity for heading tests.
+    /// Mean velocity over the last `n` history samples, in **metres per
+    /// second**. More stable than the instantaneous filter velocity for
+    /// heading tests.
+    ///
+    /// The samples it averages are `pf_.velocity()`, which `velocity()` above
+    /// documents as m/s, so this is m/s too. It said "metres per scan" until
+    /// the units were checked. Nothing consumed it wrongly - its only caller
+    /// takes a ratio of two of them - but this engine has shipped three
+    /// scans-for-seconds defects already, and a comment that misstates a unit
+    /// is where the fourth would come from.
+    ///
+    /// `n == 0` returns the instantaneous velocity rather than dividing by
+    /// zero.
     [[nodiscard]] Vec2 smoothed_velocity(std::size_t n = 4) const;
 
     /// Total path length walked over the last `n` samples.

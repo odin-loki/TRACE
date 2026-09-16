@@ -9,6 +9,7 @@
 #include "trace/core/track.hpp"
 #include "trace/core/particle_filter.hpp"
 #include <map>
+#include <set>
 
 #include <cstdio>
 #include <algorithm>
@@ -158,18 +159,63 @@ void test_survives_detection_gap() {
     for (int i = 12; i < 20; ++i) sc.scans[static_cast<std::size_t>(i)].clear();
 
     std::size_t before = 0, during = 0, after = 0;
+    std::set<std::string> ids_before, ids_during, ids_after;
+    Real r_before = 0.0, r_during = 0.0;
     for (std::size_t i = 0; i < sc.scans.size(); ++i) {
         pmbm.predict();
         pmbm.update(sc.scans[i], static_cast<Real>(i) * 60.0);
         const auto conf = pmbm.confirmed();
-        if (i == 11) before = conf.size();
-        if (i == 19) during = conf.size();
-        if (i == 30) after = conf.size();
+        // Identity and existence are read over EVERY live track, not just the
+        // confirmed ones. A track that has not been seen for eight scans is
+        // supposed to fall below `r_confirm` - that is the threshold doing its
+        // job - so measuring either over `confirmed()` alone asks whether the
+        // track is still trusted, when the question is whether it still exists.
+        const auto live = pmbm.all_tracks();
+        auto ids = [&live] {
+            std::set<std::string> s;
+            for (const auto& tr : live) s.insert(tr->id());
+            return s;
+        };
+        auto mean_r = [&live] {
+            if (live.empty()) return 0.0;
+            Real acc = 0.0;
+            for (const auto& tr : live) acc += tr->existence();
+            return acc / static_cast<Real>(live.size());
+        };
+        if (i == 11) { before = conf.size(); ids_before = ids(); r_before = mean_r(); }
+        if (i == 19) { during = conf.size(); ids_during = ids(); r_during = mean_r(); }
+        if (i == 30) { after = conf.size(); ids_after = ids(); }
     }
-    std::printf("  gap: before=%zu during-blackout=%zu after=%zu\n",
-                before, during, after);
+    std::size_t held = 0, kept = 0;
+    for (const auto& id : ids_during) held += ids_before.count(id);
+    for (const auto& id : ids_after) kept += ids_before.count(id);
+    std::printf("  gap: before=%zu during-blackout=%zu after=%zu; "
+                "held %zu ids through, %zu of the originals still live after; "
+                "mean existence %.3f -> %.3f\n",
+                before, during, after, held, kept, r_before, r_during);
+
     CHECK(before >= 2);
-    CHECK(after >= 2);  // reacquired after the blackout
+    CHECK(after >= 2);
+
+    // `during` used to be computed, printed, and asserted on by nothing, so a
+    // tracker that dropped every track the moment the sensor went quiet and
+    // built fresh ones afterwards passed a test called "survives a detection
+    // gap". Surviving means the SAME identities are still there, which is the
+    // only reading under which the name is true.
+    //
+    // It does NOT mean they are still confirmed. Eight blind scans take
+    // existence below `r_confirm`, which is the threshold working: a track
+    // nobody has seen for eight scans should not be trusted, only kept. The
+    // first version of this assertion demanded `confirmed()` hold up through
+    // the blackout and failed against correct behaviour.
+    CHECK(held >= 2);
+    CHECK(kept >= 2);
+
+    // The docstring says existence should decay across the blackout, so check
+    // that rather than asserting it in prose. Soft, because with a coverage map
+    // the engine is entitled to treat a silent scan as nobody looking: this
+    // requires only that it does not RISE on no evidence.
+    CHECK(r_during <= r_before + 1e-9);
 }
 
 void test_clutter_estimate_adapts() {
@@ -563,14 +609,34 @@ void test_absorb_keeps_measurement_rate_a_rate() {
     CHECK(old_t.measurement_rate() <= 1.0 + 1e-9);
     CHECK(old_t.hit_scans() > young.age() + 1);   // the setup actually bites
 
+    // Three more things a merge must carry, none of which it used to.
+    old_t.mark_confirmed();
+    const std::size_t records_before = young.hit_record_count();
+    CHECK(!young.ever_confirmed());
+    CHECK(old_t.hit_record_count() > 0);
+
     young.absorb(old_t);
-    std::printf("  after absorb: age %d, hit-scans %d, rate %.3f\n",
-                young.age(), young.hit_scans(), young.measurement_rate());
+    std::printf("  after absorb: age %d, hit-scans %d, rate %.3f, records %zu\n",
+                young.age(), young.hit_scans(), young.measurement_rate(),
+                young.hit_record_count());
     CHECK(young.measurement_rate() <= 1.0 + 1e-9);
     CHECK(young.detection_density() <= 1.0 + 1e-9);
-    // And the merged age is the union of the two spans, matching born_at_,
-    // which absorb() already takes as the earlier of the two.
+    // The merged age is the union of the two spans, matching born_at_, which
+    // absorb() already takes as the earlier of the two.
     CHECK(young.age() >= old_t.age());
+
+    // A confirmation is a fact about the ENTITY. Leaving it behind let a merge
+    // silently un-confirm an identity that prune() and the report both decide
+    // by `ever_confirmed()`.
+    CHECK(young.ever_confirmed());
+
+    // And the absorbed track's hit records come too. They are what
+    // shares_hit_scan_with and shares_source_with test, so discarding them
+    // threw away the evidence that decides whether the NEXT merge is
+    // legitimate: the survivor came out looking as though the absorbed
+    // track's sensors had never fed it.
+    CHECK(young.hit_record_count() > records_before);
+    CHECK(young.shares_source_with(old_t));
 }
 
 void test_measurement_rate_is_a_rate() {

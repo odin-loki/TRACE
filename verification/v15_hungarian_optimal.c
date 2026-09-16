@@ -19,17 +19,30 @@
  * is asserted no worse. Proving it for a nondeterministic rival proves it for
  * all of them, and costs one choice instead of 4*3*2 enumerated ones.
  *
- * Shape is 4 rows by 3 columns: TALL, which is the case that was wrong, and
- * the case every caller actually hits --
+ * TALL - more rows than columns - is the case that was wrong, and the case
+ * every caller actually hits --
  *   - src/sim/scenario.cpp:61 and src/apps/mot_main.cpp:175,274 match truth
  *     rows to track columns, so they are tall exactly when the tracker is
  *     under-reporting, which is the regime the metrics exist to measure;
  *   - src/core/pmbm.cpp:637 matches reappearing detections to dormant tracks,
  *     so it is tall whenever more things reappear at once than went dormant.
  *
- * Size is 3 rows by 2 columns with costs in {0,1,2} plus the two forbidden
- * markers - the smallest shape that is tall AND can be gated, which is what
- * discharges. The larger cases are covered by tests/test_assignment, which
+ * Size is 3 rows by 2 columns with admissible costs in {0,1,2} plus the two
+ * forbidden markers - the smallest shape that is tall AND can be gated, which
+ * is what discharges. (An earlier draft of this header opened by calling the
+ * shape 4 by 3 and then said 3 by 2 two paragraphs later. It is 3 by 2.)
+ *
+ * The admissible costs are NON-NEGATIVE here, and that is a real limit on what
+ * this harness proves. `hungarian_le` shifts admissible costs up by their own
+ * minimum before deriving the forbidden marker, precisely because one caller's
+ * costs are negated log-densities and go negative; on this domain that shift
+ * is the identity, so the harness exercises it without testing it. The
+ * encoding is the reason - a negative cost is how this translation spells
+ * "non-finite" - and widening it means a second marker and a wider integer
+ * domain, which is where this checker is slowest. The negative regime is
+ * covered instead by tests/test_assignment, which compares against exhaustive
+ * search over 96,000 gated instances in three sign regimes and eight shapes,
+ * and fails 42,006 of them against a build without the shift. The larger cases are covered by tests/test_assignment, which
  * compares against exhaustive search at eight ungated and seven gated shapes
  * and fails 568 times against a build with only the shape fix. That test, not
  * this harness, is the regression evidence; this states the claim beside the
@@ -64,7 +77,7 @@
 #define MAXV 2
 #define INF 1000                /* see the header: never decremented here */
 
-/* hungarian_le: assignment.cpp:23-96, verbatim in control flow.
+/* hungarian_le: assignment.cpp:26-174, verbatim in control flow.
  * Requires n <= m. Writes the column chosen for each row into rtc (length n)
  * and the row chosen for each column into ctr (length m). */
 static int solve_le_gated(const int cost[M][N], const int orig[M][N], int n, int m,
@@ -72,7 +85,7 @@ static int solve_le_gated(const int cost[M][N], const int orig[M][N], int n, int
     int u[M + 1], v[N + 1];   /* rows of the transpose = M, columns = N */
     int p[N + 1], way[N + 1];
     /* u is indexed by row and v, p, way by column, exactly as in
-     * assignment.cpp:25-26: `std::vector<Real> u(n+1), v(m+1)`. */
+     * assignment.cpp:106-107: `std::vector<Real> u(n+1), v(m+1)`. */
     for (int i = 0; i <= n; ++i) u[i] = 0;
     for (int j = 0; j <= m; ++j) { v[j] = 0; p[j] = -1; way[j] = 0; }
 
@@ -155,16 +168,26 @@ int main(void) {
     /* The working matrix: forbidden pairs become big_m, which exceeds the total
      * of every admissible cost so a matching using one is dearer than any
      * matching using none. */
+    /* The shift is carried here so the translation stays faithful, even though
+     * it is the identity over this harness's non-negative domain - see the
+     * header. Without it the marker is not dominating for negative costs. */
+    int lowest = 0;
+    for (int i = 0; i < N; ++i)
+        for (int j = 0; j < M; ++j)
+            if (admissible(cost[i][j], max_cost) && cost[i][j] < lowest)
+                lowest = cost[i][j];
+
     int admissible_total = 0;
     for (int i = 0; i < N; ++i)
         for (int j = 0; j < M; ++j)
-            if (admissible(cost[i][j], max_cost)) admissible_total += cost[i][j];
+            if (admissible(cost[i][j], max_cost))
+                admissible_total += cost[i][j] - lowest;
     const int big_m = admissible_total + 1;
 
     int wm[N][M];
     for (int i = 0; i < N; ++i)
         for (int j = 0; j < M; ++j)
-            wm[i][j] = admissible(cost[i][j], max_cost) ? cost[i][j] : big_m;
+            wm[i][j] = admissible(cost[i][j], max_cost) ? cost[i][j] - lowest : big_m;
 
     /* hungarian(): N > M, so solve the transpose. */
     int t[M][N];
