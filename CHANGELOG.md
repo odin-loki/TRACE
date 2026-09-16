@@ -115,10 +115,19 @@ Everything here was reproduced before it was fixed and measured after.
   sixteen discharged, `v16_existence_continuity` new. The default per-harness
   budget is now 1800 s: at 900 the suite could not discharge its own
   `v13_clutter_rate`, which takes about 1200.
-- Six tests that could not fail were rewritten against what the code should
+- Eleven tests that could not fail were rewritten against what the code should
   produce, and each was run against the pre-fix source to confirm it fails
-  there. `tests/test_detectors.cpp` is new: the detector layer had no direct
-  tests at all.
+  there. Among the later five: a profile test that asserted finiteness inside a
+  loop over targets, so a profile forming no track at all executed no checks; a
+  track-cap test whose 120 uniform points per scan produced three tracks
+  against a cap of 25; a waypoint test satisfied by the diagonal it exists to
+  rule out; a particle-spread test with a sixtyfold band; and a
+  false-accusation test that permitted a larger false accusation than the true
+  one it measures elsewhere.
+- Regression tests for three defects that had none: the coast timeout, the
+  scorer's one-to-one matching, and dormancy being reachable in every profile.
+- `tests/test_detectors.cpp` is new: the detector layer had no direct tests at
+  all.
 - A test whose source goes missing, or a test source nobody listed, is now a
   configuration error rather than a quietly smaller suite.
 
@@ -134,6 +143,14 @@ Everything here was reproduced before it was fixed and measured after.
   file being counted; `--help` for `trace_sim` listed four of its nine flags.
   Both fixed, and `--junction-radius` is new, so the metro scenario's
   constraint A/B can be run rather than only quoted.
+- **`PARALLEL_ROUTE` was documented as firing in none of the fourteen
+  scenarios.** That was one seed. Over thirteen seeds of `anpr-corridor` it
+  raises six events on five seeds — and exactly one of the six is on the
+  target/tail pair, which nothing was counting and the report labelled
+  "(tail)" regardless. The scenario now counts the two separately, and the
+  limitation is restated as what it is: a single carriageway, where every
+  vehicle holds the same heading, is the wrong place to demonstrate "matched
+  heading at a fixed offset".
 
 ## 0.1.0
 
