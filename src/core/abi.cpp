@@ -11,6 +11,16 @@
 
 namespace trace::abi {
 
-unsigned library_tag() { return header_tag(); }
+unsigned library_tag() {
+    // Bound to a constant expression on purpose, rather than `return
+    // header_tag();`. The value has to be decided while THIS file is being
+    // compiled - that is the only reason this file exists - and a call, even
+    // to a constexpr function, is a call the linker is free to resolve
+    // elsewhere. Built portable and linked from an `-mavx2` consumer at -O0,
+    // the earlier `return header_tag();` returned the consumer's tag and
+    // `compatible()` said yes to a genuine mismatch.
+    constexpr unsigned kTag = header_tag<detail::kThisUnitsTag>();
+    return kTag;
+}
 
 }  // namespace trace::abi

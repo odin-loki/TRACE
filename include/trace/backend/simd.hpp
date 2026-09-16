@@ -148,17 +148,47 @@ namespace trace::abi {
 ///
 /// @{
 
+namespace detail {
+
+/// This unit's tag, and nothing else's.
+///
+/// `constexpr` at namespace scope implies `const`, which implies INTERNAL
+/// linkage - deliberately, because that is the one thing the linker cannot
+/// merge. `simd::kLanes` next door is `inline constexpr`, so it has external
+/// linkage and exactly one copy survives program-wide; it is safe to read only
+/// in a constant expression, where the compiler answers from the tokens in
+/// front of it rather than from the surviving object. Every use of the value
+/// below therefore goes through a constant expression.
+constexpr unsigned kThisUnitsTag =
+    (static_cast<unsigned>(simd::kLanes) << 1U) | (simd::kEnabled ? 1U : 0U);
+
+}  // namespace detail
+
 /// The ABI-affecting configuration of the HEADERS this unit sees.
-[[nodiscard]] inline constexpr unsigned header_tag() {
-    return (static_cast<unsigned>(simd::kLanes) << 1U) | (simd::kEnabled ? 1U : 0U);
-}
+///
+/// A template whose default argument is filled in at the point of use, so the
+/// tag becomes part of the specialisation's identity. Two translation units
+/// built with different flags instantiate `header_tag<2>` and `header_tag<5>`,
+/// which are different functions; an ordinary inline function would be one
+/// function with two bodies, and the linker would keep whichever it saw first.
+///
+/// That is not pedantry. The first version of this guard was an inline
+/// function, and `library_tag()` below was `return header_tag();`. At -O2 the
+/// compiler folded the call and the guard worked. At -O0 it emitted a real
+/// call, the linker resolved it to the *consumer's* copy, and a portable
+/// library linked from an `-mavx2` unit reported tag 2 on both sides and
+/// declared itself compatible. The guard failed in exactly the build people
+/// reach for when they are chasing this kind of bug.
+template <unsigned Tag = detail::kThisUnitsTag>
+[[nodiscard]] constexpr unsigned header_tag() { return Tag; }
 
 /// The same, as the LIBRARY was compiled. Defined in the library, so it carries
 /// the library's answer rather than this unit's.
 [[nodiscard]] unsigned library_tag();
 
 /// True when the two agree. False means the numbers cannot be trusted.
-[[nodiscard]] inline bool compatible() { return header_tag() == library_tag(); }
+template <unsigned Tag = detail::kThisUnitsTag>
+[[nodiscard]] inline bool compatible() { return Tag == library_tag(); }
 
 /// @}
 

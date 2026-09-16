@@ -155,6 +155,28 @@ jobs:
           cmake --build build
           ./build/consumer
 
+      - name: The ABI guard fires when it should
+        run: |
+          set -e
+          # The guard has to be right when it says NO, and that is the case
+          # nothing was testing. The library above is portable; this consumer
+          # is built for AVX2, so xsimd gives it four lanes against the
+          # library's two and `compatible()` must return false. It must do so
+          # at -O0 as well as -O2: the first version of the guard folded the
+          # comparison at -O2 and emitted a call at -O0, where the linker
+          # resolved it to the consumer's own copy and the mismatch went
+          # unreported. Debug is exactly where someone chasing this would look.
+          cd /tmp/consumer
+          for opt in -O0 -O2; do
+            cmake -S . -B "build_mismatch$opt" -G Ninja               -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/_install"               -DCMAKE_CXX_FLAGS="-mavx2 $opt"
+            cmake --build "build_mismatch$opt"
+            if "./build_mismatch$opt/consumer"; then
+              echo "FAIL ($opt): a four-lane consumer called a two-lane library compatible"
+              exit 1
+            fi
+            echo "ok ($opt): mismatch reported"
+          done
+
   proofs:
     name: bounded model checking
     runs-on: ubuntu-latest
