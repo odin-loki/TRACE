@@ -243,7 +243,7 @@ possibilistic existence tracks the *quality* of the evidence rather than its
 quantity; when the two diverge, many weak detections have been laundered into
 false certainty. In the `spoofing` scenario that separates a persistent
 low-quality fabrication (flagged on 119 of 119 scans) from real entities
-(0 of 484) — though not a high-confidence lie, which by construction looks like
+(0 of 496) — though not a high-confidence lie, which by construction looks like
 high-confidence truth.
 
 **Catching a sensor that is lying to you.** The obvious test — does this

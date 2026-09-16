@@ -49,15 +49,21 @@ void Track::predict() {
     ++age_;
 }
 
-void Track::update_hit(const Observation& obs, Real scan_dt) {
+void Track::update_hit(const Observation& obs, Real scan_dt, Real source_trust) {
     if (!obs.has_position()) return;
     const Vec2 pos = *obs.position;
 
-    const Real weight = profile_->modality_weight(obs.modality) * obs.confidence;
+    // What the sensor asserted: its modality's standing weight times its own
+    // stated confidence in this detection. This is the evidence-quality axis.
+    const Real asserted = profile_->modality_weight(obs.modality) * obs.confidence;
+    // What we are prepared to believe of it: the above, discounted by how much
+    // this source has earned. The trust axis.
+    const Real trusted = asserted * std::clamp(source_trust, 0.0, 1.0);
 
-    // A low-confidence source should move the filter less, so its assumed
-    // measurement noise is inflated rather than its likelihood truncated.
-    pf_.update(pos, 1.0 / (weight + 0.1));
+    // A low-confidence or distrusted source should move the filter less, so its
+    // assumed measurement noise is inflated rather than its likelihood
+    // truncated.
+    pf_.update(pos, 1.0 / (trusted + 0.1));
 
     // If this sighting follows the previous one by about one scan period, the
     // implied velocity is informative. The reference compared against a fixed
@@ -94,8 +100,19 @@ void Track::update_hit(const Observation& obs, Real scan_dt) {
     // 0..1 scale, so pi_r converges to the typical quality of this track's
     // evidence while r converges to 1 on sheer count. A wide gap means many
     // weak detections have been laundered into false certainty.
+    //
+    // Measured on the sensor's own assertion, NOT on the trust-discounted
+    // figure. Source credibility is a relative judgement whose mid-range is
+    // normal for a healthy sensor - in the `spoofing` scenario two sound
+    // cameras sit at about 0.45 - so discounting by it put every real track's
+    // pi_r near 0.45 against an r of 0.9999, and the diagnostic went back to
+    // firing on 476 of 496 real-entity scans. Worse than useless: real
+    // entities scored a *higher* mismatch (0.66) than the high-confidence
+    // phantom (0.57). The test that should have caught it used a single
+    // source, and credibility returns 1.0 when only one source has ever
+    // reported, so it never saw the discount at all.
     const Real best_weight = profile_->modality_weight(Modality::GEOINT);
-    const Real quality = std::clamp(weight / std::max(best_weight, 1e-6), 0.0, 1.0);
+    const Real quality = std::clamp(asserted / std::max(best_weight, 1e-6), 0.0, 1.0);
     pi_r_ = std::clamp(std::max(pi_r_ * kPossRetain, quality), 0.0, 1.0);
 
     poss_mismatch_ = std::abs(r_ - pi_r_) / (std::max(r_, pi_r_) + 1e-6);
@@ -110,7 +127,7 @@ void Track::update_hit(const Observation& obs, Real scan_dt) {
     last_seen_ = obs.timestamp;
     ++n_hit_;
 
-    obs_weights_.push_back(weight);
+    obs_weights_.push_back(asserted);
     if (obs_weights_.size() > kMaxHistory) obs_weights_.pop_front();
 
     pol_.add(obs.timestamp, pos);

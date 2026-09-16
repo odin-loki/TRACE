@@ -266,6 +266,61 @@ void test_possibility_mismatch_discriminates() {
     CHECK(strong < 0.40);      // strong evidence is not flagged
     CHECK(marginal > 0.50);    // weak evidence promoted to certainty is
     CHECK(marginal > strong * 1.5);
+
+    // The same claim again, with an estate rather than one camera.
+    //
+    // The single-source case above is blind to a whole class of defect:
+    // SourceCredibility returns 1.0 when only one source has ever reported, so
+    // no trust discount anywhere in the engine can reach it. One duly got
+    // through - credibility was folded into an observation's confidence before
+    // it reached the possibility measure, and this diagnostic went back to
+    // firing on 476 of 496 real-entity scans in the `spoofing` scenario, real
+    // entities scoring a *higher* mismatch (0.66) than a deliberately
+    // high-confidence phantom (0.57), with every test still green.
+    //
+    // Three sound sources here, so the peer test has the two peers it needs.
+    // This is coverage of the multi-source path rather than a guard on that
+    // specific defect - on a clean scene credibility stays near 1 and the
+    // discount was only worth 0.05 of mismatch, well inside the threshold.
+    // The decisive statement is at Track level, in
+    // test_source_trust_does_not_move_evidence_quality.
+    const auto mismatch_with_an_estate = [](Modality m, Real conf) {
+        EngineConfig cfg;
+        cfg.profile = CityCameraSurveillance();
+        cfg.profile.scan_dt_s = 1.0;
+        cfg.area = Area{0, 400, 0, 400};
+        cfg.seed = 4;
+        Engine eng(cfg);
+        Rng rng(99);
+        ScanReport last;
+        for (int i = 0; i < 60; ++i) {
+            const Real t = i * 1.0;
+            const Vec2 truth{50.0 + i * 1.5, 200.0};
+            std::vector<Observation> obs;
+            for (int c = 0; c < 3; ++c) {
+                const Vec2 seen{truth.x + rng.normal(0.0, 3.0),
+                                truth.y + rng.normal(0.0, 3.0)};
+                obs.push_back({"o" + std::to_string(i) + "_" + std::to_string(c),
+                               t, seen, m, conf, "CAM_" + std::to_string(c)});
+            }
+            last = eng.ingest(obs, t);
+        }
+        if (last.targets.empty()) return -1.0;
+        Real worst = 0.0;
+        for (const auto& tr : last.targets) {
+            worst = std::max(worst, tr.possibility_mismatch);
+        }
+        return worst;
+    };
+
+    const Real estate_strong = mismatch_with_an_estate(Modality::GEOINT, 0.95);
+    const Real estate_marginal = mismatch_with_an_estate(Modality::OSINT, 0.60);
+    std::printf("  possibility mismatch, three sources: strong %.2f, marginal %.2f\n",
+                estate_strong, estate_marginal);
+    CHECK(estate_strong >= 0.0);
+    CHECK(estate_marginal >= 0.0);
+    CHECK(estate_strong < 0.40);
+    CHECK(estate_marginal > estate_strong);
 }
 
 }  // namespace

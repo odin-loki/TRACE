@@ -266,9 +266,13 @@ laundered into certainty".
 
 | | flagged | peak mismatch |
 |---|---|---|
-| real entities | 0/484 | 0.27 |
-| high-confidence phantom | 0/119 | 0.21 |
-| marginal-quality rumour | **119/119** | 0.71 |
+| real entities | 0/496 | 0.23 |
+| high-confidence phantom | 0/102 | 0.03 |
+| marginal-quality rumour | **119/119** | 0.64 |
+
+(Re-measured for the 0.2.0 release. The figures first published here — 0/484 at
+0.27, 0/119 at 0.21, 119/119 at 0.71 — stopped being true one commit later and
+stayed in this file and the README for seventy commits. See defect 38.)
 
 Note the middle row. The fixed diagnostic does **not** catch a convincing lie,
 and cannot: a high-confidence fabrication looks exactly like high-confidence
@@ -755,6 +759,62 @@ no endpoint (the city-grid case, which shared-endpoint detection alone misses
 entirely), and a T where one street ends on the interior of another (which
 both of the others miss). Only endpoint-meets-endpoint is excluded, being a
 plain corner. A 3x2 grid is eight junctions and four corners.
+
+## 38. And then trust was folded back into the evidence
+
+**Severity: high, and it undid defect 14 one commit after it was written.**
+
+The fix above gave `pi_r` a meaning: the normalised quality of a track's
+evidence, which modality at what confidence, so the gap against `r` reads as
+"weak evidence laundered into certainty". The very next commit — the
+credibility rework, defect 24's neighbourhood — added this to the association
+loop:
+
+```cpp
+Observation adjusted = *o;
+adjusted.confidence = o->confidence * cred_.get(o->source_id);
+```
+
+and handed `adjusted` to `update_hit`. The intent was sound and is still in
+force: a sensor nobody trusts should move the filter less. But `update_hit`
+derives `pi_r` from the same confidence, so the evidence-quality axis silently
+became quality × trust.
+
+Source credibility is a *relative* judgement. Its mid-range is normal for a
+perfectly healthy sensor — the two sound cameras in the spoofing scenario sit
+at about 0.45 — so every real track's `pi_r` settled near 0.45 while `r`
+saturated at 0.9999, and the mismatch cleared the 0.4 threshold on almost
+everything:
+
+| | flagged | peak mismatch |
+|---|---|---|
+| real entities | **476/496** | 0.66 |
+| high-confidence phantom | 74/102 | 0.57 |
+| marginal-quality rumour | 119/119 | 0.84 |
+
+Worse than the original defect, in one respect: real entities scored a *higher*
+mismatch than the phantom built to be convincing. The diagnostic was not merely
+uninformative, it was inverted.
+
+**Why nothing caught it.** `tests/test_engine`'s
+`test_possibility_mismatch_discriminates` feeds one source, and
+`SourceCredibility::get` returns 1.0 whenever only one source has ever
+reported — deliberately, for the reason in defect 24. So the check that exists
+precisely to guard this diagnostic could not see any trust discount at all, and
+reported clean separation (0.05 against 0.65) for seventy commits while the
+shipped scenario said otherwise.
+
+**Fix:** trust travels beside the observation instead of inside it.
+`Track::update_hit` takes a `source_trust` argument, multiplies it into the
+measurement variance — so the filter behaviour is byte-identical to before —
+and computes `pi_r` from what the sensor asserted. Whether a sensor deserves
+belief is a different question with four existing answers: `credibility()`,
+`biases()`, `conflicts()` and `orphaned_sources()`.
+
+Two tests, because the engine-level one cannot be made decisive on a clean
+scene: `test_source_trust_does_not_move_evidence_quality` in `test_pmbm` states
+the contract at Track level, and `test_possibility_mismatch_discriminates`
+gained a three-source case so the multi-source path is exercised at all.
 
 ## A note on what "it helped" means
 

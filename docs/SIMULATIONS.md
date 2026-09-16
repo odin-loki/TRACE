@@ -135,8 +135,11 @@ One entity is reported by several independent sensors; another is reported by
 one, confidently and consistently. Stresses Dempster–Shafer credibility fusion
 and the possibility/necessity pair, which is where a claim no other source
 corroborates is supposed to show up.
-*Result: 98% detection, 116% of what the sensors produced, 0 identity
-switches.*
+*Result: 98% detection, 115% of what the sensors produced, 0 identity
+switches. The possibility/probability mismatch flags the marginal-quality
+rumour on 119 of 119 scans and neither the real entities (0/496) nor the
+high-confidence phantom (0/102) — the second of those being a limit of the
+method rather than a result, see [PORTING_NOTES](PORTING_NOTES.md) 14.*
 
 ### 9. `mule-network` — accounts in a behavioural space, not a physical one
 "Position" is a two-dimensional behaviour embedding: transaction size against

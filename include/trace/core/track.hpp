@@ -46,7 +46,24 @@ public:
 
     // -- Lifecycle ----------------------------------------------------------
     void predict();
-    void update_hit(const Observation& obs, Real scan_dt);
+    /// Fold a detection in.
+    ///
+    /// `source_trust` is what SourceCredibility thinks of the sensor that
+    /// produced `obs`, in [0,1]. It is passed alongside the observation rather
+    /// than multiplied into `obs.confidence` beforehand, because the two say
+    /// different things and only one of them belongs in every consumer:
+    ///
+    ///   - the *filter* should believe a distrusted sensor less precisely, so
+    ///     trust widens the assumed measurement noise. That is what it is for.
+    ///   - the *possibility* measure asks how good this evidence is on its own
+    ///     terms - which modality, at what confidence the sensor asserted.
+    ///     Folding trust in there made `possibility_mismatch` fire on
+    ///     everything the moment a scene had more than one source, because
+    ///     credibility is a relative score that sits near 0.45 for a perfectly
+    ///     sound camera. Whether a sensor is trustworthy is a separate
+    ///     question, and `credibility()`, `biases()`, `conflicts()` and
+    ///     `orphaned_sources()` are how it gets answered.
+    void update_hit(const Observation& obs, Real scan_dt, Real source_trust = 1.0);
     /// `p_detect` negative means "use the profile's assertion", which is the
     /// default and what every caller did before the estimate existed.
     void update_miss(Real p_detect = -1.0);

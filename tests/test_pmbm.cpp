@@ -639,6 +639,88 @@ void test_absorb_keeps_measurement_rate_a_rate() {
     CHECK(young.shares_source_with(old_t));
 }
 
+void test_source_trust_does_not_move_evidence_quality() {
+    // Two axes that look alike and are not: how good a detection is, and how
+    // much the sensor that produced it has earned. `possibility()` is the
+    // first; SourceCredibility is the second.
+    //
+    // They were conflated by multiplying credibility into an observation's
+    // confidence before handing it to update_hit, which meant the possibility
+    // measure - documented as "the normalised quality of a track's evidence" -
+    // silently became "quality times trust". Credibility is a relative score
+    // whose mid-range is normal for a healthy sensor: two sound cameras in the
+    // `spoofing` scenario sit at about 0.45. So every real track's pi_r sat
+    // near 0.45 against an r of 0.9999, and possibility_mismatch, whose whole
+    // purpose is to separate weak evidence from strong, fired on 476 of 496
+    // real-entity scans - scoring real entities (0.66) as more suspicious than
+    // a deliberately high-confidence phantom (0.57).
+    //
+    // The engine-level test of that diagnostic used a single source, and
+    // SourceCredibility returns 1.0 when only one source has ever reported, so
+    // it never saw the discount. This one states the contract directly.
+    const DomainProfile profile = CityCameraSurveillance();
+    const MouConstants mou = MouConstants::from(profile);
+
+    struct Outcome { Real possibility; Real uncertainty; Real quality; };
+    const auto run = [&](Real trust) {
+        Track t("t", profile.r_birth, profile, mou, 0.0, 7);
+        t.filter().init(Vec2{0.0, 0.0});   // as PmbmManager does on birth
+        // Identical observations for both runs, noise included: the only thing
+        // that differs between them is the trust argument.
+        Rng rng(5);
+        for (int s = 0; s < 20; ++s) {
+            if (s > 0) t.predict();
+            const Vec2 truth{static_cast<Real>(s) * 2.0, 0.0};
+            const Observation o{"o" + std::to_string(s),
+                                static_cast<Real>(s) * profile.scan_dt_s,
+                                Vec2{truth.x + rng.normal(0.0, profile.pos_noise_m),
+                                     truth.y + rng.normal(0.0, profile.pos_noise_m)},
+                                Modality::GEOINT, 0.95, "CAM"};
+            t.update_hit(o, profile.scan_dt_s, trust);
+            t.note_hit_scan(s, "CAM");
+        }
+        return Outcome{t.possibility(), t.position_uncertainty(),
+                       t.mean_observation_quality()};
+    };
+
+    const Outcome trusted = run(1.0);
+    const Outcome doubted = run(0.30);
+    std::printf("  trust 1.00 -> possibility %.3f, sigma %.6f m; "
+                "trust 0.30 -> possibility %.3f, sigma %.6f m\n",
+                trusted.possibility, trusted.uncertainty,
+                doubted.possibility, doubted.uncertainty);
+
+    // Evidence quality is what the sensor asserted. Distrusting the sensor does
+    // not make its imagery lower-resolution.
+    CHECK_NEAR(doubted.possibility, trusted.possibility, 1e-9);
+    CHECK_NEAR(doubted.quality, trusted.quality, 1e-9);
+    // GEOINT at 0.95 normalised against the best modality weight: high, and
+    // nowhere near the 0.4 mismatch threshold once r saturates.
+    CHECK(trusted.possibility > 0.85);
+
+    // And the filter still weighs a doubted source less, which is the entire
+    // point of having a trust score. Measured as how far one detection drags
+    // the estimate: trust scales the assumed measurement variance, so a
+    // doubted report flattens the likelihood and moves the cloud less.
+    // (Spread is the wrong probe for this - a flatter likelihood also
+    // resamples less often, and resampling is itself a source of jitter, so
+    // the two effects partly cancel. Displacement does not have that problem.)
+    const auto pull = [&](Real trust) {
+        Track t("t", profile.r_birth, profile, mou, 0.0, 7);
+        t.filter().init(Vec2{0.0, 0.0});
+        const Vec2 before = t.position();
+        const Observation o{"o", profile.scan_dt_s, Vec2{40.0, 0.0},
+                            Modality::GEOINT, 0.95, "CAM"};
+        t.update_hit(o, profile.scan_dt_s, trust);
+        return t.position().x - before.x;
+    };
+    const Real pull_trusted = pull(1.0);
+    const Real pull_doubted = pull(0.30);
+    std::printf("  one 40 m detection pulls the estimate %.2f m at trust 1.00, "
+                "%.2f m at trust 0.30\n", pull_trusted, pull_doubted);
+    CHECK(pull_trusted > pull_doubted);
+}
+
 void test_measurement_rate_is_a_rate() {
     // `measurement_rate()` is the fraction of scans a track has existed for in
     // which it was detected, so it cannot exceed 1. Two things used to let it.
@@ -694,6 +776,7 @@ int main() {
     test_reacquisition_is_one_to_one();
     test_vague_tracks_do_not_win_reacquisition();
     test_existence_responds_to_fit();
+    test_source_trust_does_not_move_evidence_quality();
     test_measurement_rate_is_a_rate();
     test_absorb_keeps_measurement_rate_a_rate();
     return trace::test::summary("test_pmbm");

@@ -976,12 +976,11 @@ void PmbmManager::update(const std::vector<Observation>& observations,
             cred_.note_residual(o->source_id,
                                 *o->position - tracks_[i]->position(),
                                 profile_->pos_noise_m);
-            Observation adjusted = *o;
-            adjusted.confidence = o->confidence * cred_.get(o->source_id);
             if (profile_->adaptive_meas_noise) {
                 tracks_[i]->filter().set_noise_scale(noise_.scale(o->source_id));
             }
-            tracks_[i]->update_hit(adjusted, profile_->scan_dt_s);
+            tracks_[i]->update_hit(*o, profile_->scan_dt_s,
+                                   cred_.get(o->source_id));
         }
         for (const Observation* o : it->second) {
             tracks_[i]->note_hit_scan(scan_, o->source_id);
