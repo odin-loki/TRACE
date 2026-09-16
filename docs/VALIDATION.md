@@ -370,9 +370,9 @@ a kinematics-only tracker.
 
 | Detector | MOTA range | Character |
 |---|---|---|
-| **SDP** (strongest) | 60.2 – **77.6%** | Best result: MOT17-04-SDP |
-| **FRCNN** | 42.3 – 67.1% | Precision routinely above 97% |
-| **DPM** (oldest) | 19.1 – 45.9% | Its false positives get promoted to tracks |
+| **SDP** (strongest) | 60.3 – **77.6%** | Best result: MOT17-04-SDP |
+| **FRCNN** | 42.3 – 66.1% | Precision routinely above 97% |
+| **DPM** (oldest) | 19.5 – 46.3% | Its false positives get promoted to tracks |
 
 DPM's range was 4–38% before the source-credibility work; discounting a source
 whose reports disagree with its peers is worth roughly ten MOTA points on the
@@ -467,7 +467,7 @@ the sequence. Credibility is a *relative* judgement and now returns the neutral
 default when only one source has ever reported — there is nothing to compare a
 lone sensor against, and nothing left if you disbelieve it. Where peers do
 exist the mechanism is untouched; `sensor-drift` still discounts the drifting
-camera to 0.434 against a sound neighbour's 0.605 and flags it as against
+camera to 0.434 against a sound neighbour's 0.726 and flags it as against
 consensus.
 
 **An absent score was being read as a low score.** MOT20 ships its score column
@@ -482,9 +482,13 @@ asserts something the file never said, and it asserted the worst case.
 | before | 18.4% | 74.8% | 26% |
 | **after** | **63.4%** | **13.1%** | **117%** |
 
+Measured either side of those two fixes, so that the pair measures them. At the
+current head the same sequence reads 62.2% MOTA and 11.4% mostly-lost.
+
 The same two fixes are worth 2.7 points of ceiling recovery on MOT17, and took
 `wildlife` — the sparsest scenario in the suite, and the only one that had ever
-recovered *less* than its sensors produced — from 88% to 107%.
+recovered *less* than its sensors produced — from 88% to 107%; it now sits at
+98% over twelve seeds, the difference being everything that has changed since.
 
 What made this findable was a ratio that should have been stable and was not.
 Neither number is alarming alone: a dense sequence scoring badly is

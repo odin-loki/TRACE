@@ -349,7 +349,7 @@ mechanism had never been tested, and it did nothing.
   tracks the biased sensor helped build, because it drags them towards itself.
   That needs an independent reference: a surveyed landmark, or GPS truth.
 
-The drifting camera is now uniquely flagged, credibility 0.434 against 0.724
+The drifting camera is now uniquely flagged, credibility 0.434 against 0.726
 for its neighbours, with no false accusations on a sound estate.
 
 ## 18. Peer attribution punished the innocent
@@ -484,7 +484,7 @@ against, and a flat 20% penalty when it has none.
 rather than a default one. Credibility is a relative judgement and there is
 nothing to compare a lone sensor against — nor anything left if you disbelieve
 it. With peers present the mechanism is untouched: `sensor-drift` still
-discounts the drifting camera to 0.434 against a sound neighbour's 0.605 and
+discounts the drifting camera to 0.434 against a sound neighbour's 0.726 and
 flags it against consensus. Worth +2.7 points of ceiling recovery on MOT17 by
 itself, and it took `wildlife` — one collar per animal, so no peers ever — from
 88% recovery to 97%, a median over twelve seeds.
