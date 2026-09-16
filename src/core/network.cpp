@@ -85,11 +85,19 @@ std::vector<Real> betweenness_centrality(
     //
     // Dividing by the pair count alone, as this did, left every score at twice
     // its normalised value: the hub of a star scored 2.0 at every size, not the
-    // 1.0 a star's hub is the definition of. Nothing downstream broke, because
-    // the only two consumers are scale-free - the role classifier thresholds
-    // against the upper quartile of these same values, and the recurrence test
-    // asks only whether a score is above zero - but NetworkReport publishes the
-    // number, and it was not the number the field is named for.
+    // 1.0 a star's hub is the definition of.
+    //
+    // This comment used to add that "nothing downstream broke, because the only
+    // two consumers are scale-free". Two of the three are: the role
+    // classifier's HANDLER test compares against the upper quartile of these
+    // same values, and the recurrence test asks only whether a score is above
+    // zero. The third is not. `src/detectors/behaviour.cpp` sets a handler's
+    // reported confidence to `0.5 + min(bc * 2.0, 0.4)`, which reads the value
+    // ABSOLUTELY and saturates at bc = 0.2 - so with every score doubled it
+    // saturated at a true centrality of 0.1, and every handler above that
+    // reported the maximum confidence of 0.9 whatever its actual centrality.
+    // The claim was checked by looking at the threshold and not at the
+    // confidence beside it.
     const Real denom = std::max(static_cast<Real>((n - 1) * (n - 2)), 1.0);
     for (auto& v : bc) v /= denom;
     return bc;

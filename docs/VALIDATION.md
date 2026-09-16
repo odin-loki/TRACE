@@ -943,7 +943,7 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 |---|---|---|---|---|
 | evader | 70.1% | 94.8% | **134%** | 130 – 138% |
 | blackout | 66.6% | 80.2% | **120%** | 118 – 122% |
-| transit-hub | 81.5% | 97.5% | **120%** | 118 – 120% |
+| transit-hub | 81.3% | 97.5% | **120%** | 118 – 121% |
 | spoofing | 84.8% | 98.0% | **116%** | 112 – 118% |
 | warehouse | 48.0% | 53.8% | **113%** | 102 – 131% |
 | coordinated-evasion | 88.1% | 96.3% | **109%** | 108 – 113% |

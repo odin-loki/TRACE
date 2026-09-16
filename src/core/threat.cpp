@@ -161,7 +161,14 @@ Credibility fuse_credibility(const std::vector<Observation>& evidence,
         m_h = new_h;
         m_not_h = new_not_h;
         m_theta = new_theta;
-        conflict = k;
+        // Accumulated, not overwritten. `conflict = k` kept only the LAST
+        // pairwise conflict, so a run in which two sources contradicted each
+        // other flatly and every later source agreed reported a conflict of
+        // roughly zero - the one number whose job is to say "your sources do
+        // not agree" forgetting that they had not. 1 - prod(1 - k_i) is the
+        // mass that met a contradiction at some point in the combination, stays
+        // in [0,1), and reduces to k when there is one combination.
+        conflict = 1.0 - (1.0 - conflict) * (1.0 - k);
     }
 
     out.belief = std::clamp(m_h, 0.0, 1.0);

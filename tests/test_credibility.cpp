@@ -403,6 +403,7 @@ void test_fusion_masses_stay_a_mass_function() {
     // exactly 1.0 for every input, which satisfies "in [0,1]" and is still
     // meaningless.
     DomainProfile p;
+    Real lowest = 2.0, highest = -1.0, widest_gap = -1.0;
     for (Real c = 0.0; c <= 1.0; c += 0.05) {
         for (int n = 1; n <= 8; ++n) {
             std::vector<Observation> ev(static_cast<std::size_t>(n),
@@ -412,8 +413,23 @@ void test_fusion_masses_stay_a_mass_function() {
             CHECK(cr.plausibility >= 0.0 && cr.plausibility <= 1.0);
             CHECK(cr.conflict >= 0.0 && cr.conflict <= 1.0);
             CHECK(cr.belief <= cr.plausibility + 1e-12);
+            lowest = std::min(lowest, cr.belief);
+            highest = std::max(highest, cr.belief);
+            widest_gap = std::max(widest_gap, cr.plausibility - cr.belief);
         }
     }
+    std::printf("  mass function over the sweep: belief %.3f to %.3f, "
+                "widest uncommitted mass %.3f\n", lowest, highest, widest_gap);
+
+    // The comment above names the failure this test is supposed to catch -
+    // belief and plausibility both exactly 1.0 for every input, which satisfies
+    // every range check above - and then did not check for it. Two assertions
+    // that the degenerate case fails:
+    //   the fusion must respond to its input at all, and
+    //   somewhere in a sweep that includes zero-confidence evidence there must
+    //   be mass left uncommitted, because that is what Theta is for.
+    CHECK(highest - lowest > 0.05);
+    CHECK(widest_gap > 1e-6);
 }
 
 void test_fusion_discriminates() {

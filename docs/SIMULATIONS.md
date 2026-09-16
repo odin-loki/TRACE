@@ -410,8 +410,17 @@ position error look fine while a tracker quietly maintains three duplicate
 tracks per entity and swaps between them every few scans. Identity switches
 catch that immediately.
 
-Everything is deterministic under a seed — the same `--seed` replays bit for
-bit — so a regression shows up as a changed number rather than as noise.
+Everything is deterministic under a seed **on a given build** — the same
+`--seed` on the same binary replays bit for bit — so a regression shows up as a
+changed number rather than as noise.
+
+Across builds it is not. `TRACE_NATIVE_ARCH` is on by default, so the SIMD width
+follows the build machine, and the particle filter draws its process noise a
+vector at a time: a different lane count consumes the same random stream in a
+different order. Same algorithm, same seed, different sample. Build with
+`-DTRACE_NATIVE_ARCH=OFF` for a stream that does not depend on the host, and
+see "Reproducing" in [VALIDATION.md](VALIDATION.md) for how far the numbers
+move.
 
 **Read the numbers in context.** A high identity-switch count in `warehouse` is
 partly the metric's fault: eight entities converge inside the 4 m match radius,

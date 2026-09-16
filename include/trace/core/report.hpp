@@ -60,7 +60,12 @@ struct RendezvousWarning {
 /// Inferred position of an entity within its network.
 struct NetworkRole {
     std::string track;
-    std::string role;            ///< HANDLER / COURIER / ASSET / UNKNOWN
+    /// HANDLER / COURIER / ASSET / ASSOCIATE / UNKNOWN.
+    ///
+    /// ASSOCIATE was missing from this list while the classifier emitted it -
+    /// it is the "has contacts but fits none of the three" case, and a consumer
+    /// switching on the documented set would have fallen through on it.
+    std::string role;
     int n_contacts{0};
     Real avg_speed_mps{0.0};
     Real betweenness{0.0};
