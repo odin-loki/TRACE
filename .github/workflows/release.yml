@@ -141,7 +141,9 @@ jobs:
 
           mkdir -p dist
           if [ "${{ runner.os }}" = "Windows" ]; then
-            (cd pkg && tar.exe -a -cf "../dist/TRACE-${ver}-${plat}.zip" *)
+            # tar.exe -a -cf *.zip wrote a ustar and named it .zip.
+            # cmake -E tar --format=zip is a zip Expand-Archive will open.
+            (cd pkg && cmake -E tar cf "../dist/TRACE-${ver}-${plat}.zip" --format=zip .)
           else
             tar -czf "dist/TRACE-${ver}-${plat}.tar.gz" -C pkg .
           fi
