@@ -117,8 +117,14 @@ if(TRACE_WITH_CUDA)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/*.cu")
     if(TRACE_CUDA_SOURCES)
         add_library(trace_cuda ${TRACE_CUDA_SOURCES})
+        # Split the same way trace_core's is. A bare source path here is not an
+        # oversight that shows up later: `trace_core` links this target and
+        # both are exported, so with the path unwrapped CMake refuses to
+        # generate at all and -DTRACE_WITH_CUDA=ON stopped configuring the
+        # moment the install rules were added.
         target_include_directories(trace_cuda PUBLIC
-            "${CMAKE_CURRENT_SOURCE_DIR}/include")
+            "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+            "$<INSTALL_INTERFACE:include>")
         set_target_properties(trace_cuda PROPERTIES
             CUDA_SEPARABLE_COMPILATION ON
             POSITION_INDEPENDENT_CODE ON)
