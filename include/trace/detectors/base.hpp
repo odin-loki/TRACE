@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <optional>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -79,9 +80,61 @@ public:
         const std::vector<TrackPtr>& /*tracks*/, const DetectorContext& /*ctx*/) {
         return {};
     }
+
+    /// Drop per-track state for identities the engine is no longer carrying.
+    ///
+    /// Detectors keep history keyed by track id - visit deques, contact
+    /// streaks, per-pair separation series, dedup sets - and a track id is
+    /// never reused, so without this every one of those maps grows for the
+    /// life of the process. Measured before the engine started calling it:
+    /// resident memory rose about 10 MB per thousand scans with the live track
+    /// count held flat, and never plateaued.
+    ///
+    /// `live` holds every id the engine still knows about, live or dormant.
+    /// Anything else is gone for good and its state cannot be needed again.
+    /// The default does nothing, for detectors that hold no per-track state.
+    virtual void forget(const std::set<std::string>& /*live*/) {}
 };
 
 using DetectorPtr = std::unique_ptr<Detector>;
+
+/// Erase every entry of `m` whose key is not a live track id.
+template <typename Map>
+void forget_by_id(Map& m, const std::set<std::string>& live) {
+    for (auto it = m.begin(); it != m.end();) {
+        it = live.count(it->first) != 0 ? std::next(it) : m.erase(it);
+    }
+}
+
+/// Erase every entry of `m` keyed by a PAIR of track ids where either side has
+/// gone. A pair is dead as soon as one of its members is.
+template <typename Map>
+void forget_by_pair(Map& m, const std::set<std::string>& live) {
+    for (auto it = m.begin(); it != m.end();) {
+        const bool keep = live.count(it->first.first) != 0 &&
+                          live.count(it->first.second) != 0;
+        it = keep ? std::next(it) : m.erase(it);
+    }
+}
+
+/// Erase every entry of a dedup set whose tag embeds a dead track id.
+///
+/// The tags are built by the detectors themselves and carry the id as a
+/// prefix up to `sep` - "A>B" for a transition between two tracks, "A@cell"
+/// for a stop in a cell. Anything before the first separator is the id.
+inline void forget_tags(std::set<std::string>& tags,
+                        const std::set<std::string>& live, char sep) {
+    for (auto it = tags.begin(); it != tags.end();) {
+        const auto cut = it->find(sep);
+        const std::string id = cut == std::string::npos ? *it : it->substr(0, cut);
+        bool keep = live.count(id) != 0;
+        // "A>B" names two tracks; both have to still exist.
+        if (keep && sep == '>' && cut != std::string::npos) {
+            keep = live.count(it->substr(cut + 1)) != 0;
+        }
+        it = keep ? std::next(it) : tags.erase(it);
+    }
+}
 
 /// Helper for building an event without a wall of field assignments.
 inline DetectionEvent make_event(std::string type, std::string detector,

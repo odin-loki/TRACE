@@ -34,6 +34,12 @@ private:
         Real timestamp{0.0};
         Vec2 position{};
     };
+    void forget(const std::set<std::string>& live) override {
+        forget_by_id(visits_, live);
+        forget_by_pair(contact_streak_, live);
+    }
+
+private:
     std::unordered_map<std::string, std::deque<Visit>> visits_;
     std::map<std::pair<std::string, std::string>, int> contact_streak_;
 };
@@ -55,6 +61,11 @@ private:
         Real timestamp{0.0};
         Real separation{0.0};
     };
+    void forget(const std::set<std::string>& live) override {
+        forget_by_pair(sep_history_, live);
+    }
+
+private:
     std::map<std::pair<std::string, std::string>, std::deque<SepSample>> sep_history_;
     int scans_since_prune_{0};
 
@@ -89,6 +100,11 @@ public:
                                        const DetectorContext& ctx) override;
 
 private:
+    void forget(const std::set<std::string>& live) override {
+        forget_by_pair(streak_, live);
+    }
+
+private:
     std::map<std::pair<std::string, std::string>, int> streak_;
 };
 
@@ -99,6 +115,16 @@ public:
     [[nodiscard]] std::string name() const override { return "ModeTransition"; }
     std::vector<DetectionEvent> detect(const std::vector<TrackPtr>& tracks,
                                        const DetectorContext& ctx) override;
+
+    void forget(const std::set<std::string>& live) override {
+        // Only the dedup set, whose tag is "<from>><to>" and which grows
+        // without limit. `recent_stops_` is deliberately left alone: it is
+        // already bounded twice over, by a time cutoff and by a hard cap, and
+        // a stop recorded by a track that has since been retired is still a
+        // historical fact within that window. Dropping it would suppress
+        // exactly the handover this detector exists to find.
+        forget_tags(reported_, live, '>');
+    }
 
 private:
     struct Stop {
@@ -126,6 +152,11 @@ private:
         Real since{0.0};
         bool reported{false};
     };
+    void forget(const std::set<std::string>& live) override {
+        forget_by_id(dwell_, live);
+    }
+
+private:
     std::unordered_map<std::string, Dwell> dwell_;
 };
 
@@ -136,6 +167,11 @@ public:
     [[nodiscard]] std::string name() const override { return "CoverStop"; }
     std::vector<DetectionEvent> detect(const std::vector<TrackPtr>& tracks,
                                        const DetectorContext& ctx) override;
+
+    void forget(const std::set<std::string>& live) override {
+        // The dedup tag is "<id>@<cell>".
+        forget_tags(reported_, live, '@');
+    }
 
 private:
     std::set<std::string> reported_;
@@ -157,6 +193,11 @@ private:
         int count{0};
         bool reported{false};
     };
+    void forget(const std::set<std::string>& live) override {
+        forget_by_id(cells_, live);
+    }
+
+private:
     std::unordered_map<std::string, std::vector<CellVisit>> cells_;
 };
 
@@ -177,6 +218,15 @@ private:
     /// are present, since every one of them leaves a permanent mark on
     /// whatever it appeared next to. Entries age out, which also stops this
     /// map growing without bound in a long-running deployment.
+    void forget(const std::set<std::string>& live) override {
+        forget_by_id(contacts_, live);
+        for (auto& [id, peers] : contacts_) forget_by_id(peers, live);
+        forget_by_id(role_history_, live);
+        forget_by_id(speed_history_, live);
+        forget_by_id(last_seen_, live);
+    }
+
+private:
     std::unordered_map<std::string, std::unordered_map<std::string, int>> contacts_;
     std::unordered_map<std::string, std::deque<std::string>> role_history_;
     std::unordered_map<std::string, std::deque<Real>> speed_history_;

@@ -568,6 +568,41 @@ inside the score.
 
 ---
 
+## Not a formula error, and fixed anyway
+
+The engine leaked memory without bound, which is not a mathematical defect and
+would not have been found by any of the work above. It came out of an
+adversarial audit run alongside it, and is recorded here because the
+measurement is the same kind of thing: a property stated, checked, and held to.
+
+Thirteen maps across the engine, the detectors, the contact graph and the
+escalator are keyed by track id, and track ids are never reused, so every one
+of them grew for the life of the process. On top of that the engine retained a
+full `ScanReport` — the scan's targets, clusters, events and warnings — for
+every scan it had ever run.
+
+Measured with the live track count held flat at eight, entities arriving and
+leaving so that ids kept being minted: resident memory rose from 4.3 MB to
+**44.7 MB over 4,000 scans**, linear, no plateau. Two thirds of that was the
+retained reports.
+
+Both are fixed. `performance_report()` accumulates its statistics per scan
+rather than walking a retained history, so the history can be bounded to the
+last 256 scans without a single reported number changing; and the engine sweeps
+per-track state for ids the track manager no longer knows, live or dormant.
+The same load now plateaus at **8.7 MB**. Scenario output is byte-identical
+before and after, which is the point: the sweep only drops state that can never
+be consulted again, because an id that is gone cannot come back.
+
+One thing was deliberately left growing. `recent_stops_` in the mode-transition
+detector is already bounded twice, by a time cutoff and a hard cap, and a stop
+recorded by a track that has since been retired is still a historical fact
+inside that window — dropping it would suppress exactly the handover the
+detector exists to find. Pruning everything that *can* be pruned is not the
+same as pruning everything that should be.
+
+---
+
 ## Noted in passing, not chased
 
 Writing the test for section 5 turned up two things that are outside this

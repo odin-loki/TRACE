@@ -308,6 +308,19 @@ public:
 
     [[nodiscard]] const std::vector<TrackPtr>& all_tracks() const { return tracks_; }
     [[nodiscard]] std::size_t dormant_count() const { return dormant_.size(); }
+
+    /// Every track id the manager still knows about, live or dormant.
+    ///
+    /// Anything not in here has been retired for good - ids are never reused -
+    /// so a component holding state keyed by track id can safely drop the
+    /// rest. Without that, every per-track map in the engine and the detectors
+    /// grows for the life of the process.
+    [[nodiscard]] std::set<std::string> known_ids() const {
+        std::set<std::string> ids;
+        for (const auto& t : tracks_) ids.insert(t->id());
+        for (const auto& d : dormant_) ids.insert(d.track->id());
+        return ids;
+    }
     [[nodiscard]] Real clutter_rate() const { return clutter_.rate(); }
     [[nodiscard]] int scan() const { return scan_; }
     [[nodiscard]] const SourceCredibility& credibility() const { return cred_; }

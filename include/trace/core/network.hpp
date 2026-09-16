@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <deque>
 #include <cmath>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -47,6 +48,23 @@ public:
                                  const SpatialIndex* index = nullptr);
 
     /// Betweenness by track id, as computed on the most recent scan.
+    /// Drop per-track history for identities the manager no longer carries.
+    /// `bc_history_` is keyed by track id and kept a deque for every track
+    /// that ever existed; `adjacency_` ages out by weight, but only for pairs
+    /// that keep being seen.
+    void forget(const std::set<std::string>& live) {
+        for (auto it = bc_history_.begin(); it != bc_history_.end();) {
+            it = live.count(it->first) != 0 ? std::next(it) : bc_history_.erase(it);
+        }
+        for (auto row = adjacency_.begin(); row != adjacency_.end();) {
+            if (live.count(row->first) == 0) { row = adjacency_.erase(row); continue; }
+            for (auto e = row->second.begin(); e != row->second.end();) {
+                e = live.count(e->first) != 0 ? std::next(e) : row->second.erase(e);
+            }
+            ++row;
+        }
+    }
+
     [[nodiscard]] const std::unordered_map<std::string, Real>& betweenness() const {
         return latest_betweenness_;
     }
@@ -65,6 +83,14 @@ class AnomalyEscalator {
 public:
     std::vector<Alert> update(const std::string& track_id, Real score,
                               Priority tier);
+
+    /// Drop the score history of identities that are gone. Keyed by track id
+    /// and previously kept one deque per track ever scored.
+    void forget(const std::set<std::string>& live) {
+        for (auto it = history_.begin(); it != history_.end();) {
+            it = live.count(it->first) != 0 ? std::next(it) : history_.erase(it);
+        }
+    }
 
 private:
     std::unordered_map<std::string, std::deque<Real>> history_;

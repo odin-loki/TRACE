@@ -2,6 +2,11 @@
 #include "trace/core/engine.hpp"
 
 #include <cstdio>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include <unistd.h>
 
 #include "test_harness.hpp"
 
@@ -241,9 +246,80 @@ void test_possibility_mismatch_discriminates() {
 
 }  // namespace
 
+/// Resident set size in kilobytes, or -1 where /proc is not available.
+long rss_kb() {
+    std::ifstream in("/proc/self/statm");
+    if (!in) return -1;
+    long size = 0, resident = 0;
+    in >> size >> resident;
+    if (!in) return -1;
+    return resident * (sysconf(_SC_PAGESIZE) / 1024);
+}
+
+void test_memory_plateaus_under_track_turnover() {
+    // A deployment runs for weeks. Entities arrive, are tracked, and leave, so
+    // the number of live tracks stays flat while the number of track ids ever
+    // created climbs without limit - and every per-track map in the engine, the
+    // detectors, the contact graph and the escalator is keyed by that id.
+    //
+    // Before the engine swept retired ids, resident memory rose about 10 MB per
+    // thousand scans on exactly this load and never levelled off: 4.3 MB at the
+    // first scan, 44.7 MB by the four thousandth. Two thirds of that was
+    // ScanReports retained one per scan for the life of the engine; the rest
+    // was per-track state for identities long gone.
+    EngineConfig cfg;
+    cfg.profile = CityCameraSurveillance();
+    cfg.area = Area{-2000, 2000, -2000, 2000};
+    cfg.seed = 7;
+    Engine engine(cfg);
+    Rng rng(99);
+
+    const Real dt = cfg.profile.scan_dt_s;
+    constexpr int kLive = 6;         // entities alive at any moment
+    constexpr int kLifeScans = 25;   // then they leave and are replaced
+    constexpr int kWarmup = 600;     // let allocation settle before measuring
+    constexpr int kScans = 2600;
+
+    long rss_warm = -1;
+    for (int scan = 0; scan < kScans; ++scan) {
+        std::vector<Observation> obs;
+        for (int e = 0; e < kLive; ++e) {
+            const int cohort = scan / kLifeScans;
+            const Real phase = static_cast<Real>((cohort * 13 + e * 7) % 97);
+            obs.push_back(Observation{
+                "o" + std::to_string(scan) + "_" + std::to_string(e),
+                static_cast<Real>(scan) * dt,
+                Vec2{phase * 20.0 - 1000.0 + rng.normal(0.0, 1.0),
+                     static_cast<Real>(e) * 100.0 - 300.0 + rng.normal(0.0, 1.0)},
+                Modality::GEOINT, 0.9, "CAM"});
+        }
+        engine.ingest(obs, static_cast<Real>(scan) * dt);
+        if (scan == kWarmup) rss_warm = rss_kb();
+    }
+    const long rss_end = rss_kb();
+
+    // The history is bounded outright, which is checkable without /proc.
+    CHECK(engine.history().size() <= Engine::kHistoryScans);
+
+    if (rss_warm <= 0 || rss_end <= 0) {
+        std::printf("  memory: /proc unavailable, checked history bound only\n");
+        return;
+    }
+    const long growth = rss_end - rss_warm;
+    std::printf("  memory: %.1f MB after %d scans, +%.1f MB over the last %d "
+                "(was ~+20 MB before retired ids were swept)\n",
+                rss_end / 1024.0, kScans, growth / 1024.0, kScans - kWarmup);
+
+    // Generous: the unswept engine grew by roughly 20 MB over this stretch, so
+    // a 6 MB bound catches the regression without being sensitive to how the
+    // allocator happens to behave.
+    CHECK(growth < 6 * 1024);
+}
+
 int main() {
     test_empty_scan_is_safe();
     test_possibility_mismatch_discriminates();
+    test_memory_plateaus_under_track_turnover();
     test_track_forms_and_reports();
     test_detector_registry();
     test_determinism();

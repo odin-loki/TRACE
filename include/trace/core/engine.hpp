@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <set>
 #include <unordered_map>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -63,7 +64,20 @@ public:
     // -- Introspection ------------------------------------------------------
     [[nodiscard]] const DomainProfile& profile() const { return config_.profile; }
     [[nodiscard]] const EngineConfig& config() const { return config_; }
-    [[nodiscard]] const std::vector<ScanReport>& history() const { return history_; }
+    /// The most recent scans, oldest first, at most `kHistoryScans` of them.
+    ///
+    /// Bounded deliberately. A ScanReport carries the scan's targets, clusters,
+    /// events and warnings, so it is kilobytes rather than bytes, and keeping
+    /// one per scan for the life of the engine grew resident memory by about
+    /// 10 MB per 1000 scans with the live track count held flat - linear, with
+    /// no plateau, for a deployment that is meant to run for weeks. Everything
+    /// `performance_report()` needs is accumulated as it goes instead, so no
+    /// reported number changed when the bound was introduced.
+    [[nodiscard]] const std::deque<ScanReport>& history() const { return history_; }
+
+    /// How many scans `history()` retains. Two hundred and fifty-six is enough
+    /// for any caller that wants "the recent past" and costs a few megabytes.
+    static constexpr std::size_t kHistoryScans = 256;
     [[nodiscard]] int scan_count() const { return scan_count_; }
 
     /// Current trust score for a sensor, 0..1. Starts at 0.8 for an unknown
@@ -100,7 +114,27 @@ private:
     AnomalyEscalator escalator_;
     std::vector<DetectorPtr> detectors_;
     std::unordered_map<std::string, std::vector<Observation>> obs_cache_;
-    std::vector<ScanReport> history_;
+    std::deque<ScanReport> history_;
+
+    /// Session statistics, accumulated per scan so the full history does not
+    /// have to be kept to compute them.
+    struct Running {
+        int peak_tracks{0};
+        long events{0};
+        long rendezvous{0};
+        long roles{0};
+        int last_n_dormant{0};
+        /// One double per scan: 8 KB per thousand scans, against the kilobytes
+        /// per scan a retained ScanReport costs.
+        std::vector<Real> latencies;
+        /// Every track id ever reported. Unbounded in principle, but this IS
+        /// the statistic - "how many distinct identities has this session
+        /// seen" - and an id is a short string, so a thousand of them is tens
+        /// of kilobytes rather than tens of megabytes.
+        std::set<std::string> unique_ids;
+    };
+    Running stats_;
+
     Rng rng_;
     int scan_count_{0};
     Real total_latency_ms_{0.0};

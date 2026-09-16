@@ -1128,6 +1128,16 @@ void PmbmManager::merge_duplicates() {
         if (!absorbed[i]) keep.push_back(std::move(tracks_[i]));
     }
     tracks_ = std::move(keep);
+
+    // Per-track state for identities that are gone for good. `feeders_` is
+    // keyed by track id and was never cleared, so it kept a row for every
+    // track ever created.
+    {
+        const std::set<std::string> live = known_ids();
+        for (auto it = feeders_.begin(); it != feeders_.end();) {
+            it = live.count(it->first) != 0 ? std::next(it) : feeders_.erase(it);
+        }
+    }
 }
 
 void PmbmManager::prune(Real timestamp) {
