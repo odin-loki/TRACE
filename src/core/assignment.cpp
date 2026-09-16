@@ -54,20 +54,52 @@ Assignment hungarian_le(const std::vector<std::vector<Real>>& cost, Real max_cos
     // `match` documents. Pairs outside the gate are forbidden here as well as
     // at the bottom: a row spent on a pair the gate will discard is a row that
     // could have been matched admissibly somewhere else.
+    //
+    // That argument needs the admissible costs to be non-negative, and they are
+    // not always. Reacquisition scores a candidate with a Gaussian LOG-density
+    // and negates it (src/core/pmbm.cpp:630), so its costs run negative
+    // whenever the position sigma is below one metre - which is most of the
+    // time. A negative total made `big_m` negative too, and a forbidden pair
+    // then looked CHEAPER than every real one: on {{-3, inf}, {inf, -3}} the
+    // solver took both infinities, the gate below dropped them, and two tracks
+    // that should have been reacquired came back unmatched. Shifting the
+    // admissible costs up by their own minimum restores the precondition. Each
+    // candidate assignment fills all n rows, so subtracting a constant from
+    // every admissible cell moves same-cardinality assignments by the same
+    // amount and cannot reorder them; `total_cost` below is accumulated from
+    // the ORIGINAL costs, so nothing the caller sees is shifted.
+    const auto admissible = [max_cost](Real c) {
+        // One predicate, used here and by the gate at the bottom. Two separate
+        // tests could disagree - on a NaN `max_cost` both `c <= max_cost` and
+        // `c > max_cost` are false, which forbade every pair during the search
+        // and then dropped none of them afterwards.
+        return std::isfinite(c) && c <= max_cost;
+    };
+
+    Real lowest = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t j = 0; j < m; ++j) {
+            if (admissible(cost[i][j])) lowest = std::min(lowest, cost[i][j]);
+        }
+    }
+    const Real shift = lowest;   // <= 0; zero when nothing is negative
+
     Real admissible_total = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
         for (std::size_t j = 0; j < m; ++j) {
-            const Real c = cost[i][j];
-            if (std::isfinite(c) && c <= max_cost) admissible_total += c;
+            if (admissible(cost[i][j])) admissible_total += cost[i][j] - shift;
         }
     }
-    const Real big_m = admissible_total + 1.0;
+    // Strictly greater than the total, not merely one more than it: past 2^53
+    // adding one is a no-op and the domination stops being strict.
+    const Real big_m =
+        admissible_total +
+        std::max(1.0, admissible_total * 8.0 * std::numeric_limits<Real>::epsilon());
 
     std::vector<std::vector<Real>> w(n, std::vector<Real>(m, big_m));
     for (std::size_t i = 0; i < n; ++i) {
         for (std::size_t j = 0; j < m; ++j) {
-            const Real c = cost[i][j];
-            if (std::isfinite(c) && c <= max_cost) w[i][j] = c;
+            if (admissible(cost[i][j])) w[i][j] = cost[i][j] - shift;
         }
     }
 
@@ -132,7 +164,7 @@ Assignment hungarian_le(const std::vector<std::vector<Real>>& cost, Real max_cos
         const auto i = static_cast<std::size_t>(p[j]);
         // The solver matches everything it can; the gate is applied afterwards,
         // so a pair that is technically optimal but too far apart is dropped.
-        if (!std::isfinite(cost[i][j]) || cost[i][j] > max_cost) continue;
+        if (!admissible(cost[i][j])) continue;
         out.row_to_col[i] = static_cast<int>(j);
         out.col_to_row[j] = static_cast<int>(i);
         out.total_cost += cost[i][j];

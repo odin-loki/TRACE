@@ -242,6 +242,77 @@ void test_optimal_with_gated_pairs() {
     }
 }
 
+void test_optimal_with_negative_gated_costs() {
+    // The gated tests above draw costs from U(0, 20). Every cost matrix in the
+    // scoring path is a distance and so is non-negative, but the one inside the
+    // ENGINE is not: `reacquire_batch` negates a Gaussian log-density
+    // (pmbm.cpp:630), which is negative whenever the position sigma is below a
+    // metre. Drawing only non-negative costs left that regime untested, and it
+    // was broken - `big_m` was derived from the SUM of the admissible costs, so
+    // a negative total made the forbidden marker cheaper than every real pair.
+    // The solver took the forbidden cells, the gate dropped them, and the
+    // matching came back empty. Measured against brute force before the fix:
+    // 94-100% of all-negative instances returned the wrong CARDINALITY, and not
+    // one all-positive instance did, which is exactly why nothing caught it.
+    Rng rng(4457);
+    const std::pair<std::size_t, std::size_t> shapes[] = {
+        {2, 2}, {3, 3}, {4, 4}, {5, 3}, {3, 5}, {4, 6}};
+    const Real gate = std::numeric_limits<Real>::infinity();   // as reacquire_batch passes
+    for (const auto& [n, m] : shapes) {
+        for (int trial = 0; trial < 300; ++trial) {
+            // Two regimes: entirely negative, and straddling zero.
+            const bool straddle = (trial % 2) == 1;
+            std::vector<std::vector<Real>> cost(n, std::vector<Real>(m));
+            for (auto& row : cost) {
+                for (auto& v : row) {
+                    v = rng.uniform() < 0.3
+                            ? std::numeric_limits<Real>::infinity()
+                            : (straddle ? rng.uniform(-4.0, 4.0) : rng.uniform(-6.0, -0.1));
+                }
+            }
+            const Assignment a = match(cost, gate, /*exact_limit*/ 64);
+
+            std::size_t want_n = 0;
+            const Real want_cost = brute_force_min(cost, gate, &want_n);
+            CHECK(a.n_matched == want_n);
+            CHECK_NEAR(a.total_cost, want_cost, 1e-9);
+
+            for (std::size_t i = 0; i < n; ++i) {
+                const int j = a.row_to_col[i];
+                if (j < 0) continue;
+                CHECK(std::isfinite(cost[i][static_cast<std::size_t>(j)]));
+                CHECK(a.col_to_row[static_cast<std::size_t>(j)] == static_cast<int>(i));
+            }
+        }
+    }
+}
+
+void test_negative_minimal_case() {
+    // The 2x2 worked out by hand. Only the diagonal is admissible, so the
+    // answer is both pairs at a total of -6. Pre-fix this returned NOTHING:
+    // admissible_total = -6, big_m = -5, and -5 < -3 made the two infinities
+    // look like the cheap option.
+    const Real inf = std::numeric_limits<Real>::infinity();
+    const Assignment a = match({{-3.0, inf}, {inf, -3.0}}, inf, /*exact_limit*/ 64);
+    CHECK(a.n_matched == 2);
+    CHECK(a.row_to_col[0] == 0);
+    CHECK(a.row_to_col[1] == 1);
+    CHECK_NEAR(a.total_cost, -6.0, 1e-12);
+}
+
+void test_nan_gate_forbids_consistently() {
+    // A NaN gate makes both `c <= max_cost` and `c > max_cost` false, so a
+    // search that forbade on the first and a filter that dropped on the second
+    // disagreed: every pair was forbidden during the search and none was
+    // dropped after it, and the output carried pairs no gate had admitted.
+    // One shared predicate cannot disagree with itself.
+    const Real nan = std::numeric_limits<Real>::quiet_NaN();
+    const Assignment a = match({{1.0, 2.0}, {3.0, 4.0}}, nan, /*exact_limit*/ 64);
+    CHECK(a.n_matched == 0);
+    CHECK(a.row_to_col[0] == -1);
+    CHECK(a.row_to_col[1] == -1);
+}
+
 void test_gated_minimal_case() {
     // The smallest matrix that shows it, worked out by hand. Column 1 is
     // admissible to nobody, so row 1 has nowhere to go; the right answer is to
@@ -269,5 +340,8 @@ int main() {
     test_optimal_at_every_shape();
     test_optimal_with_gated_pairs();
     test_gated_minimal_case();
+    test_optimal_with_negative_gated_costs();
+    test_negative_minimal_case();
+    test_nan_gate_forbids_consistently();
     return trace::test::summary("test_assignment");
 }
