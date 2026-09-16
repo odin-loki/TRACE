@@ -18,6 +18,16 @@ proximity to the camera.
 
 ---
 
+These numbers rest on somebody else's data and somebody else's metrics, and
+citing them is a condition of using the first. Milan et al., *MOT16: A
+Benchmark for Multi-Object Tracking*, arXiv:1603.00831 (2016), which MOT17
+extends; Dendorfer et al., *MOT20: A benchmark for multi object tracking in
+crowded scenes*, arXiv:2003.09003 (2020); and Bernardin & Stiefelhagen,
+*Evaluating Multiple Object Tracking Performance: The CLEAR MOT Metrics*,
+EURASIP JIVP (2008), which defines MOTA, MOTP and the match-continuity rule
+this document records getting wrong. Terms and provenance are in
+[`../THIRD-PARTY.md`](../THIRD-PARTY.md).
+
 ## Result: MOT17 train, all 21 sequences
 
 Public detections, no re-identification network, no offline processing. One

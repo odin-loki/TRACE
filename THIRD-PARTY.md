@@ -23,6 +23,33 @@ AGPL while the BSD notice below is preserved, as BSD-3 requires.
 
 ---
 
+## Qt 6 (or Qt 5) — optional, `-DTRACE_WITH_QT=ON`
+
+- **Path:** not vendored. Found with `find_package(Qt6 6.4 COMPONENTS Widgets)`,
+  falling back to `Qt5 5.15`.
+- **Upstream:** https://www.qt.io
+- **Licence:** LGPL-3.0-or-later or GPL-3.0-or-later, at the Qt Company's
+  option, or a commercial licence.
+- **What links it:** `trace_console` only — the operator console under
+  `src/apps/gui/`. Nothing in `trace_core`, the four command-line applications
+  or the test suite touches Qt, and the option is **off** by default, so a
+  default build links none of it.
+- **Compatibility:** LGPL-3.0 permits conveying the combined work under
+  GPL-3.0, and GPL-3.0 is one-way compatible with AGPL-3.0 through AGPL
+  section 13, so `trace_console` may be distributed under AGPL-3.0. That
+  direction matters: the combination is AGPL, not LGPL, and anyone
+  redistributing the console owes the AGPL's obligations on the whole of it.
+- **If you link Qt dynamically and distribute the console**, LGPL section 4
+  additionally requires that a recipient be able to relink against a modified
+  Qt. Building with `-DTRACE_WITH_QT=OFF`, which is the default, avoids the
+  question entirely.
+
+This entry was missing until the release audit. `trace_console` was linking Qt
+and this file, which the README points at as the list of what is not this
+project's work, did not mention it.
+
+---
+
 ## Data that is *not* in this repository
 
 `data/` is `.gitignore`d and no annotation file is tracked in git.
@@ -34,6 +61,26 @@ label archives on demand.
   non-commercial research and require citation. Those terms bind you directly
   when you run the fetch script; they are not granted by, and are not affected
   by, TRACE's licence.
+
+  **The citation, discharged rather than merely described.** This file used to
+  say the terms "require citation" and then not give one, which is a worse
+  position than not mentioning it. Every MOTChallenge number in
+  [`docs/VALIDATION.md`](docs/VALIDATION.md) rests on:
+
+  > Milan, A., Leal-Taixé, L., Reid, I., Roth, S., and Schindler, K.
+  > *MOT16: A Benchmark for Multi-Object Tracking.* arXiv:1603.00831, 2016.
+  > — the benchmark MOT17 extends.
+
+  > Dendorfer, P., Rezatofighi, H., Milan, A., Shi, J., Cremers, D., Reid, I.,
+  > Roth, S., Schindler, K., and Leal-Taixé, L. *MOT20: A benchmark for multi
+  > object tracking in crowded scenes.* arXiv:2003.09003, 2020.
+
+  The metrics themselves are not MOTChallenge's either:
+
+  > Bernardin, K., and Stiefelhagen, R. *Evaluating Multiple Object Tracking
+  > Performance: The CLEAR MOT Metrics.* EURASIP Journal on Image and Video
+  > Processing, 2008. — MOTA, MOTP, and the match-continuity rule this
+  > repository had to correct itself against.
 - Nothing in TRACE's build or test suite requires this data. `ctest` passes on
   a fresh clone with `data/` absent; only `trace_mot` needs it.
 
