@@ -124,6 +124,12 @@ public:
     [[nodiscard]] Real speed_mps(Real scan_dt) const {
         return velocity_mps(scan_dt).norm();
     }
+    [[nodiscard]] Real velocity_uncertainty() const {
+        return pf_.velocity_uncertainty();
+    }
+    [[nodiscard]] Real position_velocity_covariance() const {
+        return pf_.position_velocity_covariance();
+    }
     [[nodiscard]] Real position_uncertainty() const {
         return pf_.position_uncertainty();
     }

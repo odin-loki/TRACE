@@ -349,7 +349,7 @@ third_party/xsimd/                            vendored
 | [docs/USE_CASES.md](docs/USE_CASES.md) | What this can be retrofitted to do, in three tiers by distance from shipped code |
 | [docs/SIMULATIONS.md](docs/SIMULATIONS.md) | Every simulation, what failure mode each one stresses, and further ones worth building |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | MOTChallenge replay results, the detector-ceiling method, and how to read them against published work |
-| [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Thirty-eight defects found and fixed, why each was invisible, and what changed |
+| [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Thirty-nine defects found and fixed, why each was invisible, and what changed |
 | [docs/FORMAL_VERIFICATION.md](docs/FORMAL_VERIFICATION.md) | Every formula checked against the model it implements, and what a bounded model checker could prove about the code |
 | [docs/AUDIT.md](docs/AUDIT.md) | The pre-release adversarial audit: method, what it found, what it refuted, and what is still open |
 | [CHANGELOG.md](CHANGELOG.md) | What changed between releases, and where the working for each change is |
@@ -365,7 +365,7 @@ intelligence work, kept verbatim under `reference/`. The port generalises the
 framing — intelligence is now one domain pack among thirteen — and fixes eleven
 substantive algorithmic defects inherited from it. Four of them were invisible
 in the original's own metrics, because it reported peak track counts but never
-identity continuity. Twenty-seven more were introduced or exposed by the port
+identity continuity. Twenty-eight more were introduced or exposed by the port
 itself and are recorded in the same place. [The full list is
 here](docs/PORTING_NOTES.md); the shortest summary is that association was not
 one-to-one, so duplicate tracks were fed the same detection forever and never

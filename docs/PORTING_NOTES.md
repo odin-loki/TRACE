@@ -1,8 +1,8 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Thirty-eight substantive defects were
+The C++23 port is not a transliteration. Thirty-nine substantive defects were
 found — eleven inherited from `reference/aria_intel.py`, which are 1 to 11
-below, and twenty-seven introduced or exposed by the port itself, which are the
+below, and twenty-eight introduced or exposed by the port itself, which are the
 rest — while getting the simulations, then real MOTChallenge data, then the
 engine's own cost profile, and finally a pre-release audit to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
@@ -822,6 +822,45 @@ Two tests, because the engine-level one cannot be made decisive on a clean
 scene: `test_source_trust_does_not_move_evidence_quality` in `test_pmbm` states
 the contract at Track level, and `test_possibility_mismatch_discriminates`
 gained a three-source case so the multi-source path is exercised at all.
+
+## 39. The forecast was a straight line beside a filter that does not go straight
+
+**Severity: medium, and this file had already recorded it as a known
+limitation rather than a defect.**
+
+`ScanReport`'s per-track forecast extrapolated `position + velocity * elapsed`,
+with an interval of `position_uncertainty * sqrt(k + 1)`. The comment beside it
+said the coefficient "is the current uncertainty rather than the motion model's
+process noise, so this is an order-of-magnitude indication and not a calibrated
+interval", and left it there.
+
+Both halves were wrong in the same way as defect 15, and for the same reason: a
+constant-velocity extrapolation is not this engine's model. The filter's
+predict step multiplies velocity by `exp(-theta dt)` each scan and re-mixes the
+regimes through the transition matrix, so the forecast disagreed with the
+filter that produced the velocity it extrapolated - 73% of the linear answer
+over six steps on `UrbanHUMINT`'s walking regime, a fifth of it on
+`OrganisedCrimeNetwork`'s stationary one.
+
+**Fix:** run the filter's own mean and covariance recursion forward with no
+measurements. The derivation is in
+[FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md) defect 16. Two quantities the
+recursion needs were not being computed - the particle cloud's velocity
+variance and its position/velocity covariance - and both come out of the same
+weighted pass that already produces the position covariance, so the cost is six
+multiply-adds per particle on a cache that is rebuilt only when the cloud moves.
+
+The interval this produces is much wider: 252 m one scan ahead for a walker
+tracked through twenty-four clean scans, where the old expression gave 15 m.
+That is the result, not a side effect. `UrbanHUMINT`'s regime mixture spans
+0.15 m/s to 25 m/s and the posterior on a 60 s scan is not concentrated, so the
+honest one-minute prediction for something that might be a vehicle is a few
+hundred metres. An interval that says 15 m is not more useful than one that
+says 252 m; it is wrong.
+
+Nothing in the engine reads the forecast - it is drawn by the operator console
+and checked by the tests - so every scenario figure in the suite is identical
+to the digit either side of this change.
 
 ## A note on what "it helped" means
 

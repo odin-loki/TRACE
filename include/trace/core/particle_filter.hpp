@@ -100,6 +100,11 @@ public:
     [[nodiscard]] Mat2 innovation_covariance() const;
     [[nodiscard]] Real mahalanobis_sq(Vec2 obs) const;
     [[nodiscard]] Real position_uncertainty() const; ///< sqrt(trace(P_xy))
+    [[nodiscard]] Real velocity_uncertainty() const; ///< sqrt(trace(P_vv)), m/s
+    /// cov(x,vx) + cov(y,vy). Positive while the cloud's position error and
+    /// its velocity error point the same way, which is most of the time and is
+    /// what makes a forecast's uncertainty grow faster than either term alone.
+    [[nodiscard]] Real position_velocity_covariance() const;
 
     [[nodiscard]] int dominant_model() const;
     [[nodiscard]] const std::string& dominant_model_name() const;
@@ -152,6 +157,8 @@ private:
     mutable Vec2 pos_c_{};
     mutable Vec2 vel_c_{};
     mutable Mat2 P_c_{};
+    mutable Mat2 Pv_c_{};
+    mutable Real Pxv_c_{0.0};
     mutable Mat2 S_c_{};
     mutable Mat2 S_inv_c_{};
 

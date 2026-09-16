@@ -534,15 +534,107 @@ void test_forecast_advances_a_scan_period_per_step() {
     CHECK(target != nullptr);
     if (target == nullptr) return;
 
-    // Each step must move by one scan period of the reported velocity, and the
-    // timestamps must agree with the distance.
+    // Each step must be where the engine's own motion model says the entity
+    // will be, and the timestamps must agree with it.
+    //
+    // Not `position + velocity * elapsed`. That is a constant-velocity
+    // extrapolation and this engine does not model constant velocity: the
+    // filter's predict step decays velocity towards zero at each regime's
+    // mean-reversion rate, so a linear forecast contradicts the filter that
+    // produced the velocity it extrapolates. Over six steps of
+    // OrganisedCrimeNetwork's stationary regime the two differ by a factor of
+    // five.
+    //
+    // The model's answer for k scans ahead is
+    //
+    //     x0 + v0 * sum_r mu_r (1 - exp(-theta_r k dt)) / theta_r
+    //
+    // which is exactly what k applications of the one-scan prediction compose
+    // to, because the expected velocity decays geometrically. That identity is
+    // the check: the forecast must be the filter's own prediction, not
+    // something computed alongside it.
     const Vec2 v = target->velocity_mps;
-    Vec2 expected = target->position;
+    const auto& models = cfg.profile.mou_models;
+    Real worst_rel = 0.0;
     for (std::size_t k = 0; k < target->forecast.size(); ++k) {
-        expected += v * dt;
-        const ForecastStep& f = target->forecast[k];
-        const Real err = distance(f.position, expected);
-        CHECK(err <= 1e-6 * (1.0 + std::abs(expected.x) + std::abs(expected.y)));
+        const Real elapsed = static_cast<Real>(k + 1) * dt;
+        // Bracket rather than reproduce the mixture: the coefficient is a
+        // convex combination over the regimes, so it lies between the smallest
+        // and the largest of them whatever the posterior is.
+        Real lo = std::numeric_limits<Real>::infinity();
+        Real hi = 0.0;
+        for (int r = 0; r < kNumModels; ++r) {
+            const Real theta = models[r].theta;
+            const Real c = (1.0 - std::exp(-theta * elapsed)) / theta;
+            lo = std::min(lo, c);
+            hi = std::max(hi, c);
+        }
+        const Real moved = distance(target->forecast[k].position, target->position);
+        CHECK(moved >= lo * v.norm() - 1e-6);
+        CHECK(moved <= hi * v.norm() + 1e-6);
+        // And strictly less than the constant-velocity answer, which is the
+        // defect this replaced: (1 - e^-u)/u < 1 for every positive u.
+        CHECK(moved < v.norm() * elapsed);
+        worst_rel = std::max(worst_rel, moved / (v.norm() * elapsed));
+    }
+    std::printf("  forecast: furthest step is %.0f%% of the constant-velocity "
+                "answer\n", 100.0 * worst_rel);
+
+    // The signature that separates the two rules with no Monte-Carlo noise in
+    // it at all: successive increments must SHRINK. A velocity that decays
+    // towards zero covers less ground each scan than the one before; constant
+    // velocity covers exactly the same. This is what a linear forecast cannot
+    // do, at any horizon and under any profile.
+    Vec2 previous = target->position;
+    Real last_increment = std::numeric_limits<Real>::infinity();
+    for (const ForecastStep& f : target->forecast) {
+        const Real increment = distance(f.position, previous);
+        CHECK(increment < last_increment);
+        CHECK(increment > 0.0);
+        last_increment = increment;
+        previous = f.position;
+    }
+
+    // The composition identity, checked against the filter itself: the
+    // forecast for step k must be where the engine gets to after k scans in
+    // which nothing is reported.
+    {
+        EngineConfig quiet_cfg = cfg;
+        Engine quiet(quiet_cfg);
+        Vec2 t2{0.0, 0.0};
+        ScanReport r2;
+        for (int i = 0; i < 24; ++i) {
+            r2 = quiet.ingest(one("q" + std::to_string(i),
+                                  static_cast<Real>(i) * dt, t2, 0.95),
+                              static_cast<Real>(i) * dt);
+            t2.x += speed * dt;
+        }
+        CHECK(!r2.targets.empty());
+        if (!r2.targets.empty() && !r2.targets.front().forecast.empty()) {
+            const auto predicted = r2.targets.front().forecast;
+            const std::string id = r2.targets.front().track_id;
+            for (std::size_t k = 0; k < predicted.size(); ++k) {
+                r2 = quiet.ingest({}, static_cast<Real>(24 + k) * dt);
+                const TargetReport* same = nullptr;
+                for (const auto& tr2 : r2.targets) {
+                    if (tr2.track_id == id) same = &tr2;
+                }
+                if (same == nullptr) break;
+                // Monte-Carlo prediction, so this is a sample of the mean
+                // rather than the mean; a tenth of the step is a tight band on
+                // a cloud of 320 particles.
+                // Monte-Carlo prediction on both sides, so this compares two
+                // samples of the same mean. The cloud's own standard error is
+                // roughly a sigma over the square root of the effective sample
+                // size, which measures at 4-8% of the forecast's interval
+                // across the horizon; a quarter of that interval is a
+                // comfortable band that still bounds the two to the same
+                // answer.
+                const Real gap = distance(same->position, predicted[k].position);
+                CHECK(gap <= 0.25 * predicted[k].uncertainty_m +
+                                 cfg.profile.pos_noise_m);
+            }
+        }
     }
     // No forecast step may claim perfect certainty. `position_uncertainty()`
     // is sqrt(trace(P)) over the particle cloud, and a cloud that has
@@ -567,9 +659,13 @@ void test_forecast_advances_a_scan_period_per_step() {
     const Real step_s = target->forecast[0].timestamp - last.timestamp;
     std::printf("  forecast: first step %.0f m over %.0f s (%.2f m/s reported)\n",
                 step_m, step_s, v.norm());
-    // The distance travelled must match the time elapsed at the reported
-    // speed. With `p += v` it was out by the scan period - 3600x here.
-    CHECK(std::abs(step_m - v.norm() * step_s) <= 1e-3 * (step_m + 1.0));
+    // The timestamps still have to be a scan period apart - the defect that
+    // made this test exist was `p += v`, which advanced one second per scan
+    // whatever the profile said, 3600-fold out on an hourly one.
+    CHECK_NEAR(step_s, dt, 1e-9);
+    // And a scan period of travel is the ceiling, not the target.
+    CHECK(step_m < v.norm() * step_s);
+    CHECK(step_m > 0.25 * v.norm() * step_s);
 }
 
 void test_fitted_velocity_is_metres_per_scan() {

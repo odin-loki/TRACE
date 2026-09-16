@@ -148,6 +148,7 @@ commit that made it.
 
 | | Effect |
 |---|---|
+| The forecast was a straight line beside a filter that does not go straight | `position + velocity * elapsed` contradicts a filter whose predict step decays velocity; the interval beside it scaled the current uncertainty by `sqrt(k+1)` and had nothing to do with the process noise. Both now run the filter's own recursion forward. Closed the open item this document raised against itself. |
 | Position was integrated trapezoidally over an exact OU velocity step | The mean displacement per scan exceeded the correct one by 8% at `theta dt` of 1, 31% at 2, and a factor of five at 10. Ten regime/profile pairs sit at 1 or above, `OrganisedCrimeNetwork`'s stationary regime at 10. Fixed by integrating exactly, noise included; MOT17 MOTA unchanged at 53.0% and 214 fewer identity switches. |
 | Trust was folded into the evidence-quality measure | `possibility_mismatch` fired on 476 of 496 real-entity scans in the `spoofing` scenario and scored real entities as more suspicious than a phantom built to be convincing. The engine-level test could not see it: it fed one source, and credibility returns 1.0 when only one source has ever reported. Now 0 of 496. |
 | `Engine`'s move operations were defaulted | PmbmManager, every Track and each Track's filter hold a `const DomainProfile*` into the Engine's own config, which a defaulted move relocated. Use-after-free on the third scan after the source was destroyed, and a silently hollowed-out profile before that. |
@@ -170,9 +171,6 @@ commit that made it.
   single-carriageway corridor is the wrong place to demonstrate "matched
   heading at a fixed offset", because everything there matches heading. See
   "What is still missing" in [VALIDATION.md](VALIDATION.md).
-- The forecast's uncertainty grows as `sqrt(elapsed)` with a coefficient that
-  is the current uncertainty rather than the motion model's process noise. The
-  shape is right; the scale is an indication, and now says so.
 - `v12b_segment_geometry` is not discharged by either checker.
 - The exact OU position integral costs `anpr-corridor` about three points of
   recovery, because a sparse scenario was benefiting from over-prediction. The

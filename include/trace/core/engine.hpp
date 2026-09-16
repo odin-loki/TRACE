@@ -11,6 +11,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <set>
 #include <unordered_map>
 #include <deque>
@@ -173,6 +174,18 @@ private:
         std::set<std::string> unique_ids;
     };
     Running stats_;
+
+    /// One-scan MOU constants, for the forecast.
+    ///
+    /// The forecast runs the filter's own mean and covariance recursion
+    /// forward, rather than extrapolating `position + velocity * elapsed`
+    /// beside it. The two are not the same thing: the filter's predict step
+    /// decays velocity towards zero at each regime's mean-reversion rate and
+    /// re-mixes the regimes through the transition matrix every scan, so a
+    /// linear forecast contradicts the filter that produced the velocity it
+    /// extrapolates - by a factor of five over six steps on
+    /// `OrganisedCrimeNetwork`'s stationary regime.
+    MouConstants forecast_mou_{};
 
     static constexpr std::size_t kLatencyBuckets = 10001;   // [0,100) ms + overflow
     static constexpr Real kLatencyBucketMs = 0.01;

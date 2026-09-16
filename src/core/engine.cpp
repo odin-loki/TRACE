@@ -49,6 +49,7 @@ Engine::Engine(EngineConfig config)
             config_->motion_constraint, config_->coverage),
       network_(config_->profile.coloc_dist_m, config_->profile.dormant_timeout),
       detectors_(default_detectors()),
+      forecast_mou_(MouConstants::from(config_->profile)),
       rng_(config_->seed ^ 0x1234ABCDULL) {}
 
 Engine::~Engine() = default;
@@ -173,29 +174,94 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
             // far.
             const Vec2 v = t->velocity();
             const Real dt = config_->profile.scan_dt_s;
-            Vec2 p = t->position();
+            const Vec2 p0 = t->position();
             // Floored at the sensor's own noise. `position_uncertainty()` is
             // sqrt(trace(P)) over the particle cloud, and a cloud that has
             // collapsed - every particle agreeing, which happens on a long run
-            // of tight detections - returns zero. Multiplying zero by
-            // sqrt(k+1) is still zero, so a forecast six steps out went out
-            // claiming perfect certainty about where the entity would be. No
-            // estimate is better than the measurement that fed it.
+            // of tight detections - returns zero, so a forecast six steps out
+            // went out claiming perfect certainty about where the entity would
+            // be. No estimate is better than the measurement that fed it.
             const Real unc0 =
                 std::max(t->position_uncertainty(), config_->profile.pos_noise_m);
+            // Both the position and the interval now come from the filter's
+            // own recursion, run forward with no measurements, rather than
+            // from an extrapolation computed beside it.
+            //
+            // The position was `p += v * dt` each step. That is constant
+            // velocity, which is not what this engine models: the filter's
+            // predict step multiplies velocity by the regime's alpha and mixes
+            // the regimes through the transition matrix every scan. A linear
+            // forecast therefore contradicts the filter that produced the
+            // velocity it extrapolates, by a factor of five over six steps on
+            // OrganisedCrimeNetwork's stationary regime.
+            //
+            // The interval was `unc0 * sqrt(k + 1)`: the right SHAPE for a
+            // diffusion, with a coefficient that had nothing to do with the
+            // process noise. It is now the propagated covariance of the same
+            // recursion - what the position estimate is uncertain by, what the
+            // velocity estimate is uncertain by, how those two errors are
+            // correlated, and the process noise the model adds each step.
+            //
+            // Everything below is a trace over the two axes, which the
+            // recursion allows because it is linear and identical per axis.
+            std::array<Real, kNumModels> mu = t->filter().model_probabilities();
+            Vec2 fp = p0;
+            Vec2 fv = v;
+            Real var_x = unc0 * unc0;
+            Real var_v = t->velocity_uncertainty();
+            var_v *= var_v;
+            Real cov_xv = t->position_velocity_covariance();
+            // The jitter ParticleFilter::predict adds, per axis per step, so
+            // the two paths spread at the same rate.
+            const Real jitter = std::max(config_->profile.pos_noise_m * 0.3, 1e-3);
+
             for (int k = 1; k <= config_->forecast_horizon; ++k) {
-                p += v * dt;
+                std::array<Real, kNumModels> next{};
+                Real mu_sum = 0.0;
+                for (int j = 0; j < kNumModels; ++j) {
+                    Real acc = 0.0;
+                    for (int i = 0; i < kNumModels; ++i) {
+                        acc += config_->profile.model_trans[i][j] * mu[i];
+                    }
+                    next[j] = acc;
+                    mu_sum += acc;
+                }
+                if (mu_sum <= 0.0) {
+                    next.fill(1.0 / kNumModels);
+                    mu_sum = 1.0;
+                }
+                for (auto& m : next) m /= mu_sum;
+                mu = next;
+
+                Real abar = 0.0, mbar = 0.0;
+                Real q_xx = 0.0, q_vv = 0.0, q_xv = 0.0;
+                for (int r = 0; r < kNumModels; ++r) {
+                    const Real s1 = forecast_mou_.x_sig1[r];
+                    const Real s2 = forecast_mou_.x_sig2[r];
+                    const Real sv = forecast_mou_.sigma_v[r];
+                    abar += mu[r] * forecast_mou_.alpha[r];
+                    mbar += mu[r] * forecast_mou_.x_mean[r];
+                    q_xx += mu[r] * (s1 * s1 + s2 * s2 + jitter * jitter);
+                    q_vv += mu[r] * sv * sv;
+                    q_xv += mu[r] * s1 * sv;
+                }
+
+                const Real next_var_x =
+                    var_x + mbar * mbar * var_v + 2.0 * mbar * cov_xv + 2.0 * q_xx;
+                const Real next_cov =
+                    abar * cov_xv + mbar * abar * var_v + 2.0 * q_xv;
+                const Real next_var_v = abar * abar * var_v + 2.0 * q_vv;
+                var_x = next_var_x;
+                cov_xv = next_cov;
+                var_v = next_var_v;
+
+                fp += fv * mbar;
+                fv = fv * abar;
+
                 tr.forecast.push_back(ForecastStep{
-                    timestamp + k * dt, p,
-                    // Growing as sqrt(elapsed) is the right SHAPE for a
-                    // diffusion, but the coefficient here is the current
-                    // uncertainty rather than the motion model's process
-                    // noise, so this is an order-of-magnitude indication and
-                    // not a calibrated interval. Saying so rather than
-                    // implying otherwise; deriving it from the MOU constants
-                    // is a change with a number attached and has not been
-                    // made here.
-                    unc0 * std::sqrt(static_cast<Real>(k) + 1.0)});
+                    timestamp + k * dt, fp,
+                    std::max(std::sqrt(std::max(var_x, Real{0.0})),
+                             config_->profile.pos_noise_m)});
             }
         }
         report.targets.push_back(std::move(tr));

@@ -75,6 +75,13 @@ Everything here was reproduced before it was fixed and measured after.
 - **`Engine`'s move operations were defaulted** while PmbmManager, every Track
   and each Track's filter hold a pointer into the Engine's own config.
   Use-after-free on the third scan after the moved-from engine was destroyed.
+- **The per-track forecast was a straight line beside a filter that does not go
+  straight**, with an interval this repository had already written down as "an
+  order-of-magnitude indication and not a calibrated interval". Both halves now
+  run the filter's own mean and covariance recursion forward, which needed two
+  quantities the particle cloud was not computing — its velocity variance and
+  its position/velocity covariance. The interval widens a great deal, which is
+  the result: 252 m one scan ahead for a walker, against 15 m before.
 - The engine's reported mean latency divided an all-time total by a bounded
   history, and excluded the per-scan retirement sweep.
 - `SDR_PATTERN` re-emitted on every scan and counted position noise as

@@ -422,14 +422,27 @@ void ParticleFilter::ensure_cache() const {
     vel_c_ = Vec2{mvx, mvy};
 
     Real pxx = 0.0, pxy = 0.0, pyy = 0.0;
+    Real qxx = 0.0, qxy = 0.0, qyy = 0.0, pxv = 0.0;
     for (std::size_t i = 0; i < n_; ++i) {
         const Real dx = x_[i] - mx;
         const Real dy = y_[i] - my;
         pxx += w_[i] * dx * dx;
         pxy += w_[i] * dx * dy;
         pyy += w_[i] * dy * dy;
+        const Real dvx = vx_[i] - mvx;
+        const Real dvy = vy_[i] - mvy;
+        qxx += w_[i] * dvx * dvx;
+        qxy += w_[i] * dvx * dvy;
+        qyy += w_[i] * dvy * dvy;
+        pxv += w_[i] * (dx * dvx + dy * dvy);
     }
     P_c_ = Mat2{pxx, pxy, pyy};
+    // The velocity spread comes out of the same pass. It is what a forecast
+    // needs and nothing was computing it: how far an entity will have got is
+    // uncertain because the model diffuses AND because the velocity it starts
+    // from is itself an estimate.
+    Pv_c_ = Mat2{qxx, qxy, qyy};
+    Pxv_c_ = pxv;
 
     const Real r = (profile_ ? profile_->meas_noise_var : 25.0) * noise_scale_;
     S_c_ = Mat2{pxx + r, pxy, pyy + r};
@@ -456,6 +469,16 @@ Real ParticleFilter::mahalanobis_sq(Vec2 obs) const {
 Real ParticleFilter::position_uncertainty() const {
     ensure_cache();
     return std::sqrt(std::max(P_c_.trace_(), 0.0));
+}
+
+Real ParticleFilter::velocity_uncertainty() const {
+    ensure_cache();
+    return std::sqrt(std::max(Pv_c_.trace_(), 0.0));
+}
+
+Real ParticleFilter::position_velocity_covariance() const {
+    ensure_cache();
+    return Pxv_c_;
 }
 
 int ParticleFilter::dominant_model() const {

@@ -10,10 +10,10 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Fifteen did not, and are set out below with
-the evidence. All fifteen are now fixed.
+Ten derivations came back sound. Sixteen did not, and are set out below with
+the evidence. All sixteen are now fixed.
 
-**Five of the fifteen are in the scorer, not the engine** — the code that
+**Five of the sixteen are in the scorer, not the engine** — the code that
 decides which track corresponds to which real entity, what counts as the
 tracker changing its mind, which ground-truth identity is which, and what to do
 about the places the benchmark declined to annotate. Not one of them changes
@@ -21,9 +21,9 @@ how TRACE tracks anything. All five change what this repository was reporting
 about it, and together they move MOT17 MOTA from 48.2% to 54.3% without a
 single line of the engine being touched.
 
-That ratio is the most useful thing here: a third of the defects were in the
-instrument rather than in the thing being measured. Of the ten that were in
-the engine, five were errors of dimension — a probability compared against a
+That ratio is the most useful thing here: nearly a third of the defects were in
+the instrument rather than in the thing being measured. Of the eleven that were
+in the engine, five were errors of dimension — a probability compared against a
 density, metres per second integrated as metres per scan, a walking pace used
 as an aircraft's speed, a count of detections divided by a count of scans, a slope per sample
 reported as a slope per scan —
@@ -598,7 +598,8 @@ to be one second, which is one of the ten shipped profiles.
 Everywhere else the forecast was out by the scan period: a vessel at 9 m/s
 predicted an hour ahead was placed 9 m from where it started rather than 32 km,
 and at the other end a 25 fps profile threw the prediction twenty-five times
-too far. The fix is `p += v * scan_dt_s`.
+too far. The fix was `p += v * scan_dt_s`. Which was the right units and the
+wrong model — see defect 16.
 
 ### 11. Three profiles could not form a track at all — **fixed**
 
@@ -819,6 +820,53 @@ used, plus an ad-hoc jitter — perfectly correlated with the velocity draw wher
 the true displacement is only partly so, and about 18% too tight on
 `UrbanHUMINT`'s foot regime (36 m against 44 m). Both are now taken from the
 closed forms above.
+
+---
+
+### 16. The forecast was a straight line beside a filter that does not go straight — **fixed**
+
+`src/core/engine.cpp`. Having been given the right units by defect 10, the
+forecast extrapolated `position + velocity * elapsed`. That is a
+constant-velocity model, and this engine does not have one. Its filter
+multiplies velocity by `alpha = exp(-theta dt)` every scan and re-mixes the
+regimes through the transition matrix, so the forecast contradicted the filter
+that produced the velocity it was extrapolating.
+
+The disagreement is the same ratio as defect 15's, because it is the same
+integral: over `k` scans the model's expected displacement is
+`v0 (1 - e^{-theta k dt}) / theta` where the line gives `v0 k dt`. On
+`UrbanHUMINT`'s walking regime the six-step forecast is 73% of the linear
+answer; on `OrganisedCrimeNetwork`'s stationary regime it is a fifth of it.
+
+The interval beside it was `position_uncertainty * sqrt(k + 1)` — the right
+shape for a diffusion, with a coefficient that had nothing to do with the
+process noise, which this document and the code both said and neither fixed.
+
+Both now come from running the filter's own mean and covariance recursion
+forward with no measurements: the regime mixture through the transition matrix
+each step, then
+
+    E[x'] = E[x] + mbar E[v]                       mbar = sum_r mu_r x_mean_r
+    E[v'] = abar E[v]                              abar = sum_r mu_r alpha_r
+    Var[x'] = Var[x] + mbar^2 Var[v] + 2 mbar Cov[x,v] + Q_xx
+    Cov[x',v'] = abar Cov[x,v] + mbar abar Var[v] + Q_xv
+    Var[v'] = abar^2 Var[v] + Q_vv
+
+seeded from the particle cloud's own position variance, velocity variance and
+their covariance — the last two of which nothing was computing. The cloud
+already had them; they came out of the same weighted pass that produces the
+position covariance.
+
+The interval this produces is far wider than the one it replaces, and that is
+the result rather than a side effect: on a walker tracked for twenty-four clean
+scans of `UrbanHUMINT`, one scan ahead, it is 252 m against the 15 m the old
+expression gave. The regime mixture there spans 0.15 m/s to 25 m/s and the
+posterior is not concentrated, so the honest one-minute prediction for
+something that might be a vehicle is a few hundred metres. `tests/test_engine`
+checks the shape rather than the number: each successive increment must be
+smaller than the last, which is what a decaying velocity does and a straight
+line cannot, and the forecast must land within a quarter of its own interval of
+where the engine actually gets to after that many silent scans.
 
 ---
 
