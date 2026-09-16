@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace trace::sim {
 namespace {
@@ -63,10 +64,16 @@ std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth, Rng& r
     report_positions.reserve(in_view.size());
     for (const auto* e : in_view) report_positions.push_back(e->position);
 
+    // Which entity each reported position actually belongs to. A swap permutes
+    // the positions, and the ledger below has to follow the permutation.
+    std::vector<std::size_t> reported_entity(in_view.size());
+    std::iota(reported_entity.begin(), reported_entity.end(), std::size_t{0});
+
     if (in_view.size() >= 2 && cfg_.swap_probability > 0.0) {
         for (std::size_t i = 0; i + 1 < in_view.size(); ++i) {
             if (rng.bernoulli(cfg_.swap_probability)) {
                 std::swap(report_positions[i], report_positions[i + 1]);
+                std::swap(reported_entity[i], reported_entity[i + 1]);
             }
         }
     }
@@ -77,7 +84,16 @@ std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth, Rng& r
 
     for (std::size_t i = 0; i < in_view.size(); ++i) {
         if (!rng.bernoulli(cfg_.p_detect)) continue;
-        if (ledger != nullptr) ledger->insert(in_view[i]->id);
+        // The ledger records WHOSE POSITION was reported, not which slot the
+        // loop is on. After a swap those differ, and the ledger was recording
+        // the slot: it credited entity i with a detection while the
+        // observation being emitted sat at entity i+1's position. That ledger
+        // is "what the sensors actually produced", which is the denominator of
+        // every recovery figure in docs/VALIDATION.md, so getting it wrong
+        // measures the tracker against a baseline describing a different
+        // scene.
+        const std::size_t who = reported_entity[i];
+        if (ledger != nullptr) ledger->insert(in_view[who]->id);
         const Vec2 noisy{
             report_positions[i].x + bias.x + rng.normal(0.0, cfg_.pos_noise_m),
             report_positions[i].y + bias.y + rng.normal(0.0, cfg_.pos_noise_m)};
@@ -86,6 +102,13 @@ std::vector<Observation> CameraPanel::observe(const WorldSnapshot& truth, Rng& r
         Observation obs(make_id(cfg_.id, counter_++), truth.timestamp, noisy,
                         cfg_.modality, conf, cfg_.id);
         if (cfg_.appearance_quality > 0.0) {
+            // Deliberately the SLOT's entity, not the reported position's.
+            // A swap models the camera mislabelling two people, so the
+            // appearance it attaches is the one it believes it is looking at,
+            // which is what makes a swap something a descriptor can catch -
+            // and catching it is the whole subject of the appearance section
+            // in docs/VALIDATION.md. The ledger above is a different question:
+            // that one asks what was physically detected.
             obs.descriptor = entity_descriptor(in_view[i]->id,
                                                cfg_.appearance_quality, rng);
         }

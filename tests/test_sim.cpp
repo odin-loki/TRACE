@@ -92,8 +92,18 @@ void test_camera_only_sees_its_footprint() {
     if (!obs.empty()) {
         CHECK(distance(*obs[0].position, Vec2{50, 50}) < 1e-9);
         // Nothing in an Observation may identify which entity produced it.
-        CHECK(obs[0].obs_id.find("in") == std::string::npos ||
-              obs[0].obs_id.rfind("CAM", 0) == 0);
+        //
+        // This used to be `A || B` where B was "the id starts with CAM" - and
+        // every id is built by make_id(cfg_.id, counter_), so B is true by
+        // construction and the disjunction could not fail whatever A did. An
+        // entity id leaking into every observation would have passed it.
+        //
+        // Checked properly: neither entity's id appears anywhere in the
+        // observation's own identifiers, and the id is the sensor's.
+        CHECK(obs[0].obs_id.find("in") == std::string::npos);
+        CHECK(obs[0].obs_id.find("out") == std::string::npos);
+        CHECK(obs[0].source_id.find("in") == std::string::npos);
+        CHECK(obs[0].source_id.find("out") == std::string::npos);
         CHECK(obs[0].source_id == "CAM");
     }
     CHECK(!cam.covers(Vec2{500, 500}));
