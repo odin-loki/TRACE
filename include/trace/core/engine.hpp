@@ -53,6 +53,10 @@ public:
     explicit Engine(EngineConfig config = {});
     ~Engine();
 
+    /// Movable. A moved-from Engine may be destroyed or assigned to; nothing
+    /// else. That is the usual contract, and it is stated because the usual
+    /// *implementation* of it was wrong here until the release audit - see
+    /// `config_` below for what a defaulted move used to do to a live engine.
     Engine(Engine&&) noexcept;
     Engine& operator=(Engine&&) noexcept;
     Engine(const Engine&) = delete;
@@ -67,8 +71,8 @@ public:
     [[nodiscard]] std::vector<std::string> detector_names() const;
 
     // -- Introspection ------------------------------------------------------
-    [[nodiscard]] const DomainProfile& profile() const { return config_.profile; }
-    [[nodiscard]] const EngineConfig& config() const { return config_; }
+    [[nodiscard]] const DomainProfile& profile() const { return config_->profile; }
+    [[nodiscard]] const EngineConfig& config() const { return *config_; }
     /// The most recent scans, oldest first, at most `kHistoryScans` of them.
     ///
     /// Bounded deliberately. A ScanReport carries the scan's targets, clusters,
@@ -113,7 +117,24 @@ public:
     [[nodiscard]] std::string performance_report() const;
 
 private:
-    EngineConfig config_;
+    /// Held indirectly so its address never changes.
+    ///
+    /// The profile inside it is not copied into the subsystems that read it:
+    /// PmbmManager, every Track, and through each Track its particle filter
+    /// and its pattern-of-life model, all keep a `const DomainProfile*` into
+    /// this one object. While the config was a value member, moving an Engine
+    /// moved that object to a new address and left every one of those pointers
+    /// aimed at the source - so a moved-to Engine read a hollowed-out profile,
+    /// and once the source was destroyed it read freed memory. ASan called it
+    /// on the third scan, in Track::predict.
+    ///
+    /// Pinning the config fixes all of them at once, which is the point: the
+    /// alternative was a rebind pass walking pmbm -> tracks -> filters on every
+    /// move, and a rebind pass is only correct until someone adds the next
+    /// thing that holds the pointer.
+    ///
+    /// Null only in a moved-from Engine.
+    std::unique_ptr<EngineConfig> config_;
     PmbmManager pmbm_;
     NetworkAnalyser network_;
     AnomalyEscalator escalator_;

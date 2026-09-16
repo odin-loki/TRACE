@@ -44,12 +44,12 @@ std::string fmt(const char* spec, auto... args) {
 }  // namespace
 
 Engine::Engine(EngineConfig config)
-    : config_(std::move(config)),
-      pmbm_(config_.profile, config_.area, config_.seed,
-            config_.motion_constraint, config_.coverage),
-      network_(config_.profile.coloc_dist_m, config_.profile.dormant_timeout),
+    : config_(std::make_unique<EngineConfig>(std::move(config))),
+      pmbm_(config_->profile, config_->area, config_->seed,
+            config_->motion_constraint, config_->coverage),
+      network_(config_->profile.coloc_dist_m, config_->profile.dormant_timeout),
       detectors_(default_detectors()),
-      rng_(config_.seed ^ 0x1234ABCDULL) {}
+      rng_(config_->seed ^ 0x1234ABCDULL) {}
 
 Engine::~Engine() = default;
 Engine::Engine(Engine&&) noexcept = default;
@@ -95,7 +95,7 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     stages.emplace_back("track+associate", lap());
 
     // Keep the recent evidence behind each track for the credibility fusion.
-    const Real cache_radius = obs_cache_radius(config_.profile);
+    const Real cache_radius = obs_cache_radius(config_->profile);
     for (const auto& t : confirmed) {
         auto& cache = obs_cache_[t->id()];
         for (const auto& o : observations) {
@@ -117,8 +117,8 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     for (const auto& t : confirmed) track_points.push_back(t->position());
 
     const Real widest_radius =
-        std::max({config_.profile.coloc_dist_m, config_.profile.rv_threshold_m * 4.0,
-                  config_.profile.parallel_route_m, config_.profile.brush_pass_m});
+        std::max({config_->profile.coloc_dist_m, config_->profile.rv_threshold_m * 4.0,
+                  config_->profile.parallel_route_m, config_->profile.brush_pass_m});
     const SpatialIndex index(track_points, std::max(widest_radius, 1.0));
     stages.emplace_back("spatial-index", lap());
 
@@ -138,7 +138,7 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         tr.born_at = t->born_at();
         tr.last_seen = t->last_seen();
         tr.position = t->position();
-        tr.velocity_mps = t->velocity_mps(config_.profile.scan_dt_s);
+        tr.velocity_mps = t->velocity_mps(config_->profile.scan_dt_s);
         tr.speed_mps = tr.velocity_mps.norm();
         tr.position_uncertainty_m = t->position_uncertainty();
         tr.existence = t->existence();
@@ -150,9 +150,9 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         tr.measurement_rate = t->measurement_rate();
         tr.observation_quality = t->mean_observation_quality();
         tr.dominant_model = t->dominant_model();
-        tr.credibility = fuse_credibility(obs_cache_[t->id()], config_.profile);
-        tr.threat = score_track(*t, timestamp, config_.high_value_locations,
-                                config_.profile.hvl_radius_m, config_.profile, rng_);
+        tr.credibility = fuse_credibility(obs_cache_[t->id()], config_->profile);
+        tr.threat = score_track(*t, timestamp, config_->high_value_locations,
+                                config_->profile.hvl_radius_m, config_->profile, rng_);
 
         for (auto& a : escalator_.update(t->id(), tr.threat.breakdown.pol_anomaly,
                                          tr.threat.priority)) {
@@ -172,7 +172,7 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
             // the other end a 25 fps profile threw the prediction 25 times too
             // far.
             const Vec2 v = t->velocity();
-            const Real dt = config_.profile.scan_dt_s;
+            const Real dt = config_->profile.scan_dt_s;
             Vec2 p = t->position();
             // Floored at the sensor's own noise. `position_uncertainty()` is
             // sqrt(trace(P)) over the particle cloud, and a cloud that has
@@ -182,8 +182,8 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
             // claiming perfect certainty about where the entity would be. No
             // estimate is better than the measurement that fed it.
             const Real unc0 =
-                std::max(t->position_uncertainty(), config_.profile.pos_noise_m);
-            for (int k = 1; k <= config_.forecast_horizon; ++k) {
+                std::max(t->position_uncertainty(), config_->profile.pos_noise_m);
+            for (int k = 1; k <= config_->forecast_horizon; ++k) {
                 p += v * dt;
                 tr.forecast.push_back(ForecastStep{
                     timestamp + k * dt, p,
@@ -211,8 +211,8 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     DetectorContext ctx;
     ctx.timestamp = timestamp;
     ctx.scan_index = scan_count_;
-    ctx.profile = &config_.profile;
-    ctx.high_value_locations = &config_.high_value_locations;
+    ctx.profile = &config_->profile;
+    ctx.high_value_locations = &config_->high_value_locations;
     ctx.betweenness = &network_.betweenness();
     ctx.clusters = &clusters;
     ctx.rng = &rng_;
@@ -245,17 +245,17 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
         if (t->possibility_mismatch() > 0.4) {
             report.operational.possibility_mismatch_tracks.push_back(t->id());
         }
-        const Real speed = t->speed_mps(config_.profile.scan_dt_s);
-        if (speed > config_.profile.courier_speed_thresh * 3.0) {
+        const Real speed = t->speed_mps(config_->profile.scan_dt_s);
+        if (speed > config_->profile.courier_speed_thresh * 3.0) {
             report.operational.high_speed_tracks.push_back(t->id());
         }
-        if (speed < config_.profile.courier_speed_thresh * 0.1) {
+        if (speed < config_->profile.courier_speed_thresh * 0.1) {
             report.operational.dwelling_tracks.push_back(t->id());
         }
         const Vec2 p = t->position();
-        const Real margin = std::min(config_.area.width(), config_.area.height()) * 0.05;
-        if (p.x - config_.area.xmin < margin || config_.area.xmax - p.x < margin ||
-            p.y - config_.area.ymin < margin || config_.area.ymax - p.y < margin) {
+        const Real margin = std::min(config_->area.width(), config_->area.height()) * 0.05;
+        if (p.x - config_->area.xmin < margin || config_->area.xmax - p.x < margin ||
+            p.y - config_->area.ymin < margin || config_->area.ymax - p.y < margin) {
             report.operational.boundary_tracks.push_back(t->id());
         }
     }
@@ -277,11 +277,11 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
                            c.observations});
     }
 
-    report.sensor_schedule = schedule_collection(confirmed, config_.profile);
+    report.sensor_schedule = schedule_collection(confirmed, config_->profile);
     report.clusters = clusters;
     report.scan = scan_count_;
     report.timestamp = timestamp;
-    report.domain = config_.profile.name;
+    report.domain = config_->profile.name;
     report.n_observations = static_cast<int>(observations.size());
     report.n_tracks = static_cast<int>(confirmed.size());
     report.n_components = static_cast<int>(pmbm_.all_tracks().size());
@@ -453,7 +453,7 @@ std::string Engine::performance_report() const {
         scan_count_ > 0 ? total_latency_ms_ / static_cast<Real>(scan_count_) : 0.0;
 
     std::ostringstream os;
-    os << fmt("TRACE session  domain=%s  scans=%d\n", config_.profile.name.c_str(),
+    os << fmt("TRACE session  domain=%s  scans=%d\n", config_->profile.name.c_str(),
               scan_count_);
     os << fmt("  tracks   peak=%d  unique=%zu  dormant-now=%d\n", peak,
               unique_ids.size(), stats_.last_n_dormant);

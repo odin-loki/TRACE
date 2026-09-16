@@ -5,11 +5,11 @@
 #include "trace/core/engine.hpp"
 #include "trace/core/pmbm.hpp"
 #include "trace/detectors/detectors.hpp"
-
 #include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -529,6 +529,84 @@ void test_fitted_velocity_is_metres_per_scan() {
     }
 }
 
+// A moved Engine keeps working after the engine it was moved from is gone.
+//
+// Not a hypothetical. PmbmManager, every Track, and through each Track its
+// particle filter and its pattern-of-life model hold a `const DomainProfile*`
+// into the Engine's own config. While that config was a value member, a
+// defaulted move relocated it and left every one of those pointers aimed at
+// the source.
+//
+// That has two symptoms and this test looks for both, because only one of them
+// needs a sanitizer to see:
+//
+//   * While the source is still alive, the moved-to engine reads a *moved-from*
+//     profile. The doubles in it are unchanged, so most of the engine behaves;
+//     but `mou_models` is a moved-from vector, i.e. empty, so every track
+//     reports an empty `dominant_model`. Visible on any build.
+//   * Once the source is destroyed, the same reads are use-after-free. ASan
+//     reported it in Track::predict on the third scan after.
+//
+// `profile()` and `config()` deliberately are not the check: they read the
+// Engine's own member, which a defaulted move relocates correctly. It is what
+// the subsystems see that was wrong.
+void test_engine_survives_being_moved() {
+    const std::string tag = "MOVE-PROFILE-LONG-ENOUGH-NOT-TO-FIT-IN-SSO";
+
+    EngineConfig cfg;
+    cfg.profile = UrbanHUMINT();
+    cfg.profile.name = tag;
+    const Real dt = cfg.profile.scan_dt_s;
+    const std::size_t models = cfg.profile.mou_models.size();
+    CHECK(models > 0);
+
+    const auto walk = [&](Engine& e, const char* id, int from, int to) {
+        for (int i = from; i < to; ++i) {
+            e.ingest(one(id, i * dt, Vec2{60.0 * i, 0.0}), i * dt);
+        }
+    };
+    const auto names_a_model = [](const Engine& e) {
+        if (e.history().empty() || e.history().back().targets.empty()) return false;
+        for (const auto& t : e.history().back().targets) {
+            if (t.dominant_model.empty()) return false;
+        }
+        return true;
+    };
+
+    // -- move construction --------------------------------------------------
+    auto owner = std::make_unique<Engine>(cfg);
+    walk(*owner, "M1", 0, 6);
+    CHECK(names_a_model(*owner));
+
+    Engine moved = std::move(*owner);
+    walk(moved, "M1", 6, 12);
+    CHECK(moved.profile().name == tag);
+    CHECK(moved.profile().mou_models.size() == models);
+    CHECK(names_a_model(moved));          // fails on any build without the fix
+
+    owner.reset();                        // source gone; stale reads now dangle
+    walk(moved, "M1", 12, 18);
+    CHECK(moved.scan_count() == 18);
+    CHECK(names_a_model(moved));
+    CHECK(!moved.performance_report().empty());
+
+    // -- move assignment ----------------------------------------------------
+    auto donor = std::make_unique<Engine>(cfg);
+    walk(*donor, "M2", 0, 6);
+
+    Engine target{EngineConfig{}};
+    target.ingest(one("X", 0.0, Vec2{}), 0.0);
+    target = std::move(*donor);
+    walk(target, "M2", 6, 12);
+    CHECK(target.config().profile.name == tag);
+    CHECK(names_a_model(target));
+
+    donor.reset();
+    walk(target, "M2", 12, 18);
+    CHECK(target.scan_count() == 18);
+    CHECK(names_a_model(target));
+}
+
 int main() {
     test_empty_scan_is_safe();
     test_possibility_mismatch_discriminates();
@@ -540,6 +618,7 @@ int main() {
     test_detector_registry();
     test_determinism();
     test_every_profile_runs();
+    test_engine_survives_being_moved();
     test_convergence_is_predicted_before_contact();
     test_slow_convergence_is_still_predicted();
     return trace::test::summary("test_engine");
