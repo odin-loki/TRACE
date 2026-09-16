@@ -201,25 +201,37 @@ void test_predict_moves_at_modelled_speed() {
 }
 
 void test_update_pulls_to_measurement() {
-    // How close the cloud's mean gets to a fixed measurement in three updates
-    // is a draw from a wide distribution, not a number.
+    // Repeated updates at a fixed point must pull the cloud's mean onto it.
     //
-    // This used to run one seed and require the answer to be under 20 m. It
-    // was under 20 m on the machine it was written on, and on most builds -
-    // but the value depends on the SIMD lane count, because the lane count
-    // decides the order the RNG is consumed in. The same correct code gives
-    // 1.08 m at one and two lanes, 2.52 m at eight, and **27.86 m at four**,
-    // which is what a hosted x86-64-v3 runner has. CI's release job had been
-    // red on it while three other configurations of the same commit were
-    // green.
+    // Two things had to change before this could be stated as a test rather
+    // than as a number that happened to hold on one machine.
     //
-    // So the property is measured over a sample instead. Over twenty-four
-    // seeds the median lands at 2.9-6.4 m depending on the architecture, and
-    // the worst single seed at 73-106 m - so a per-seed threshold anywhere
-    // near the median was always going to be a coin toss.
-    DomainProfile p = UrbanHUMINT();
+    // It ran ONE seed and required the answer to be within 20 m after three
+    // updates. That answer depends on the SIMD lane count, because the lane
+    // count decides the order the filter consumes its RNG: the same correct
+    // code gives 1.08 m at two lanes, 27.86 m at four and 2.52 m at eight, and
+    // CI's release job went red on the four-lane runners while three other
+    // configurations of the same commit were green.
+    //
+    // It also used `UrbanHUMINT`, which is the wrong instrument for this
+    // question. Its regime mixture spans 0.15 m/s to 25 m/s and it samples
+    // every 60 s, so between two updates the cloud spreads over about a
+    // kilometre while the measurement's own sigma is 5 m. The posterior then
+    // collapses onto whichever single particle is least bad, which is ordinary
+    // particle-filter degeneracy and not a statement about the update: over
+    // twenty-four seeds the worst case is 106 m at two lanes, 73 m at four,
+    // 87 m at eight and 376 m scalar - in that last one ending FURTHER from
+    // the measurement than it started. No threshold survives that, and none
+    // should: the setup does not have the property it is being asked about.
+    //
+    // A profile whose regimes are all pedestrian-scale, sampled every second,
+    // does. Across the same four builds it converges to within 4.22 m in the
+    // worst seed and 1.6-2.2 m in the median, so the claim below holds per
+    // seed rather than only on average.
+    DomainProfile p = CityCameraSurveillance();
     const Vec2 obs{120.0, -80.0};
     const int seeds = 24;
+    const int updates = 10;
 
     std::vector<Real> errors;
     Real worst_ratio = 0.0;
@@ -228,30 +240,28 @@ void test_update_pulls_to_measurement() {
                           static_cast<std::uint64_t>(seed));
         pf.init(Vec2{0, 0}, 50.0);
         const Real before = distance(pf.position(), obs);
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < updates; ++i) {
             pf.predict();
             pf.update(obs);
         }
         const Real after = distance(pf.position(), obs);
         errors.push_back(after);
         worst_ratio = std::max(worst_ratio, after / std::max(before, 1e-9));
-        // Every seed has to move towards the measurement. That is the
-        // qualitative claim, and it holds on every one: the worst observed is
-        // 73% of where it started.
-        CHECK(after < 0.90 * before);
+
+        // Every seed: onto the measurement, not merely towards it. The worst
+        // observed across scalar, SSE2, AVX2 and AVX-512 is 4.22 m and 2.9% of
+        // where it started.
+        CHECK(after < 12.0);
+        CHECK(after < 0.10 * before);
     }
 
     std::sort(errors.begin(), errors.end());
     const Real median = errors[errors.size() / 2];
-    std::printf("  three updates at a fixed point, %d seeds: median error "
-                "%.2f m, worst %.2f m, worst as a fraction of the starting "
-                "offset %.2f\n",
-                seeds, median, errors.back(), worst_ratio);
-
-    // The median is the stable quantity: 15 m is a two-to-fivefold margin on
-    // what every architecture from x86-64 to AVX-512 produces.
-    CHECK(median < 15.0);
-    CHECK(worst_ratio < 0.90);
+    std::printf("  %d updates at a fixed point, %d seeds: median error %.2f m, "
+                "worst %.2f m, worst as a fraction of the starting offset "
+                "%.3f\n",
+                updates, seeds, median, errors.back(), worst_ratio);
+    CHECK(median < 5.0);
 }
 
 void test_resampling_keeps_weights_normalised() {
