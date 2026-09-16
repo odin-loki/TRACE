@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <tuple>
+#include <iterator>
 #include <limits>
+#include <set>
+#include <tuple>
 
 namespace trace {
 namespace {
@@ -37,10 +39,25 @@ std::vector<DetectionEvent> TradecraftDetector::detect(
     }
 
     // ---- Brush pass: two entities converge to within contact range ---------
-    // Only the transition into contact is reported. Without the streak counter
+    // Only the transition INTO contact is reported. Without the streak counter
     // two people walking together would raise an event every single scan.
     // A brush pass is by definition a close approach, so only near pairs can
-    // produce one. Pairs that have separated are cleared lazily below.
+    // produce one.
+    //
+    // Which makes clearing the counter the delicate half. It used to be
+    // cleared in the `else` of this same loop - that is, only for pairs the
+    // loop still looked at, which is those within twice the contact radius. A
+    // pair that separated FURTHER than that between one scan and the next was
+    // never visited again, so its counter stayed at 1, and when the two came
+    // back together `++` gave 2 and the `streak == 1` test refused to report
+    // it. The second meeting of a pair, and every meeting after it, was
+    // silently dropped. Whether a pair can clear twice the contact radius in
+    // one scan is a property of the domain, not of the detector: at 15 m and
+    // 10 s per scan, VehicleConvoy's vehicles cover that in under two seconds.
+    //
+    // So contact is recorded positively and everything else is cleared, which
+    // also keeps the map to pairs that are actually touching.
+    std::set<std::pair<std::string, std::string>> touching;
     for (const auto& [i, j] : ctx.near_pairs(p.brush_pass_m * 2.0, tracks.size())) {
         {
             const Track& a = *tracks[i];
@@ -49,6 +66,7 @@ std::vector<DetectionEvent> TradecraftDetector::detect(
             const auto key = pair_key(a.id(), b.id());
 
             if (sep < p.brush_pass_m) {
+                touching.insert(key);
                 const int streak = ++contact_streak_[key];
                 if (streak == 1) {
                     auto e = make_event("BRUSH_PASS", name(), {a.id(), b.id()},
@@ -58,10 +76,11 @@ std::vector<DetectionEvent> TradecraftDetector::detect(
                     e.note = "entities converged to contact range";
                     events.push_back(std::move(e));
                 }
-            } else {
-                contact_streak_[key] = 0;
             }
         }
+    }
+    for (auto it = contact_streak_.begin(); it != contact_streak_.end();) {
+        it = touching.count(it->first) != 0 ? std::next(it) : contact_streak_.erase(it);
     }
 
     // ---- Surveillance-detection route: a closed loop ----------------------

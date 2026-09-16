@@ -16,6 +16,11 @@ DomainProfile Maritime() {
     p.name = "Maritime";
     p.scan_dt_s = 3600.0;          // hourly AIS / satellite refresh
     p.pos_noise_m = 200.0;
+    // The default dead-drop window is [60 s, 1800 s], which is shorter than a
+    // single scan here, so no gap between two visits could ever fall inside it
+    // and DEAD_DROP was unreachable under this profile. Two scans to two days.
+    p.dead_drop_min_s = 7200.0;
+    p.dead_drop_max_s = 172800.0;
     p.meas_noise_var = 200.0 * 200.0;
     p.p_detection = 0.75;          // vessels go dark
     p.rv_threshold_m = 2000.0;
@@ -295,6 +300,11 @@ DomainProfile WildlifeTelemetry() {
     p.name = "WildlifeTelemetry";
     p.scan_dt_s = 14400.0;           // 4-hour satellite duty cycle
     p.pos_noise_m = 150.0;
+    // As Maritime: at one scan per four hours the default [60 s, 1800 s]
+    // dead-drop window is a fraction of a single scan and the detector could
+    // not fire. Two scans to a week, which is the scale a cache site works on.
+    p.dead_drop_min_s = 28800.0;
+    p.dead_drop_max_s = 604800.0;
     p.meas_noise_var = 150.0 * 150.0;
     p.p_detection = 0.45;            // canopy, battery, orbit geometry
     // Also inverted: collar fixes are scarce enough that one is worth acting on.

@@ -1,10 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
 
-// TRACE — CUDA backend.
+// TRACE — CUDA backend. UNWIRED AND UNVALIDATED. Read this before using it.
 //
-// The engine has a complete CPU path; CUDA is an accelerator for the two places
-// where the work is genuinely wide:
+// Nothing in src/core/, src/detectors/ or src/sim/ calls any function declared
+// here. `TRACE_WITH_CUDA` gates whether the kernels COMPILE; it does not put
+// them on any path the engine takes, so every build runs the CPU path. The
+// runtime choice described below - available() plus the batch size deciding
+// per call - is a design, not an implementation.
+//
+// The kernels have also never executed. `gmm_log_responsibilities` and
+// `pairwise_distances` pass their host pointers straight to a kernel launch
+// with no device allocation, and `propagate_batches` copies the ParticleBatch
+// structs to the device with their member pointers still addressing host
+// memory. Wiring this up means fixing that first.
+//
+// The design it was written to, kept because it is the right design:
+//
+// The engine has a complete CPU path; CUDA would be an accelerator for the two
+// places where the work is genuinely wide:
 //
 //   * particle propagation - every track's 320 particles advance independently,
 //     and with many tracks in flight that is tens of thousands of lanes;
@@ -12,7 +26,7 @@
 //     which is a dense matrix of independent evaluations.
 //
 // Below roughly 30 simultaneous tracks the launch overhead dominates and the
-// CPU path is faster; trace_available() plus the batch size decide at runtime.
+// CPU path is faster; available() plus the batch size would decide at runtime.
 #pragma once
 
 #include <cstddef>

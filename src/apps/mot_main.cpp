@@ -106,16 +106,31 @@ struct ClearMot {
 
 /// Does this position fall in a region MOT declined to annotate?
 ///
-/// Two ways to be inside one, because a don't-care region is a rectangle while
-/// everything else in this scorer is a ground-contact point. A track whose foot
-/// point lies within the rectangle is plainly in it; one within `match_radius`
-/// of the rectangle's own foot point would have counted as a match had the
-/// region been annotated, which is the same standard applied to real ground
-/// truth.
+/// Containment, and nothing else. MOTChallenge removes a hypothesis that
+/// OVERLAPS a don't-care region, box against box; this scorer has no track
+/// box, only a ground-contact point, and the faithful analogue of an overlap
+/// test for a point is whether the point is inside.
+///
+/// It used to also amnesty any track within `match_radius` of the rectangle's
+/// own foot point, on the reasoning that such a track would have counted as a
+/// match had the region been annotated. The reasoning does not survive being
+/// measured. A don't-care region is an AREA and its foot point is one point,
+/// so the extra rule is a 100 px disc hung off the bottom edge rather than a
+/// tolerance around the region - it amnesties tracks well outside a large
+/// rectangle and does nothing for tracks inside the top of one. It roughly
+/// doubled what was discarded, 4,267 track-frames to 8,626 across the MOT17
+/// train split, and it was worth **+1.3 MOTA and +1.9 points of precision**
+/// to the published figure.
+///
+/// A number that size should not rest on a rule the benchmark does not have,
+/// so it is gone and the figures are restated. If a tolerance is wanted, the
+/// defensible one is a uniform dilation of the RECTANGLE - "close enough to
+/// have matched somebody inside it" - not a disc at one corner of it; that is
+/// a change with a number attached and has not been made here.
 bool in_ignored_region(Vec2 p, const std::vector<MotBox>& ignore, Real match_radius) {
+    (void)match_radius;
     for (const MotBox& b : ignore) {
         if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return true;
-        if (distance(p, b.foot()) <= match_radius) return true;
     }
     return false;
 }

@@ -94,14 +94,19 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **54.3%** | **108.3%** |
-| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **63.7%** | **114.7%** |
+| MOT17 train, 21 sequences | 336,891 | **52.9%** | **108.4%** |
+| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **62.6%** | **114.7%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
-missed — which is the entire job. Best single sequence: **77.7% MOTA**
-(MOT17-10-SDP), with MOT17-04-SDP a tenth behind it at 77.5% on far better
-precision.
+missed — which is the entire job. Best single sequence: **77.6% MOTA**
+(MOT17-04-SDP).
+
+These are scored with don't-care regions handled by containment alone, which
+is the conservative reading of MOTChallenge's own rule. An earlier and wider
+amnesty was worth 1.3 points of MOTA here and 1.1 on MOT20 without changing
+anything the tracker found; [it is measured in
+docs/VALIDATION.md](docs/VALIDATION.md).
 
 MOT20 scoring above MOT17 is not the expected direction, and it is the
 detections rather than the tracker: MOT20's are uniformly good where MOT17's
@@ -275,9 +280,16 @@ not for 25 fps without partitioning across workers.
 Backends:
 - **xsimd** (vendored, on by default) vectorises particle propagation — 8 lanes
   under AVX-512. Degrades to identical scalar code when unavailable.
-- **CUDA** (`-DTRACE_WITH_CUDA=ON`) for particle propagation, the GMM E step and
-  pairwise distances. An accelerator, never a dependency: with no device the
-  engine runs the CPU path and says so.
+- **CUDA** (`-DTRACE_WITH_CUDA=ON`) — **present but not wired in, and not
+  validated.** `src/cuda/kernels.cu` carries kernels for particle propagation,
+  the GMM E step and pairwise distances, and `include/trace/backend/cuda.hpp`
+  declares the interface; nothing in `src/core/`, `src/detectors/` or
+  `src/sim/` calls any of it, so every build runs the CPU path whatever this
+  option is set to. The kernels have never run: `gmm_log_responsibilities`
+  hands host pointers straight to a kernel with no device allocation, and
+  `propagate_batches` copies `ParticleBatch` structs to the device with their
+  member pointers still pointing at host memory. Treat this as an unfinished
+  branch rather than a backend.
 - **Qt 6** (`-DTRACE_WITH_QT=ON`) builds the operator console — live map with
   uncertainty ellipses, forecast paths, ranked track table and event log.
 

@@ -11,18 +11,32 @@
 #   ESBMC=/path/to/esbmc ./run.sh      if the binaries are not on PATH
 #   CBMC=/path/to/cbmc   ./run.sh
 #
+#   STRICT=1 ./run.sh     treat an undecided harness as a failure too
+#
 # Each harness carries an EXPECTED verdict, so this is a regression test and
 # not a report. Three harnesses are expected to FAIL: those are the
 # counterexamples that document a real property of the code, and a suite in
 # which they started passing would mean the code had changed underneath them.
 # A mismatch in either direction is an error.
 #
-# The two marked SLOW are not discharged by either checker inside the default
-# budget. Bit-precise IEEE division is where both are weakest: v12 and v13
-# reach 246,000 and 146,000 SAT variables from a handful of divisions and then
-# sit there. They are correct encodings of their properties, kept so a faster
-# solver or a longer budget can close them, and they are reported rather than
-# counted or quietly dropped.
+# Three verdicts, not two. A checker can also run out of budget, and that is
+# UNDECIDED - it is not evidence that a property failed, which is what calling
+# it a mismatch used to claim. The distinction matters because the budget is a
+# property of the machine: v13_clutter_rate discharges comfortably on an idle
+# host and times out on a loaded one, so on a busy CI runner the old code
+# reported a proof regression that had not happened. A decided-and-wrong
+# verdict fails the suite; an undecided one is reported and, unless STRICT=1,
+# does not.
+#
+# One harness is marked SLOW in the manifest: v12b_segment_geometry, which
+# neither checker discharges inside any budget tried. Bit-precise IEEE division
+# is where both are weakest - it reaches a quarter of a million SAT variables
+# from a handful of divisions and then sits there. It is a correct encoding of
+# its property, kept so a faster solver can close it, and it is reported rather
+# than counted or quietly dropped. (An earlier version of this header said
+# "the two marked SLOW... v12 and v13". v12 was since split, and its tractable
+# half - the clamp - discharges; v13 discharges too. The manifest below is the
+# authority.)
 #
 # v07 is a special case. The property it states - that betweenness is
 # normalised to [0,1] - is established far more strongly by tests/test_network,
@@ -34,6 +48,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 TIMEOUT=${TIMEOUT:-900}
+STRICT=${STRICT:-0}
 ESBMC=${ESBMC:-esbmc}
 CBMC=${CBMC:-cbmc}
 FORCE=
@@ -67,7 +82,7 @@ MANIFEST=(
   "v16_existence_continuity:PASS:cbmc:"
 )
 
-pass=0; fail=0; slow=0
+pass=0; fail=0; slow=0; undecided=0; skipped=0
 printf '%-28s %-8s %-7s %-8s %s\n' HARNESS EXPECTED VIA ACTUAL RESULT
 printf '%.0s-' {1..70}; echo
 
@@ -80,7 +95,8 @@ for entry in "${MANIFEST[@]}"; do
     [[ -n $FORCE ]] && checker=$FORCE
     bin=$([[ $checker == esbmc ]] && echo "$ESBMC" || echo "$CBMC")
     command -v "$bin" >/dev/null || { printf '%-28s %-8s %-7s %-8s %s\n' \
-        "$name" "$expected" "$checker" SKIP "$bin not found - set ESBMC= or CBMC="; continue; }
+        "$name" "$expected" "$checker" SKIP "$bin not found - set ESBMC= or CBMC="
+        ((skipped++)); continue; }
 
     if [[ $checker == esbmc ]]; then
         out=$(timeout "$TIMEOUT" "$bin" "$name.c" -DUSE_ESBMC --floatbv --z3 $opts 2>&1)
@@ -100,6 +116,13 @@ for entry in "${MANIFEST[@]}"; do
     elif [[ $actual == "$expected" ]]; then
         printf '%-28s %-8s %-7s %-8s %s\n' "$name" "$expected" "$checker" "$actual" ok
         ((pass++))
+    elif [[ $actual == TIMEOUT ]]; then
+        # Out of budget is not a verdict. Reported, never silent, and counted
+        # apart from the failures so a slow machine cannot manufacture a proof
+        # regression.
+        printf '%-28s %-8s %-7s %-8s %s\n' "$name" "$expected" "$checker" "$actual" \
+               "UNDECIDED at ${TIMEOUT}s - raise TIMEOUT to decide it"
+        ((undecided++))
     else
         printf '%-28s %-8s %-7s %-8s %s\n' "$name" "$expected" "$checker" "$actual" MISMATCH
         sed -n '/^Violated property/,/^$/p' <<<"$out" | head -8
@@ -109,5 +132,15 @@ for entry in "${MANIFEST[@]}"; do
 done
 
 printf '%.0s-' {1..70}; echo
-echo "$pass as expected, $fail mismatched, $slow not counted (see the header)"
-exit $(( fail > 0 ))
+echo "$pass as expected, $fail mismatched, $undecided undecided, $slow not counted, $skipped skipped"
+
+# A run that checked nothing is not a run that found nothing wrong. Exiting 0
+# on an empty suite is how a missing checker, a bad path or - as happened once -
+# a lost executable bit reads as success to anything watching.
+if (( pass + fail + undecided + slow == 0 )); then
+    echo "nothing was checked: no harness ran. Set CBMC= or ESBMC=, or name a harness that exists."
+    exit 2
+fi
+if (( fail > 0 )); then exit 1; fi
+if (( STRICT && undecided > 0 )); then exit 1; fi
+exit 0

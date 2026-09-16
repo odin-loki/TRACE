@@ -26,7 +26,6 @@ option(TRACE_BUILD_TESTS "Build the test suite"                 ON)
 # ---------------------------------------------------------------------------
 # xsimd
 # ---------------------------------------------------------------------------
-set(TRACE_XSIMD_ARCH_NAME "generic")
 if(TRACE_WITH_XSIMD)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xsimd/include/xsimd/xsimd.hpp")
         add_library(trace_xsimd INTERFACE)
@@ -85,9 +84,10 @@ target_compile_features(trace_core PUBLIC cxx_std_23)
 
 if(TRACE_WITH_XSIMD)
     target_link_libraries(trace_core PUBLIC trace_xsimd)
-    target_compile_definitions(trace_core PUBLIC
-        TRACE_WITH_XSIMD
-        TRACE_XSIMD_ARCH_NAME="${TRACE_XSIMD_ARCH_NAME}")
+    # No TRACE_XSIMD_ARCH_NAME. It was set to "generic" here and never derived
+    # from the build, so simd::backend_name() misreported every vectorised
+    # build; it now asks xsimd what architecture the batch type resolved to.
+    target_compile_definitions(trace_core PUBLIC TRACE_WITH_XSIMD)
 endif()
 
 if(MSVC)

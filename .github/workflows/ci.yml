@@ -29,10 +29,15 @@ jobs:
           # and the scalar tails carry everything.
           - name: scalar (no xsimd)
             cmake_args: -DCMAKE_BUILD_TYPE=Release -DTRACE_WITH_XSIMD=OFF
+          # The flags are QUOTED. Unquoted, the folded scalar puts
+          # `-fno-omit-frame-pointer` on the command line as a word of its own,
+          # cmake answers "Unknown argument -fno-omit-frame-pointer" and exits
+          # 1, and this entry has never got past Configure - so the sanitizer
+          # coverage this matrix claims has never once run.
           - name: sanitizers
             cmake_args: >-
               -DCMAKE_BUILD_TYPE=RelWithDebInfo
-              -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer
+              "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer"
               -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
     steps:
       - uses: actions/checkout@v4
@@ -51,9 +56,14 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      # UBSan warns and carries on unless told otherwise, so without
+      # `halt_on_error` the sanitizer entry could report success on a run that
+      # printed undefined behaviour to its own log. Leak detection was off for
+      # every entry; it is the sanitizer entry's whole point, so it is on.
       - name: Test
         env:
-          ASAN_OPTIONS: detect_leaks=0
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build --output-on-failure -j2
 
       # The engine's own headline demo, run to completion. It is deterministic

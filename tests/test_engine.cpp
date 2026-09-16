@@ -12,7 +12,24 @@
 #include <string>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#define TRACE_TEST_HAVE_PROC 1
 #include <unistd.h>
+#endif
+
+// A sanitizer makes resident memory meaningless as a leak signal: ASan pads
+// every allocation with redzones and holds freed blocks in a quarantine, so
+// the same workload that plateaus at 8 MB plateaus at 444 MB and climbs 260 MB
+// over the stretch this test bounds at 6. The workload still RUNS under the
+// sanitizers - which is where they do their own, better, leak and
+// undefined-behaviour checking - and only the RSS assertion stands down.
+#if defined(__SANITIZE_ADDRESS__)
+#define TRACE_TEST_SANITIZED 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(memory_sanitizer)
+#define TRACE_TEST_SANITIZED 1
+#endif
+#endif
 
 #include "test_harness.hpp"
 
@@ -252,14 +269,18 @@ void test_possibility_mismatch_discriminates() {
 
 }  // namespace
 
-/// Resident set size in kilobytes, or -1 where /proc is not available.
+/// Resident set size in kilobytes, or -1 where it cannot be read.
 long rss_kb() {
+#if defined(TRACE_TEST_HAVE_PROC)
     std::ifstream in("/proc/self/statm");
     if (!in) return -1;
     long size = 0, resident = 0;
     in >> size >> resident;
     if (!in) return -1;
     return resident * (sysconf(_SC_PAGESIZE) / 1024);
+#else
+    return -1;
+#endif
 }
 
 void test_memory_plateaus_under_track_turnover() {
@@ -307,8 +328,16 @@ void test_memory_plateaus_under_track_turnover() {
     // The history is bounded outright, which is checkable without /proc.
     CHECK(engine.history().size() <= Engine::kHistoryScans);
 
+#if defined(TRACE_TEST_SANITIZED)
+    std::printf("  memory: RSS is not a leak signal under a sanitizer "
+                "(%.1f MB here); the workload ran, the history bound is "
+                "checked, and ASan/LSan/UBSan cover the rest\n",
+                rss_end / 1024.0);
+    return;
+#endif
     if (rss_warm <= 0 || rss_end <= 0) {
-        std::printf("  memory: /proc unavailable, checked history bound only\n");
+        std::printf("  memory: resident size unavailable on this platform, "
+                    "checked history bound only\n");
         return;
     }
     const long growth = rss_end - rss_warm;

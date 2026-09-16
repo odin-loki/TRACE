@@ -159,7 +159,14 @@ struct DomainProfile {
 
     // -- Rendezvous (stacked warner) ---------------------------------------
     Real rv_threshold_m{150.0};        ///< distance that counts as a meeting
-    int  rv_horizon_scans{4};          ///< short-horizon Monte-Carlo depth
+    // `rv_horizon_scans` used to sit here, carried over from the Python
+    // reference, where it set the short-horizon Monte-Carlo depth in scans.
+    // Nothing in this port ever read it: the warner is written against
+    // `rv_warning_horizon_s` throughout, which is the right unit and the one
+    // this codebase has had to correct three separate times elsewhere. A knob
+    // that does nothing is worse than no knob, and wiring this one back would
+    // reintroduce exactly the scans-for-seconds confusion the rest of the port
+    // spent its effort removing.
     Real rv_warning_horizon_s{1800.0}; ///< 30-minute closest-approach window
     int  rv_sep_rate_window{8};        ///< scans used for the closure-rate fit
     Real rv_pol_window_s{3600.0};      ///< pattern-of-life lookahead

@@ -47,8 +47,16 @@ inline Batch bits_to_double(const BatchU& u) {
     return xsimd::bitwise_cast<Real>(u);
 }
 
+/// The architecture `Batch` actually resolved to, from xsimd itself.
+///
+/// This used to interpolate `TRACE_XSIMD_ARCH_NAME`, a CMake variable set to
+/// the literal "generic" at the top of CMakeLists.txt and never derived from
+/// anything - so an AVX-512 build reported "xsimd/generic" and `trace_bench`
+/// printed it. `Batch` is `xsimd::batch<Real>`, which is
+/// `xsimd::batch<Real, xsimd::default_arch>`, so the arch is already knowable
+/// here and does not need telling.
 inline constexpr const char* backend_name() {
-    return "xsimd/" TRACE_XSIMD_ARCH_NAME;
+    return xsimd::batch<Real>::arch_type::name();
 }
 
 #else  // ---- scalar fallback -------------------------------------------------
