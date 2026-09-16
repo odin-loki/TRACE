@@ -102,7 +102,12 @@ public:
 
 private:
     void em_fit();
+    /// Log density of the whole MIXTURE at `x` - every component's weight is
+    /// already inside it.
     [[nodiscard]] Real log_prob(const Vec3& x) const;
+    /// Log density of ONE component at `x`, with no weight in it. What a
+    /// responsibility is built from; `log_prob` is not.
+    [[nodiscard]] Real component_log_prob(std::size_t c, const Vec3& x) const;
 
     static Vec3 featurise(Real timestamp, Vec2 position) {
         // Hour of day folds a multi-day history onto one 24-hour cycle, which

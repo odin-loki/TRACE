@@ -7,6 +7,7 @@
 // shows what the engine makes of it — side by side with the truth it never sees.
 //
 //   ./trace_maze --width 21 --height 11 --panels 4x3 --travellers 3 --blind 2
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -127,10 +128,22 @@ int main(int argc, char** argv) {
 
     // Switch some panels off: these become blind corridors where the engine
     // has to hold identity on prediction alone and reacquire on the far side.
-    for (int i = 0; i < opt.blind_panels && !panel_configs.empty(); ++i) {
+    //
+    // Drawn WITHOUT replacement. Drawing with replacement switched off fewer
+    // panels than the run then reported - two draws landing on the same panel
+    // left one corridor lit while the summary still said two were dark, which
+    // is a claim about how hard the demo was. Redrawing on a collision leaves
+    // the random stream untouched whenever there is none, so seeds that never
+    // collided give the same run as before.
+    int disabled = 0;
+    const int want_blind =
+        std::min(opt.blind_panels, static_cast<int>(panel_configs.size()));
+    while (disabled < want_blind) {
         const auto idx = static_cast<std::size_t>(
             rng.uniform_int(0, static_cast<int>(panel_configs.size()) - 1));
+        if (!panel_configs[idx].enabled) continue;
         panel_configs[idx].enabled = false;
+        ++disabled;
     }
 
     // ---- Scenario ---------------------------------------------------------
@@ -248,7 +261,7 @@ int main(int argc, char** argv) {
     std::printf("  maze          %dx%d cells @ %.1f m\n", maze.width(), maze.height(),
                 maze.cell_size());
     std::printf("  cameras       %zu panels, %d disabled, p_detect=%.2f, swap=%.2f\n",
-                panel_configs.size(), opt.blind_panels, opt.p_detect,
+                panel_configs.size(), disabled, opt.p_detect,
                 opt.swap_probability);
     std::fputs(m.summary().c_str(), stdout);
     std::fputs(engine.performance_report().c_str(), stdout);

@@ -229,19 +229,22 @@ void PatternOfLife::em_fit() {
     baseline_nll_ = -acc / static_cast<Real>(tail);
 }
 
+Real PatternOfLife::component_log_prob(std::size_t c, const Vec3& x) const {
+    const auto& comp = components_[c];
+    Vec3 diff{};
+    for (int d = 0; d < kPolDim; ++d) diff[d] = x[d] - comp.mean[d];
+    const Vec3 y = comp.chol.forward_solve(diff);
+    Real maha = 0.0;
+    for (int d = 0; d < kPolDim; ++d) maha += y[d] * y[d];
+    return -0.5 * (maha + comp.chol.log_det +
+                   kPolDim * std::log(2.0 * std::numbers::pi));
+}
+
 Real PatternOfLife::log_prob(const Vec3& x) const {
     if (components_.empty()) return -4.0;
     std::vector<Real> lp(components_.size());
     for (std::size_t c = 0; c < components_.size(); ++c) {
-        const auto& comp = components_[c];
-        Vec3 diff{};
-        for (int d = 0; d < kPolDim; ++d) diff[d] = x[d] - comp.mean[d];
-        const Vec3 y = comp.chol.forward_solve(diff);
-        Real maha = 0.0;
-        for (int d = 0; d < kPolDim; ++d) maha += y[d] * y[d];
-        lp[c] = -0.5 * (maha + comp.chol.log_det +
-                        kPolDim * std::log(2.0 * std::numbers::pi)) +
-                std::log(comp.weight + 1e-300);
+        lp[c] = component_log_prob(c, x) + std::log(components_[c].weight + 1e-300);
     }
     return log_sum_exp(lp);
 }
@@ -268,17 +271,30 @@ PatternOfLife::Prediction PatternOfLife::predict_location(Real timestamp,
     // Reweight components by how well this hour matches each one, so the
     // prediction is "where is he at 09:00" not "where is he on average".
     //
-    // The component's mixing weight enters ONCE. It used to enter twice: added
-    // as `log(weight)` when building the log-weights, and multiplied in again
-    // when exponentiating them - so a component's influence went as the square
-    // of its weight, and the hour-conditioned prediction collapsed towards
-    // whichever component was heaviest overall rather than whichever one
-    // explains this hour.
+    // What is wanted here is a RESPONSIBILITY: given this hour, how much of the
+    // explanation does each component own? That is `w_c * N(probe | c)`, the
+    // component's own density scaled by its own weight.
+    //
+    // This took two goes to get right. The first version multiplied the weight
+    // in twice over - added as `log(weight)` here and multiplied in again when
+    // exponentiating - so a component's influence went as the SQUARE of its
+    // weight and the hour-conditioned prediction collapsed towards whichever
+    // component was heaviest overall. Removing the second multiplication fixed
+    // the count and left the shape wrong, because the density being weighted
+    // was `log_prob`, which is the whole MIXTURE's density and already has
+    // every weight inside it. Evaluated at component c's own location, it asks
+    // "does the mixture like this point", so a heavy component sitting near a
+    // light one's mean lent it its own mass, and the weight it was then
+    // multiplied by was, once more, not the only one in the term.
+    //
+    // `component_log_prob` is the one component, unweighted, which is what a
+    // responsibility is built from.
     const std::size_t k = components_.size();
     std::vector<Real> lw(k);
     for (std::size_t c = 0; c < k; ++c) {
         const Vec3 probe{hour, components_[c].mean[1], components_[c].mean[2]};
-        lw[c] = log_prob(probe) + std::log(components_[c].weight + 1e-300);
+        lw[c] = component_log_prob(c, probe) +
+                std::log(components_[c].weight + 1e-300);
     }
     const Real norm = log_sum_exp(lw);
     std::vector<Real> w(k);

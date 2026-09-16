@@ -141,9 +141,22 @@ void test_hour_survives_a_dominant_component() {
     // why it survived. Make one component dominant enough and the squared
     // weight swamps the hour term entirely: at forty sightings at home for
     // every one at work, asking where the entity is at the hour it is always at
-    // work returned home, x = 0.9 - the hour had no influence whatever. The
-    // same query with the weight entering once returns 57, still pulled hard
-    // toward home by 40:1 prior odds but no longer deaf to the evidence.
+    // work returned home, x = 0.9 - the hour had no influence whatever.
+    //
+    // Removing the second multiplication took that to 57, which this test was
+    // then written around. 57 out of 1000 is not a fixed reweighting, it is a
+    // less broken one, and the reason it was still wrong is that the density
+    // being reweighted was the whole MIXTURE's - which already carries every
+    // component's weight - rather than the one component's. Measured over
+    // seven independent seeds, against a truth of x = 1000:
+    //
+    //     mixture density    38  42  57  273  330  895  966   (mean 372)
+    //     component density 492 582 808  924  958  992 1013   (mean 824)
+    //
+    // Every seed improves and the worst case goes from 38 to 492, so the
+    // threshold below is set well under the worst observed rather than near
+    // it: a portable or scalar build consumes a different random stream, and
+    // this must not be a test that passes only on the machine that wrote it.
     PatternOfLife pol;
     Rng rng(4);
     for (int day = 0; day < 40; ++day) {
@@ -161,9 +174,10 @@ void test_hour_survives_a_dominant_component() {
     const auto pred = pol.predict_location(40 * 86400.0 + 11.0 * kHour, rng, 6000);
     std::printf("  dominant-component hour query: predicted x = %.1f "
                 "(work 1000, home 0)\n", pred.position.x);
-    // The hour has to count for something. Against the squared weight this was
-    // 0.9 - indistinguishable from ignoring the query hour altogether.
-    CHECK(pred.position.x > 10.0);
+    // The hour has to DOMINATE, not merely register. Against the squared
+    // weight this was 0.9 - indistinguishable from ignoring the query hour
+    // altogether - and against the mixture density it was 57.
+    CHECK(pred.position.x > 200.0);
 }
 
 int main() {

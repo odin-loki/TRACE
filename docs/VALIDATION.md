@@ -194,7 +194,12 @@ genuinely sparse sensing, move a great deal more:
 | mule-network | 98.6% → 98.4% | 107.0% → 106.8% | 42 → **40** | 11 → **10** |
 | *mean of all 14* | 75.1% → **76.2%** | 106.7% → **109.0%** | 106 → 113 | 179 → 185 |
 
-The eight scenarios not listed do not move at all. With both sensor estimates
+The eight scenarios not listed do not move at all. Two of the fourteen moved
+again afterwards, under the pattern-of-life and `absorb` corrections that
+followed — `metro` to 20.6% / 74.4% / 59 / 260 and `weather` to 80.1% /
+105.0% / 23 / 10 — so the "after" column above is the clutter term's effect in
+isolation rather than the current head, which is what it is there to measure.
+The head's own means are 76.2% detection and 109.1% recovery. With both sensor estimates
 switched on (`--adaptive-noise`) the mean recovery goes 106.6% → 107.0% and
 `coordinated-evasion` improves sharply — 167 → 101 identity switches and 428 →
 251 ghosts — because a learned `p_D` and the clutter term are the two halves of

@@ -24,7 +24,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
 ./build/src/apps/trace_maze          # watch it track through a maze
-./build/src/apps/trace_sim --all     # thirteen more scenarios
+./build/src/apps/trace_sim --all     # fourteen more scenarios
 ./build/src/apps/trace_bench         # how cost grows with crowd size
 ctest --test-dir build               # the test suite
 ```
