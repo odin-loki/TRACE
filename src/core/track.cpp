@@ -234,7 +234,12 @@ Real Track::path_length(std::size_t n) const {
 
 Real Track::net_displacement(std::size_t n) const {
     if (history_.size() < 2) return 0.0;
+    // `take` of zero put `start` at history_.size(), one past the end, and
+    // std::deque::operator[] does not bounds-check. n == 0 is a reasonable
+    // thing for a caller to ask - "over no scans" - and the answer is zero
+    // displacement, not a read off the end of the container.
     const std::size_t take = std::min(n, history_.size());
+    if (take < 2) return 0.0;
     const std::size_t start = history_.size() - take;
     return distance(history_.back().position, history_[start].position);
 }

@@ -89,6 +89,12 @@ public:
                                               int n_mc = 60) const;
 
     /// Hour-of-day windows in which this entity is normally active.
+    ///
+    /// Both endpoints are in [0, 24). Hour of day is a circle, so a window that
+    /// crosses midnight comes back with its START GREATER THAN ITS END - (22.5,
+    /// 1.0) means half past ten at night until one in the morning, not an empty
+    /// interval. An entity active at every hour returns the single window
+    /// (0, 24).
     [[nodiscard]] std::vector<std::pair<Real, Real>> active_windows() const;
 
     /// Typical dwell radius — how tightly clustered the baseline is in space.

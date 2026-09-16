@@ -253,9 +253,21 @@ std::vector<RendezvousWarning> RendezvousWarner::rendezvous(
 
     // Each track's pattern-of-life forecast, computed once and shared across
     // every pair it takes part in.
-    const int steps = std::min(
-        static_cast<int>(p.rv_pol_window_s / std::max(p.scan_dt_s, 1e-6)),
-        kPolMaxHorizonSteps);
+    // Clamped as a double BEFORE the cast. With the 1e-6 floor on the scan
+    // period, the default one-hour window divides out to 3.6e9, which does not
+    // fit in an int, and the conversion is undefined - so a profile with a
+    // degenerate scan period took an undefined branch rather than a short one.
+    //
+    // Note also what `kPolMaxHorizonSteps` does to `rv_pol_window_s`: the
+    // lookahead is min(rv_pol_window_s, 20 * scan_dt_s), so under any profile
+    // scanning faster than once every three minutes the 20-step cap decides and
+    // the documented window does not. On CityCameraSurveillance that is 20
+    // seconds against the hour the profile asks for. The cap is deliberate -
+    // each step is a Monte-Carlo forecast per track - but the knob should not
+    // read as though it were in charge.
+    const Real raw_steps = p.rv_pol_window_s / std::max(p.scan_dt_s, 1e-6);
+    const int steps = static_cast<int>(
+        std::min(raw_steps, static_cast<Real>(kPolMaxHorizonSteps)));
     std::vector<PolForecast> forecasts(tracks.size());
     if (steps >= 1 && ctx.rng != nullptr) {
         for (std::size_t i = 0; i < tracks.size(); ++i) {

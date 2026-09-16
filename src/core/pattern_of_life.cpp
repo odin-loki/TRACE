@@ -40,10 +40,16 @@ Chol3 Chol3::factor(const std::array<std::array<Real, kPolDim>, kPolDim>& A,
                 Real sum = A[i][j] + (i == j ? r : 0.0);
                 for (int k = 0; k < j; ++k) sum -= L[i][k] * L[j][k];
                 if (i == j) {
-                    if (sum <= 0.0) { ok = false; break; }
+                    // `sum > 0.0`, not `!(sum <= 0.0)`. Every comparison
+                    // against a NaN is false, so the old test let a NaN
+                    // through, took its square root, and returned the result
+                    // with valid = true - the one thing the fallback below
+                    // exists to prevent.
+                    if (!(sum > 0.0)) { ok = false; break; }
                     L[i][j] = std::sqrt(sum);
                 } else {
                     L[i][j] = sum / L[j][j];
+                    if (!std::isfinite(L[i][j])) { ok = false; break; }
                 }
             }
         }
@@ -56,6 +62,7 @@ Chol3 Chol3::factor(const std::array<std::array<Real, kPolDim>, kPolDim>& A,
         }
     }
     // Fall back to a wide isotropic component rather than propagating a NaN.
+    // Reachable now that the tests above actually reject one.
     out.L = {};
     for (int i = 0; i < kPolDim; ++i) out.L[i][i] = 1.0;
     out.log_det = 0.0;
@@ -338,7 +345,22 @@ std::vector<std::pair<Real, Real>> PatternOfLife::active_windows() const {
         if (c.weight <= min_weight) continue;
         const Real centre = c.mean[0];
         const Real spread = std::sqrt(std::max(c.cov[0][0], 0.0));
-        out.emplace_back(centre - spread, centre + spread);
+        // Hour of day is a CIRCLE. A component centred near midnight produced
+        // windows like (-1.5, 2.5) or (22.5, 26.0), and an hour of -1.5 is not
+        // a time of day. Both ends are wrapped into [0, 24); a window whose
+        // start is greater than its end is one that crosses midnight, which is
+        // the usual convention for a wrapped interval and is what the header
+        // now says. A spread of a full day or more collapses to "always",
+        // rather than wrapping into an interval that excludes most of the day.
+        auto wrap = [](Real h) {
+            h = std::fmod(h, 24.0);
+            return h < 0.0 ? h + 24.0 : h;
+        };
+        if (2.0 * spread >= 24.0) {
+            out.emplace_back(0.0, 24.0);
+        } else {
+            out.emplace_back(wrap(centre - spread), wrap(centre + spread));
+        }
     }
     return out;
 }

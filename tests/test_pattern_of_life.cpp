@@ -8,6 +8,8 @@
 
 #include <cstdio>
 
+#include <limits>
+#include <cmath>
 #include "test_harness.hpp"
 
 using namespace trace;
@@ -121,10 +123,31 @@ void test_active_windows_and_spread() {
     }
     CHECK(pol.fitted());
     const auto windows = pol.active_windows();
-    CHECK(!windows.empty());
-    CHECK(pol.spatial_spread() > 0.0);
     std::printf("  active windows: %zu, spatial spread %.1f m\n", windows.size(),
                 pol.spatial_spread());
+
+    // `!windows.empty()` and `spread > 0` were the whole of this test, and both
+    // are true of any fitted model whatever it fitted - so it could not fail.
+    // The entity above is seen at 08:00, 09:00, 10:00 and 11:00 every day, at
+    // positions drawn from N(0, 40 m), which is enough to say what the answers
+    // should actually be.
+    CHECK(!windows.empty());
+    for (const auto& [lo, hi] : windows) {
+        // Inside the day, and inside the band the entity was seen in. Measured
+        // over six seeds the windows span [7.40, 11.21]; the bound is set wide
+        // of that because a portable or scalar build draws a different random
+        // stream, but nowhere near wide enough to admit an all-hours answer.
+        CHECK(lo >= 0.0 && lo <= 24.0);
+        CHECK(hi >= 0.0 && hi <= 24.0);
+        CHECK(lo >= 5.0);
+        CHECK(hi <= 14.0);
+    }
+    // A weighted mean per-component dwell radius, against sightings scattered
+    // at 40 m. Six seeds give 27.4 to 36.3 m; anything outside 10 to 120 is a
+    // different quantity, not a different sample.
+    const Real spread = pol.spatial_spread();
+    CHECK(spread > 10.0);
+    CHECK(spread < 120.0);
 }
 
 }  // namespace
@@ -180,6 +203,71 @@ void test_hour_survives_a_dominant_component() {
     CHECK(pred.position.x > 200.0);
 }
 
+void test_cholesky_rejects_a_nan_matrix() {
+    // `Chol3::factor` promises, in its own comment, to fall back to a wide
+    // isotropic component "rather than propagating a NaN". It did not: the
+    // positive-definiteness test was `sum <= 0.0`, and every comparison
+    // against a NaN is false, so a NaN went through the test, through
+    // std::sqrt, and out with valid = true.
+    std::array<std::array<Real, kPolDim>, kPolDim> nan_cov{};
+    const Real nan = std::numeric_limits<Real>::quiet_NaN();
+    for (int i = 0; i < kPolDim; ++i) {
+        for (int j = 0; j < kPolDim; ++j) nan_cov[i][j] = nan;
+    }
+    const Chol3 c = Chol3::factor(nan_cov);
+    CHECK(!c.valid);
+    for (int i = 0; i < kPolDim; ++i) {
+        for (int j = 0; j < kPolDim; ++j) CHECK(std::isfinite(c.L[i][j]));
+    }
+    CHECK(std::isfinite(c.log_det));
+
+    // A NaN in one entry only, which is how it would actually arrive.
+    auto one_bad = nan_cov;
+    for (int i = 0; i < kPolDim; ++i) {
+        for (int j = 0; j < kPolDim; ++j) one_bad[i][j] = (i == j) ? 4.0 : 0.0;
+    }
+    one_bad[1][1] = nan;
+    const Chol3 c2 = Chol3::factor(one_bad);
+    CHECK(!c2.valid);
+    for (int i = 0; i < kPolDim; ++i) {
+        for (int j = 0; j < kPolDim; ++j) CHECK(std::isfinite(c2.L[i][j]));
+    }
+
+    // And a good matrix still factorises.
+    auto good = one_bad;
+    good[1][1] = 4.0;
+    const Chol3 c3 = Chol3::factor(good);
+    CHECK(c3.valid);
+    CHECK(std::isfinite(c3.log_det));
+}
+
+void test_active_windows_are_hours_of_the_day() {
+    // Hour of day is a circle and these are hours of the day, so both ends
+    // belong in [0, 24). A component centred near midnight used to come back
+    // as (-1.5, 2.5) or (22.5, 26.0). A window that crosses midnight is now
+    // reported with its start greater than its end, which the header states.
+    PatternOfLife pol;
+    Rng rng(31);
+    // A routine that straddles midnight: active 23:00 to 01:00 every day.
+    for (int day = 0; day < 40; ++day) {
+        const Real base = day * 86400.0;
+        for (int k = 0; k < 20; ++k) {
+            const Real hour = 23.0 + static_cast<Real>(k) * 0.1;   // 23:00-01:00
+            pol.add(base + hour * kHour, Vec2{rng.normal(0.0, 5.0),
+                                              rng.normal(0.0, 5.0)});
+        }
+    }
+    CHECK(pol.fitted());
+    if (!pol.fitted()) return;
+    const auto windows = pol.active_windows();
+    std::printf("  active windows across midnight: %zu\n", windows.size());
+    for (const auto& [lo, hi] : windows) {
+        std::printf("    %.2f -> %.2f\n", lo, hi);
+        CHECK(lo >= 0.0 && lo <= 24.0);
+        CHECK(hi >= 0.0 && hi <= 24.0);
+    }
+}
+
 int main() {
     test_unfitted_is_neutral();
     test_learns_a_daily_routine();
@@ -187,5 +275,7 @@ int main() {
     test_clone_transfers_a_baseline();
     test_active_windows_and_spread();
     test_hour_survives_a_dominant_component();
+    test_cholesky_rejects_a_nan_matrix();
+    test_active_windows_are_hours_of_the_day();
     return trace::test::summary("test_pattern_of_life");
 }
