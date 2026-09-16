@@ -117,12 +117,40 @@ std::vector<DetectionEvent> TradecraftDetector::detect(
             have_prev = true;
         }
 
+        // The loop has to have a RADIUS. The only guard was `d.norm() < 1e-6`,
+        // which rejects a point exactly on the centroid and nothing else - so
+        // an entity standing still accumulated winding from its own position
+        // noise circling its own centroid, and given enough scans reached
+        // `sdr_turns` without going anywhere. Three sigma of position noise is
+        // the same bar the birth gate uses for "further than the sensor could
+        // have put it by accident".
+        Real mean_radius = 0.0;
+        int radius_n = 0;
+        for (std::size_t i = v.size() - take; i < v.size(); ++i) {
+            mean_radius += (v[i].position - centroid).norm();
+            ++radius_n;
+        }
+        if (radius_n > 0) mean_radius /= static_cast<Real>(radius_n);
+
         const Real winding = std::abs(total_turn) / (2.0 * std::numbers::pi);
-        if (winding >= p.sdr_turns) {
+        const bool is_loop =
+            winding >= p.sdr_turns && mean_radius > 3.0 * p.pos_noise_m;
+
+        // One loop, one event. There was no such flag, so a route that stayed
+        // above the threshold re-emitted SDR_PATTERN on every scan for as long
+        // as it did - the same alert over and over for one piece of behaviour.
+        // BRUSH_PASS and CHOKEPOINT both carry this; this did not. Cleared when
+        // the route stops looking like a loop, so a second loop reports again.
+        bool& reported = sdr_reported_[t->id()];
+        if (!is_loop) {
+            reported = false;
+        } else if (!reported) {
+            reported = true;
             auto e = make_event("SDR_PATTERN", name(), {t->id()}, Severity::HIGH,
                                 ctx.timestamp);
             e.location = t->position();
             e.metrics.push_back({"winding_turns", winding});
+            e.metrics.push_back({"loop_radius_m", mean_radius});
             e.note = "closed-loop route consistent with surveillance detection";
             events.push_back(std::move(e));
         }

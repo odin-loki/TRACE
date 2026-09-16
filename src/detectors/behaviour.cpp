@@ -246,13 +246,14 @@ std::vector<DetectionEvent> LoiterDetector::detect(
         events.push_back(std::move(e));
     }
 
-    // Drop dwell state for tracks that are gone, so the map cannot grow without
-    // bound over a long deployment.
-    if (dwell_.size() > 512) {
-        std::set<std::string> live;
-        for (const auto& t : tracks) live.insert(t->id());
-        std::erase_if(dwell_, [&](const auto& kv) { return !live.contains(kv.first); });
-    }
+    // No ad-hoc prune here. There used to be one - above 512 entries, erase
+    // every id not among THIS SCAN's tracks - and the set it pruned against
+    // was wrong. `detect` is handed the CONFIRMED tracks, so an entity whose
+    // existence dipped below `r_confirm` for a single scan had its accumulated
+    // dwell erased and started its loiter clock again, which is precisely the
+    // entity a loiter detector is watching. `Detector::forget` already retires
+    // this map, once per scan, against the manager's own live set - live plus
+    // dormant - so the bound was redundant as well as harmful.
     return events;
 }
 

@@ -39,11 +39,15 @@ private:
     };
     void forget(const std::set<std::string>& live) override {
         forget_by_id(visits_, live);
+        forget_by_id(sdr_reported_, live);
         forget_by_pair(contact_streak_, live);
     }
 
 private:
     std::unordered_map<std::string, std::deque<Visit>> visits_;
+    /// Whether this track's current route has already been reported as a loop.
+    /// One loop, one event; cleared when the route stops being one.
+    std::unordered_map<std::string, bool> sdr_reported_;
     std::map<std::pair<std::string, std::string>, int> contact_streak_;
 };
 
