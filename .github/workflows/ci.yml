@@ -29,6 +29,19 @@ jobs:
           # and the scalar tails carry everything.
           - name: scalar (no xsimd)
             cmake_args: -DCMAKE_BUILD_TYPE=Release -DTRACE_WITH_XSIMD=OFF
+          # Four lanes, pinned. `release` above uses -march=native, so which
+          # lane count it exercises is whatever the hosted runner happens to
+          # have - and the lane count decides the order the particle filter
+          # consumes its RNG, so it decides every Monte-Carlo figure a test
+          # might be tuned to. A test threshold that was an artefact of an
+          # eight-lane machine sat here green on one, two and eight lanes and
+          # red on four, which is exactly what the runners have. Pinning it
+          # means the coverage does not move when the fleet does.
+          - name: four lanes (x86-64-v3)
+            cmake_args: >-
+              -DCMAKE_BUILD_TYPE=Release
+              -DTRACE_NATIVE_ARCH=OFF
+              "-DCMAKE_CXX_FLAGS=-march=x86-64-v3"
           # The flags are QUOTED. Unquoted, the folded scalar puts
           # `-fno-omit-frame-pointer` on the command line as a word of its own,
           # cmake answers "Unknown argument -fno-omit-frame-pointer" and exits
