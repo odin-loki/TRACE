@@ -16,34 +16,6 @@ std::pair<std::string, std::string> pair_key(const std::string& a,
     return a < b ? std::make_pair(a, b) : std::make_pair(b, a);
 }
 
-/// Least-squares velocity from a track's recent history, in metres per SCAN --
-/// the intercept solve below works in scans, so this deliberately does not
-/// convert to SI. More robust than the instantaneous filter velocity, which
-/// jitters with each resample and would make the intercept time swing wildly.
-Vec2 fitted_velocity(const Track& t, Real scan_dt, std::size_t window = 6) {
-    const auto& h = t.history();
-    if (h.size() < 3) return t.velocity() * scan_dt;
-
-    const std::size_t take = std::min(window, h.size());
-    const std::size_t start = h.size() - take;
-    const auto n = static_cast<Real>(take);
-
-    Real sum_i = 0.0, sum_ii = 0.0;
-    Vec2 sum_p{}, sum_ip{};
-    for (std::size_t k = 0; k < take; ++k) {
-        const auto i = static_cast<Real>(k);
-        const Vec2 p = h[start + k].position;
-        sum_i += i;
-        sum_ii += i * i;
-        sum_p += p;
-        sum_ip += p * i;
-    }
-    const Real denom = n * sum_ii - sum_i * sum_i;
-    if (std::abs(denom) < 1e-9) return t.velocity() * scan_dt;
-    return Vec2{(n * sum_ip.x - sum_i * sum_p.x) / denom,
-                (n * sum_ip.y - sum_i * sum_p.y) / denom};
-}
-
 Priority priority_from_eta(Real eta_s, Real confidence) {
     if (eta_s < 300.0 && confidence > 0.5) return Priority::IMMEDIATE;
     if (eta_s < 900.0 && confidence > 0.4) return Priority::HIGH;
@@ -52,6 +24,61 @@ Priority priority_from_eta(Real eta_s, Real confidence) {
 }
 
 }  // namespace
+
+/// Least-squares velocity from a track's recent history, in metres per SCAN --
+/// the intercept solve below works in scans, so this converts at the end rather
+/// than returning SI. More robust than the instantaneous filter velocity, which
+/// jitters with each resample and would make the intercept time swing wildly.
+///
+/// The regression is against each sample's TIMESTAMP, not its index in the
+/// history. `Track::history_` is appended once per accepted detection, not once
+/// per scan, so the index is not a clock: a track under two sensors gets two
+/// samples per scan at the same instant, and one that goes unseen for a while
+/// gets none at all. Regressing against the index then reads a slope of metres
+/// per sample and calls it metres per scan.
+///
+/// Measured on a 2 m/s target, truth 120 m per 60 s scan: one sensor gave
+/// 123 m/scan, two gave 45.8 and four gave 31.0 - under-reading the speed by
+/// nearly four times under the overlapping coverage this detector is most
+/// likely to be used in. Convergence ETAs are computed from this, so the
+/// warning said an hour where the truth was a quarter of that. Against the
+/// timestamp the same three cases give 1.02, 0.84 and 1.13 times the truth:
+/// the bias is gone, and what is left is the shorter time baseline a
+/// sample-count window spans when several sensors report the same scan. That
+/// is noise rather than error, and widening the window to span a fixed number
+/// of scans instead of samples would reduce it.
+Vec2 fitted_velocity(const Track& t, Real scan_dt, std::size_t window) {
+    const auto& h = t.history();
+    if (h.size() < 3) return t.velocity() * scan_dt;
+
+    const std::size_t take = std::min(window, h.size());
+    const std::size_t start = h.size() - take;
+    const auto n = static_cast<Real>(take);
+
+    // Times relative to the first sample kept, so the normal equations stay
+    // well conditioned whatever the absolute timestamps are.
+    const Real t0 = h[start].timestamp;
+
+    Real sum_t = 0.0, sum_tt = 0.0;
+    Vec2 sum_p{}, sum_tp{};
+    for (std::size_t k = 0; k < take; ++k) {
+        const Real ti = h[start + k].timestamp - t0;
+        const Vec2 p = h[start + k].position;
+        sum_t += ti;
+        sum_tt += ti * ti;
+        sum_p += p;
+        sum_tp += p * ti;
+    }
+    const Real denom = n * sum_tt - sum_t * sum_t;
+    // Degenerate when every sample shares a timestamp, which is exactly what
+    // several sensors reporting one scan produces. There is no slope to fit
+    // through a single instant, so fall back rather than invent one.
+    if (std::abs(denom) < 1e-9) return t.velocity() * scan_dt;
+
+    // Metres per second from the fit, then to metres per scan for the caller.
+    return Vec2{(n * sum_tp.x - sum_t * sum_p.x) / denom,
+                (n * sum_tp.y - sum_t * sum_p.y) / denom} * scan_dt;
+}
 
 // ---------------------------------------------------------------------------
 // Method 1 — geometric intercept

@@ -10,10 +10,10 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Twelve did not, and are set out below with
-the evidence. All twelve are now fixed.
+Ten derivations came back sound. Thirteen did not, and are set out below with
+the evidence. All thirteen are now fixed.
 
-**Five of the twelve are in the scorer, not the engine** — the code that
+**Five of the thirteen are in the scorer, not the engine** — the code that
 decides which track corresponds to which real entity, what counts as the
 tracker changing its mind, which ground-truth identity is which, and what to do
 about the places the benchmark declined to annotate. Not one of them changes
@@ -22,10 +22,11 @@ about it, and together they move MOT17 MOTA from 48.2% to 54.3% without a
 single line of the engine being touched.
 
 That ratio is the most useful thing here: close to half the defects were in the
-instrument rather than in the thing being measured. Of the seven that were in
-the engine, four were errors of dimension — a probability compared against a
+instrument rather than in the thing being measured. Of the eight that were in
+the engine, five were errors of dimension — a probability compared against a
 density, metres per second integrated as metres per scan, a walking pace used
-as an aircraft's speed, a count of detections divided by a count of scans —
+as an aircraft's speed, a count of detections divided by a count of scans, a slope per sample
+reported as a slope per scan —
 which is what makes "do the units agree" worth asking of every formula rather
 than only of the ones that look suspicious.
 
@@ -671,6 +672,55 @@ the shipped scenarios mostly feed a track from one sensor at a time. The value
 of the fix is not in those numbers; it is that two decisions which were being
 taken unconditionally are now taken on evidence.
 
+### 13. The velocity fit regressed against an index, not a clock — **fixed**
+
+`src/detectors/rendezvous.cpp`. `fitted_velocity` fits a line to a track's
+recent positions and returns the slope in metres per **scan** — the intercept
+solve downstream works in scans. It regressed position against the sample's
+**index** in the history.
+
+`Track::history_` is appended once per accepted detection, not once per scan,
+so the index is not a clock. Two sensors reporting the same scan add two
+samples at the same instant; a track that goes unseen for a while adds none at
+all. Regressing against the index reads a slope of metres per *sample* and
+calls it metres per scan.
+
+Measured on a 2 m/s target with a 60 s scan — truth 120 m per scan:
+
+| sensors on the track | before | after |
+|---|---|---|
+| 1 | 123.0 m/scan (1.02×) | 123.0 (1.02×) |
+| 2 | 45.8 m/scan (0.38×) | **100.6 (0.84×)** |
+| 4 | 31.0 m/scan (0.26×) | **135.5 (1.13×)** |
+
+So under the overlapping coverage this detector is most likely to be used in,
+the closing speed read at about a quarter of the truth — and convergence ETAs
+are computed from it, so the warning offered four times the time that actually
+remained. The samples already carry a timestamp; the fit now uses it, and
+converts to metres per scan at the end.
+
+What is left after the fix is spread, not bias: a six-sample window spans fewer
+scans when several sensors report each one, so the baseline is shorter and the
+fit noisier. Widening the window to span a fixed number of scans rather than
+samples would reduce it.
+
+**Nothing measurable moves.** Not one of the fourteen scenarios changes by a
+single ghost track or identity switch over seven seeds, and MOT17 is identical
+to the digit. That is not evidence the fix is unnecessary — it is evidence that
+neither the scenarios nor MOTChallenge put two sensors on one track, which is
+the only configuration the defect bites in. The engine supports overlapping
+coverage, several profiles assume it, and a deployment with it would have been
+getting convergence warnings offering four times the time that remained. A
+defect the test suite cannot see is worse than one it can.
+
+`fitted_velocity` is now declared in the detectors header rather than kept
+private to the translation unit. A function whose contract is a unit — metres
+per scan, from a history counted in detections — needs to be reachable from a
+test, or the contract drifts. An end-to-end test through the rendezvous
+detector was tried first and rejected: the geometric intercept is one of three
+methods and the others masked the difference, so the test passed against the
+defect.
+
 ---
 
 ## Not a formula error, and fixed anyway
@@ -755,7 +805,7 @@ them. Quantifying over a superset of the reachable values is both the cheaper
 encoding and the stronger statement, which is the one generalisable technique
 to come out of this exercise.
 
-Of the twelve findings, exactly one — the existence update — was found by a
+Of the thirteen findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
 the formula is supposed to compute and comparing. Model checking earned its
 place by settling things reading could not, in both directions. It proved the

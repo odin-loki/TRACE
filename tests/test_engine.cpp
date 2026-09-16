@@ -1,5 +1,7 @@
 // Engine-level contracts: what a caller is entitled to rely on in a ScanReport.
 #include "trace/core/engine.hpp"
+#include "trace/core/pmbm.hpp"
+#include "trace/detectors/detectors.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -375,10 +377,52 @@ void test_forecast_advances_a_scan_period_per_step() {
     CHECK(std::abs(step_m - v.norm() * step_s) <= 1e-3 * (step_m + 1.0));
 }
 
+void test_fitted_velocity_is_metres_per_scan() {
+    // `fitted_velocity` fits a line to a track's recent positions and returns
+    // the slope in metres per SCAN. `Track::history_` is appended once per
+    // accepted DETECTION, not once per scan, so the sample index is not a
+    // clock: two sensors reporting the same scan add two samples at the same
+    // instant, and a track that goes unseen adds none at all.
+    //
+    // Regressed against the index, that reads a slope of metres per SAMPLE and
+    // calls it metres per scan. On a 2 m/s target with a 60 s scan - truth
+    // 120 m per scan - one sensor gave 123, two gave 45.8 and four gave 31.0.
+    // Regressed against the timestamp the samples already carry, the bias goes.
+    const DomainProfile profile = UrbanHUMINT();
+    const Real truth_per_scan = 2.0 * profile.scan_dt_s;
+
+    for (int n_sensors : {1, 2, 4}) {
+        PmbmManager pmbm(profile, Area{-50000, 50000, -50000, 50000}, 5);
+        Vec2 truth{0.0, 0.0};
+        for (int i = 0; i < 14; ++i) {
+            std::vector<Observation> obs;
+            for (int s = 0; s < n_sensors; ++s) {
+                obs.push_back({"o" + std::to_string(i) + "_" + std::to_string(s),
+                               static_cast<Real>(i) * profile.scan_dt_s, truth,
+                               Modality::GEOINT, 0.95, "CAM" + std::to_string(s)});
+            }
+            pmbm.predict();
+            pmbm.update(obs, static_cast<Real>(i) * profile.scan_dt_s);
+            truth.x += 2.0 * profile.scan_dt_s;
+        }
+        CHECK(!pmbm.all_tracks().empty());
+        if (pmbm.all_tracks().empty()) continue;
+        const Vec2 v = fitted_velocity(*pmbm.all_tracks().front(), profile.scan_dt_s);
+        const Real ratio = v.x / truth_per_scan;
+        std::printf("  fitted_velocity, %d sensor(s): %.1f m/scan of %.1f (ratio %.2f)\n",
+                    n_sensors, v.x, truth_per_scan, ratio);
+        // Within a quarter of the truth however many sensors are reporting.
+        // Against the index regression the four-sensor case read 0.26.
+        CHECK(ratio > 0.75);
+        CHECK(ratio < 1.25);
+    }
+}
+
 int main() {
     test_empty_scan_is_safe();
     test_possibility_mismatch_discriminates();
     test_forecast_advances_a_scan_period_per_step();
+    test_fitted_velocity_is_metres_per_scan();
     test_memory_plateaus_under_track_turnover();
     test_track_forms_and_reports();
     test_detector_registry();

@@ -48,6 +48,15 @@ private:
 /// straight-line intercept, closure-rate extrapolation, and pattern-of-life
 /// cross-prediction. They fail in different circumstances, so running all three
 /// and taking the most confident covers far more cases than any one alone.
+/// Least-squares velocity over a track's recent history, in metres per SCAN.
+///
+/// Declared here rather than kept private to rendezvous.cpp because it carries
+/// a units contract - metres per scan, from a history that is appended once per
+/// DETECTION rather than once per scan - and a units contract that cannot be
+/// tested directly is a units contract that drifts. See the definition for what
+/// regressing against the sample index instead of the sample timestamp cost.
+Vec2 fitted_velocity(const Track& t, Real scan_dt, std::size_t window = 6);
+
 class RendezvousWarner final : public Detector {
 public:
     [[nodiscard]] std::string name() const override { return "RendezvousWarner"; }
