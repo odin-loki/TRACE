@@ -44,9 +44,24 @@ struct ClearMot {
     long ignored_tracks{0};
     Real distance_sum{0.0};
 
-    /// Last track id seen for each ground-truth identity. Per sequence, so a
-    /// plain id is enough here.
+    /// Last track id EVER seen for each ground-truth identity. This is what
+    /// the identity-switch count is measured against: an identity that
+    /// disappears for fifty frames and comes back on a different hypothesis has
+    /// been switched, and forgetting the old assignment would hide that.
+    /// Per sequence, so a plain id is enough here.
     std::map<int, std::string> last_match;
+
+    /// The mapping produced in the IMMEDIATELY PRECEDING frame, which is a
+    /// different thing and is what the continuity pass needs.
+    ///
+    /// CLEAR-MOT preserves the previous frame's correspondence where it is
+    /// still valid. Running that pass off `last_match` instead let a pairing
+    /// from fifty frames ago outrank a better hypothesis available now: a
+    /// ground-truth object that went unmatched for a stretch still carried its
+    /// old claim, and the first pass honoured it the moment the old hypothesis
+    /// came back within the radius, whatever else was closer. Preserving a
+    /// correspondence that does not exist is not continuity.
+    std::map<int, std::string> prev_frame_match;
 
     /// Frames each ground-truth identity was present / matched, keyed by
     /// (sequence, identity).
@@ -168,8 +183,8 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
     for (std::size_t j = 0; j < tracks.size(); ++j) by_id[tracks[j].track_id] = j;
 
     for (std::size_t i = 0; i < gt.size(); ++i) {
-        const auto prev = m.last_match.find(gt[i].id);
-        if (prev == m.last_match.end()) continue;
+        const auto prev = m.prev_frame_match.find(gt[i].id);
+        if (prev == m.prev_frame_match.end()) continue;
         const auto hit = by_id.find(prev->second);
         if (hit == by_id.end() || tr_taken[hit->second]) continue;
         if (distance(tracks[hit->second].position, gt[i].foot()) > match_radius) continue;
@@ -196,6 +211,11 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
     m.gt_total += static_cast<long>(gt.size());
     for (const auto& b : gt) ++m.gt_frames[{m.seq, b.id}];
 
+    // This frame's mapping becomes the next frame's continuity input, and only
+    // this frame's: a ground-truth object matched to nothing here carries no
+    // claim into the next frame.
+    std::map<int, std::string> this_frame;
+
     for (std::size_t i = 0; i < gt.size(); ++i) {
         const int j = gt_to_track[i];
         if (j < 0) {
@@ -206,6 +226,7 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
         ++m.true_positives;
         ++m.matched_frames[{m.seq, gt[i].id}];
         m.distance_sum += distance(track.position, gt[i].foot());
+        this_frame[gt[i].id] = track.track_id;
 
         const auto it = m.last_match.find(gt[i].id);
         if (it == m.last_match.end()) {
@@ -215,6 +236,8 @@ void accumulate(ClearMot& m, const std::vector<MotBox>& gt,
             it->second = track.track_id;
         }
     }
+
+    m.prev_frame_match = std::move(this_frame);
 
     std::vector<char> matched_track(tracks.size(), 0);
     for (std::size_t i = 0; i < gt.size(); ++i) {
@@ -325,14 +348,19 @@ ClearMot run_sequence(const std::string& dir, Real min_score, Real match_radius,
         ++m.frames;
         m.peak_tracks = std::max(m.peak_tracks, r.n_tracks);
 
+        // Every frame is scored, including one with no ground-truth row at
+        // all. Skipping those made a frame with no annotated people a frame in
+        // which the tracker could report anything it liked for free, since a
+        // false positive is only counted inside `accumulate`. Neither MOT17
+        // train nor MOT20 train contains such a frame - 0 of 15,948 and 0 of
+        // 8,931 - so this changes no figure in this repository; it is a trap
+        // laid for the next dataset rather than a correction to this one.
+        static const std::vector<MotBox> kNone;
         const auto gt_it = seq.truth.find(frame);
-        if (gt_it != seq.truth.end()) {
-            static const std::vector<MotBox> kNoIgnore;
-            const auto ig_it = seq.ignore.find(frame);
-            accumulate(m, gt_it->second,
-                       ig_it != seq.ignore.end() ? ig_it->second : kNoIgnore,
-                       r.targets, match_radius);
-        }
+        const auto ig_it = seq.ignore.find(frame);
+        accumulate(m, gt_it != seq.truth.end() ? gt_it->second : kNone,
+                   ig_it != seq.ignore.end() ? ig_it->second : kNone,
+                   r.targets, match_radius);
 
         if (verbose && frame % 200 == 0) {
             std::printf("    frame %4d/%d  obs %3zu  tracks %3d  %.2f ms\n", frame,

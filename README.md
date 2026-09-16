@@ -94,8 +94,8 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **52.9%** | **108.4%** |
-| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **62.6%** | **114.7%** |
+| MOT17 train, 21 sequences | 336,891 | **53.0%** | **108.5%** |
+| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **62.5%** | **114.7%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
@@ -110,8 +110,8 @@ docs/VALIDATION.md](docs/VALIDATION.md).
 
 MOT20 scoring above MOT17 is not the expected direction, and it is the
 detections rather than the tracker: MOT20's are uniformly good where MOT17's
-include DPM. Density costs latency far more than accuracy — 81 ms/frame at 226
-people per frame, against 5.8 for MOT17.
+include DPM. Density costs latency far more than accuracy — 78 ms/frame at 226
+people per frame, against 5.7 for MOT17.
 
 TRACE supports appearance descriptors but they are **switched off** on MOT, and
 that is a measurement rather than an omission: a *perfect* oracle descriptor
