@@ -18,6 +18,11 @@ and players are all the same problem with a different `DomainProfile`.
 
 ## Quick start
 
+Pre-built archives for Linux (x86_64), Windows (x86_64) and macOS (arm64)
+are on the [Releases](https://github.com/odin-loki/TRACE/releases) page.
+They are portable (`-DTRACE_NATIVE_ARCH=OFF`) and contain the four tools
+plus the installable `TRACE::core` package.
+
 ```bash
 git clone <this repo> && cd TRACE
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release

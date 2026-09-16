@@ -1,0 +1,186 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Odin Loch <https://github.com/odin-loki>
+
+# Portable archives for the three machines people actually download to.
+# TRACE_NATIVE_ARCH is OFF: an AVX-512 runner must not ship an AVX-512
+# sizeof(simd::Batch) as if it were a portable package. See CMakeLists.txt.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and attach (e.g. v0.2.0)
+        required: true
+        type: string
+        default: v0.2.0
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+          - name: windows-x86_64
+            os: windows-latest
+          - name: macos-arm64
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+
+      - name: Install toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-13
+          echo "CXX=g++-13" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          extra=()
+          case "${{ runner.os }}" in
+            Linux)
+              extra+=(-G Ninja)
+              ;;
+            Windows)
+              extra+=(-A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)
+              ;;
+            macOS)
+              extra+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0)
+              ;;
+          esac
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTRACE_NATIVE_ARCH=OFF \
+            -DTRACE_BUILD_TESTS=ON \
+            -DTRACE_WITH_CUDA=OFF \
+            -DTRACE_WITH_QT=OFF \
+            "${extra[@]}"
+
+      - name: Build
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cmake --build build --config Release --parallel
+          else
+            cmake --build build --parallel
+          fi
+
+      - name: Test
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ctest --test-dir build -C Release --output-on-failure -j2
+          else
+            ctest --test-dir build --output-on-failure -j2
+          fi
+
+      - name: Maze demo
+        run: |
+          app=$(find build/src/apps -maxdepth 2 -type f \( -name trace_maze -o -name trace_maze.exe \) | head -n1)
+          "$app" > /dev/null
+
+      - name: All scenarios
+        run: |
+          app=$(find build/src/apps -maxdepth 2 -type f \( -name trace_sim -o -name trace_sim.exe \) | head -n1)
+          "$app" --all --seed 7 > /dev/null
+
+      - name: Stage archive
+        run: |
+          set -euo pipefail
+          ver="${TAG#v}"
+          case "${{ runner.os }}" in
+            Linux)  plat="linux-$(uname -m)" ;;
+            macOS)  plat="macos-$(uname -m)" ;;
+            *)      plat="windows-x86_64" ;;
+          esac
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cmake --install build --config Release --prefix "$PWD/pkg"
+          else
+            cmake --install build --prefix "$PWD/pkg"
+          fi
+
+          mkdir -p pkg/bin
+          for name in trace_maze trace_sim trace_mot trace_bench; do
+            f=$(find build/src/apps -maxdepth 2 -type f \( -name "$name" -o -name "$name.exe" \) | head -n1)
+            if [ -z "$f" ]; then
+              echo "missing $name"
+              exit 1
+            fi
+            cp "$f" pkg/bin/
+          done
+          cp README.md LICENSE THIRD-PARTY.md pkg/
+
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            (cd pkg && tar.exe -a -cf "../dist/TRACE-${ver}-${plat}.zip" *)
+          else
+            tar -czf "dist/TRACE-${ver}-${plat}.tar.gz" -C pkg .
+          fi
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TRACE-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: attach to GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum TRACE-* | tee SHA256SUMS
+          ls -la
+
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "TRACE ${TAG#v}" \
+              --generate-notes \
+              --latest
+          fi
+
+          gh release upload "$TAG" TRACE-* SHA256SUMS \
+            --repo "${{ github.repository }}" \
+            --clobber
