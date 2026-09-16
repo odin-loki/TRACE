@@ -42,6 +42,12 @@ bool g_adaptive_pd = false;
 bool g_no_coverage = false;
 /// Set by --no-constraint, to measure what expressing the track topology buys.
 bool g_no_constraint = false;
+/// Overrides a RoadNetwork's junction radius where a scenario builds one with
+/// junctions. Negative means "leave it at the network's own tolerance", which
+/// is the default. Zero projects junctions like any other point, which is the
+/// arm SIMULATIONS.md compares against and which, until this flag existed,
+/// could only be measured by editing the source.
+Real g_junction_radius = -1.0;
 
 std::vector<Vec2> line(Vec2 a, Vec2 b, int steps) {
     std::vector<Vec2> out;
@@ -1590,10 +1596,11 @@ void run_metro(std::uint64_t seed, bool verbose) {
     if (!g_no_constraint) {
         // Junction handling is on by default at the network's own tolerance,
         // which is both the principled choice and, measured across seeds, the
-        // best one: 85.9% recovery against 81.7% either with the junctions
-        // projected like any other point or with no constraint at all.
-        s.engine_config.motion_constraint =
-            std::make_shared<RoadNetwork>(rails, 60.0);
+        // best one. --junction-radius 0 is the arm that projects junctions
+        // like any other point; --no-constraint drops the topology entirely.
+        auto rail_net = std::make_shared<RoadNetwork>(rails, 60.0);
+        if (g_junction_radius >= 0.0) rail_net->set_junction_radius(g_junction_radius);
+        s.engine_config.motion_constraint = std::move(rail_net);
     }
 
     // A turnstile at every station. Tight radius, low noise: a tap is an
@@ -2142,14 +2149,34 @@ int main(int argc, char** argv) {
             g_no_coverage = true;
         } else if (a == "--no-constraint") {
             g_no_constraint = true;
+        } else if (a == "--junction-radius" && i + 1 < argc) {
+            g_junction_radius = std::atof(argv[++i]);
         } else if (a == "--appearance" && i + 1 < argc) {
             g_blackout_appearance = std::atof(argv[++i]);
             g_decoy_appearance = g_blackout_appearance;
         } else if (a == "--verbose") {
             verbose = true;
         } else if (a == "--help" || a == "-h") {
-            std::puts("usage: trace_sim [--list] [--all] [--seed N] "
-                      "[--appearance Q] [SCENARIO...]");
+            // Every flag, because SIMULATIONS.md tells the reader to run
+            // several of these and --help listed four of the nine.
+            std::puts(
+                "usage: trace_sim [OPTIONS] [SCENARIO...]\n"
+                "\n"
+                "  --list                 name and describe every scenario\n"
+                "  --all                  run every scenario\n"
+                "  --seed N               seed the world and the engine (default 42)\n"
+                "  --verbose              per-scan detail rather than a summary\n"
+                "  --appearance Q         descriptor quality 0..1 for the scenarios\n"
+                "                         that use one (blackout, decoy-split)\n"
+                "  --adaptive-noise       learn each sensor's measurement noise\n"
+                "  --adaptive-pd          learn each sensor's detection probability\n"
+                "  --no-coverage          stop telling the engine what its sensors\n"
+                "                         can see, to measure what that is worth\n"
+                "  --no-constraint        drop the road or rail topology\n"
+                "                         (anpr-corridor, metro)\n"
+                "  --junction-radius R    how far a junction's influence reaches;\n"
+                "                         0 projects junctions like any other\n"
+                "                         point (metro)");
             return 0;
         } else {
             to_run.push_back(a);

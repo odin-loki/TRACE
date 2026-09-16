@@ -7,7 +7,7 @@
 #   ./run.sh --esbmc      force ESBMC for all
 #   ./run.sh --cbmc       force CBMC for all
 #   ./run.sh v04 v15      only the named harnesses
-#   TIMEOUT=1800 ./run.sh use a longer per-harness budget (default 900s)
+#   TIMEOUT=3600 ./run.sh use a longer per-harness budget (default 1800s)
 #   ESBMC=/path/to/esbmc ./run.sh      if the binaries are not on PATH
 #   CBMC=/path/to/cbmc   ./run.sh
 #
@@ -28,6 +28,10 @@
 # verdict fails the suite; an undecided one is reported and, unless STRICT=1,
 # does not.
 #
+# Measured wall-clock on an idle machine, for the three that are not instant:
+# v07 71 s, v16 121 s, v13 1181 s. A whole run is dominated by v13 and by
+# v12b's budget, so expect about three quarters of an hour.
+#
 # One harness is marked SLOW in the manifest: v12b_segment_geometry, which
 # neither checker discharges inside any budget tried. Bit-precise IEEE division
 # is where both are weakest - it reaches a quarter of a million SAT variables
@@ -47,7 +51,11 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-TIMEOUT=${TIMEOUT:-900}
+# 1800s, not 900s. v13_clutter_rate takes about twenty minutes under CBMC on an
+# idle machine here, so at the old default it was UNDECIDED on every run - a
+# suite whose own default cannot discharge its own harnesses is reporting on the
+# budget, not on the code. The other sixteen are well inside a minute or two.
+TIMEOUT=${TIMEOUT:-1800}
 STRICT=${STRICT:-0}
 ESBMC=${ESBMC:-esbmc}
 CBMC=${CBMC:-cbmc}

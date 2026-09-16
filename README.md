@@ -51,9 +51,10 @@ question moot; if you cannot, call `trace::abi::compatible()` once at startup,
 which compares the two and is the whole cost of finding out.
 
 Only a C++23 compiler and CMake are required. xsimd is vendored, and
-`-DTRACE_WITH_XSIMD=OFF` builds a scalar fallback that produces the same
-results to within the Monte Carlo noise (see
-[docs/VALIDATION.md](docs/VALIDATION.md), "Reproducing").
+`-DTRACE_WITH_XSIMD=OFF` compiles the same source scalar. It does not produce
+the same numbers: the two draw their normals in a different order, so every
+result differs by Monte-Carlo noise and none of them differs by more than that
+(see [docs/VALIDATION.md](docs/VALIDATION.md), "Reproducing").
 
 Qt is optional and off by default:
 
@@ -115,7 +116,7 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **53.0%** | **108.5%** |
+| MOT17 train, 21 sequences | 336,891 | **53.0%** | **108.2%** |
 | MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **62.5%** | **114.7%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
@@ -149,9 +150,10 @@ is a confusion, which is the only thing it addresses. [The full analysis is in
 docs/VALIDATION.md](docs/VALIDATION.md).
 
 The same question asked of the simulations — how much of what the *sensors*
-produced did the engine recover? — reframed three of them. `anpr-corridor` had
-been the weakest scenario on a 24% detection rate; its readers only ever produce
-a detection in 20.1% of truth-scans, and TRACE recovers 120% of that.
+produced did the engine recover? — reframed three of them. `anpr-corridor` reads
+as the weakest scenario on a 21% detection rate; its readers only ever produce a
+detection in 20% of truth-scans, and TRACE recovers 104% of that (medians over
+twelve seeds).
 
 ```bash
 ./scripts/fetch_mot.sh ./data/mot        # ~30 MB, annotations only
@@ -273,23 +275,31 @@ Measured on one core of the development container (AVX-512), Release build.
 
 | Tracks | Median ms/scan | Tracking only | µs per track |
 |---|---|---|---|
-| 10 | 2.0 | 1.5 | 149 |
-| 120 | 28.0 | 18.6 | 155 |
-| 270 | 74.6 | 44.4 | 165 |
-| 400 | 125.3 | 67.2 | 168 |
+| 10 | 1.7 | 1.4 | 135 |
+| 120 | 26.6 | 18.3 | 152 |
+| 270 | 72.1 | 42.9 | 159 |
+| 400 | 127.5 | 63.6 | 159 |
 
-**Cost grows as about n^1.12 — effectively linear**, and tracking alone is flat
-at 149–168 µs per track from 10 tracks to 400. It was n^1.82 until the
+Every row here comes out of `./build/src/apps/trace_bench` with no arguments.
+The 400-track row did not, until this release: the sweep steps by 3/2 from 270
+to 405, overshot the default limit of 400 and stopped at 270, so the last row
+in this table was not reproducible by the command above it. `--max N` now ends
+the sweep on N.
+
+**Cost grows as about n^1.17 — effectively linear**, and tracking alone is flat
+at 135–159 µs per track from 10 tracks to 400. Repeated runs on a shared
+machine put the exponent between 1.12 and 1.17; read it as "the constant
+matters and the exponent does not". It was n^1.82 until the
 convergence detector stopped rebuilding each track's pattern-of-life forecast
 once per pair. That bought a factor of twenty in the constant and not a better
 exponent — the spatial-index gate added with it had a radius wider than the
 scene, so it returned every pair and did nothing. Bounding each pair by its own
 two speeds took that detector from 56% of the engine to 44% and the exponent to
-n^1.12. Every report carries a per-stage timing breakdown, because the cost
+near linear. Every report carries a per-stage timing breakdown, because the cost
 profile is not obvious from reading the code — see
 [docs/VALIDATION.md](docs/VALIDATION.md).
 
-Measured out to **1365 tracks** (674 ms/scan, n^1.23 over that wider range) —
+Measured out to **1365 tracks** (732 ms/scan, n^1.23 over that wider range) —
 which had never been done before, because the profile's own 400-track cap meant
 every larger sweep point measured the same 400 tracks and the curve obediently
 flattened.
@@ -300,7 +310,9 @@ not for 25 fps without partitioning across workers.
 
 Backends:
 - **xsimd** (vendored, on by default) vectorises particle propagation — 8 lanes
-  under AVX-512. Degrades to identical scalar code when unavailable.
+  under AVX-512. Without it the same source compiles scalar; the results agree
+  to within Monte-Carlo noise rather than exactly, because the draw order
+  differs.
 - **CUDA** (`-DTRACE_WITH_CUDA=ON`) — **present but not wired in, and not
   validated.** `src/cuda/kernels.cu` carries kernels for particle propagation,
   the GMM E step and pairwise distances, and `include/trace/backend/cuda.hpp`
@@ -335,7 +347,7 @@ third_party/xsimd/                            vendored
 | [docs/USE_CASES.md](docs/USE_CASES.md) | What this can be retrofitted to do, in three tiers by distance from shipped code |
 | [docs/SIMULATIONS.md](docs/SIMULATIONS.md) | Every simulation, what failure mode each one stresses, and further ones worth building |
 | [docs/VALIDATION.md](docs/VALIDATION.md) | MOTChallenge replay results, the detector-ceiling method, and how to read them against published work |
-| [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Twelve defects found and fixed, why each was invisible, and what changed |
+| [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Thirty-eight defects found and fixed, why each was invisible, and what changed |
 | [docs/FORMAL_VERIFICATION.md](docs/FORMAL_VERIFICATION.md) | Every formula checked against the model it implements, and what a bounded model checker could prove about the code |
 | [docs/AUDIT.md](docs/AUDIT.md) | The pre-release adversarial audit: method, what it found, what it refuted, and what is still open |
 | [CHANGELOG.md](CHANGELOG.md) | What changed between releases, and where the working for each change is |
@@ -348,10 +360,11 @@ third_party/xsimd/                            vendored
 
 TRACE is a C++23 port of **ARIA-INTEL**, a single-file Python engine for
 intelligence work, kept verbatim under `reference/`. The port generalises the
-framing — intelligence is now one domain pack among thirteen — and fixes seven
-substantive algorithmic defects found while building the simulations. Four of
-them were invisible in the original's own metrics, because it reported peak
-track counts but never identity continuity. [The full list is
+framing — intelligence is now one domain pack among thirteen — and fixes eleven
+substantive algorithmic defects inherited from it. Four of them were invisible
+in the original's own metrics, because it reported peak track counts but never
+identity continuity. Twenty-seven more were introduced or exposed by the port
+itself and are recorded in the same place. [The full list is
 here](docs/PORTING_NOTES.md); the shortest summary is that association was not
 one-to-one, so duplicate tracks were fed the same detection forever and never
 decayed.

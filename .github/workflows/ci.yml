@@ -204,5 +204,11 @@ jobs:
       # check without pretending to cover the rest. A harness the manifest
       # marks SLOW is not counted either, so a hosted runner being slower than
       # this one cannot turn the job red on its own.
+      # 2700s per harness, because v13_clutter_rate needs about 1200 of them on
+      # an idle machine here and a hosted runner is slower. At the old 1500 it
+      # came back UNDECIDED every run - reported rather than hidden, which is
+      # the point of the third verdict, but twenty-five minutes spent to learn
+      # nothing. Budget about an hour for this job; an UNDECIDED harness still
+      # does not fail it.
       - name: Run the proof suite
-        run: TIMEOUT=1500 ./verification/run.sh
+        run: TIMEOUT=2700 ./verification/run.sh

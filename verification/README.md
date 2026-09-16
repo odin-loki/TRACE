@@ -9,8 +9,21 @@ Bounded model checking of the engine's numerical kernels, under
 ./run.sh --esbmc      # force ESBMC for all
 ./run.sh v04 v15      # just those
 ESBMC=/path/to/esbmc ./run.sh         # if the binaries are not on PATH
-TIMEOUT=1800 ./run.sh                 # longer per-harness budget
+TIMEOUT=3600 ./run.sh                 # longer per-harness budget (default 1800)
+STRICT=1 ./run.sh                     # an undecided harness fails the run too
 ```
+
+Three verdicts, not two. A harness can come back decided-and-right,
+decided-and-wrong, or **undecided** — out of budget. Only the second fails the
+suite, because the budget is a property of the machine rather than of the code:
+`v13_clutter_rate` takes about twenty minutes here and times out on a loaded
+runner, and calling that a proof regression is a claim about the CPU. `STRICT=1`
+fails on undecided too, and the exit status is 2 when nothing was checked at
+all, which is what a missing checker used to look like from the outside.
+
+Measured on an idle machine: v07 71 s, v16 121 s, v13 1181 s, everything else
+inside a couple of seconds. A whole run is about three quarters of an hour, most
+of it v13 and v12b's budget.
 
 Neither tool discharges every harness. ESBMC is markedly better on the ones
 dominated by integer and array reasoning; CBMC's bit-blasting is better on the
@@ -27,7 +40,7 @@ property of the code.
 
 ## What is proven
 
-Fifteen of the sixteen are discharged. The one that is not is marked,
+Sixteen of the seventeen are discharged. The one that is not is marked,
 reported, and explained below rather than dropped.
 
 | | property | verdict |
@@ -48,14 +61,15 @@ reported, and explained below rather than dropped.
 | v13 | the clutter posterior never divides by zero and never rules clutter impossible | holds |
 | v14 | the miss update is a probability, never increases existence, and is monotone in `p_D` | holds |
 | v15 | the matcher takes as many admissible pairs as exist, and the cheapest such matching, on a tall **gated** problem | holds |
+| v16 | a detection never leaves a track's existence below where a miss would have left it, wherever the two updates' ceilings agree | holds (fails before the fix) |
 
 v02, v03 and v08 assert something the code does not do, and are expected to
 fail. They are in the suite because "where does a NaN stop" and "what is this
 update actually a posterior over" are worth writing down and checking, rather
 than rediscovering.
 
-Two of them — v07 and v15 — also fail against the code as it was before the
-defects they describe were fixed, which is what makes them regression tests
+Three of them — v07, v15 and v16 — also fail against the code as it was before
+the defects they describe were fixed, which is what makes them regression tests
 rather than descriptions.
 
 ## What these proofs do not say
@@ -118,7 +132,7 @@ Two further limits:
 
   Two others carried that mark until they were re-run and did not deserve it.
   v07 and v13 were recorded as undischarged on the strength of ESBMC runs that
-  exhausted memory; under CBMC they close in 46 seconds and 19 minutes
+  exhausted memory; under CBMC they close in 71 seconds and 20 minutes
   respectively. **Which checker, not which property** — and the lesson is the
   same one the harnesses keep teaching: a negative result from a tool is a
   statement about the tool until it has been tried another way.
@@ -138,6 +152,7 @@ Two further limits:
 
 ## Reproducing
 
-ESBMC 8.5.0 and CBMC 6.x. Neither is packaged in most distributions; ESBMC
+ESBMC 8.5.0 and CBMC 5.95.1, which are the versions every verdict in the table
+above was produced under. Neither is packaged in most distributions; ESBMC
 builds from source in about 20 minutes and needs `gcc-multilib g++-multilib
 libc6-dev-i386` for its 32-bit C library model.

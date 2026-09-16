@@ -37,14 +37,14 @@ supported but switched off here, for reasons measured below.
 | | |
 |---|---|
 | **MOTA** | **53.0%** |
-| MOTP | 20.6 px |
-| Recall | 59.0% |
-| Precision | 91.8% |
-| Mostly tracked | 29.8% |
-| Mostly lost | 26.2% |
-| Identity switches | 2,656 |
-| Track-frames on not-to-be-considered regions, discarded | 4,263 |
-| Throughput | 5.8 ms/frame, one core |
+| MOTP | 21.3 px |
+| Recall | 58.9% |
+| Precision | 92.0% |
+| Mostly tracked | 30.1% |
+| Mostly lost | 26.9% |
+| Identity switches | 2,442 |
+| Track-frames on not-to-be-considered regions, discarded | 4,515 |
+| Throughput | 6.0 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
 version of this table reported a different operating point (`--min-score 0`,
@@ -79,17 +79,18 @@ the figures that depend on **which** pairs did:
 
 | MOT17 train, all 21 sequences | broken scorer | scorer fixed | now |
 |---|---|---|---|
-| Recall | 60.0% | 59.0% | 59.0% |
-| Precision | 90.8% | 93.7% | 91.8% |
+| Recall | 60.0% | 59.0% | 58.9% |
+| Precision | 90.8% | 93.7% | 92.0% |
 | MOTA | 48.2% | **54.4%** | **53.0%** |
-| MOTP | 27.4 px | 21.8 px | 20.6 px |
-| Identity switches | 19,156 | **2,326** | 2,656 |
+| MOTP | 27.4 px | 21.8 px | 21.3 px |
+| Identity switches | 19,156 | **2,326** | 2,442 |
 
-The third column is the current head. Two things separate it from the second,
-both measured on their own further down: the second correction to the
-existence update, under "What the clutter term costs and buys", and the
-withdrawal of an over-wide don't-care amnesty, under "The amnesty that was
-worth 1.3 MOTA". The columns are kept apart so the scorer's original effect is
+The third column is the current head. Three things separate it from the second,
+each measured on its own further down: the second correction to the existence
+update, under "What the clutter term costs and buys"; the withdrawal of an
+over-wide don't-care amnesty, under "The amnesty that was worth 1.3 MOTA"; and
+replacing the trapezoidal position integration with the exact OU integral,
+which left MOTA where it was and took 214 identity switches out. The columns are kept apart so the scorer's original effect is
 neither credited with, nor blamed for, something else.
 
 **Eight defects: five in the scorer, three in the engine.** Two
@@ -192,6 +193,11 @@ claims were doing real damage:
 | MOT20 MOTA | 62.6% | **62.5%** |
 | MOT20 MOTP | 25.9 px | **21.5 px** |
 | MOT20 identity switches | 4,911 | 6,181 |
+
+Both columns were measured at the commit that made the change, so that the
+comparison is of one thing. The current head is in the headline tables above
+and below; it has since taken 214 switches off MOT17 and 80 off MOT20 by
+integrating position exactly.
 
 MOTP improves by 1.2 px on MOT17 and 4.4 px on MOT20 — exactly what you would
 expect from no longer holding onto a pairing that has drifted when a better one
@@ -313,7 +319,8 @@ again afterwards, under the pattern-of-life and `absorb` corrections that
 followed — `metro` to 20.6% / 74.4% / 59 / 260 and `weather` to 80.1% /
 105.0% / 23 / 10 — so the "after" column above is the clutter term's effect in
 isolation rather than the current head, which is what it is there to measure.
-The head's own means are 76.2% detection and 109.1% recovery. With both sensor estimates
+The head's own means, medians over twelve seeds, are 76.0% detection and 108.3%
+recovery. With both sensor estimates
 switched on (`--adaptive-noise`) the mean recovery goes 106.6% → 107.0% and
 `coordinated-evasion` improves sharply — 167 → 101 identity switches and 428 →
 251 ghosts — because a learned `p_D` and the clutter term are the two halves of
@@ -338,8 +345,8 @@ detection it was handed — gives:
 | | |
 |---|---|
 | Detector ceiling, recall | **54.4%** |
-| TRACE, recall | **59.0%** |
-| **TRACE recovered** | **108.5% of the recall the detections allow** |
+| TRACE, recall | **58.9%** |
+| **TRACE recovered** | **108.2% of the recall the detections allow** |
 
 No tracker consuming these detections can exceed 54.4% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
@@ -389,11 +396,11 @@ for them:
 
 | Sequence | People/frame | MOTA | Precision | Recall | Mostly lost | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | 62 | **64.8%** | 98.4% | 66.6% | 8.1% | 12 |
-| MOT20-02 | 72 | 57.9% | 98.1% | 59.4% | 5.9% | 20 |
-| MOT20-03 | 148 | 62.3% | 98.2% | 64.0% | 11.5% | 47 |
-| MOT20-05 | 226 | 63.6% | 97.7% | 65.8% | 9.1% | 78 |
-| **Overall** | **127** | **62.5%** | **97.9%** | **64.4%** | **9.4%** | **49** |
+| MOT20-01 | 62 | **63.9%** | 97.8% | 65.9% | 9.5% | 13 |
+| MOT20-02 | 72 | 57.9% | 98.2% | 59.5% | 7.4% | 21 |
+| MOT20-03 | 148 | 62.2% | 98.1% | 63.9% | 11.4% | 50 |
+| MOT20-05 | 226 | 63.7% | 97.8% | 65.8% | 9.2% | 83 |
+| **Overall** | **127** | **62.5%** | **97.9%** | **64.4%** | **9.7%** | **51** |
 
 | | |
 |---|---|
@@ -415,7 +422,7 @@ at far less. Density hurts association, but it is a smaller effect than
 detection quality, and the denser sequences also give the coasting mechanism
 more to work with — a crowd that thins for a few frames is still a crowd.
 
-The cost, though, is real: 78 ms/frame at 226 people. That is 12 frames per
+The cost, though, is real: 83 ms/frame at 226 people. That is 12 frames per
 second on one core, so a 25 fps camera at that density needs the area
 partitioned across workers. See the scaling measurements below.
 

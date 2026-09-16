@@ -176,10 +176,12 @@ stand.
   not produce them. There is no detector or re-ID model here.
 - **Domains with no meaningful distance metric.** If "close" is undefined,
   association has nothing to work with.
-- **Legal or safety-critical automated decisions.** Nothing here is validated
-  against real data. Every number in this repository comes from its own
-  simulations, which is evidence the code does what it is meant to and no
-  evidence at all about the world.
+- **Legal or safety-critical automated decisions.** The only measurement here
+  taken outside this repository's own simulator is an offline replay of
+  MOTChallenge's public detections against its annotations, in
+  [VALIDATION.md](VALIDATION.md). Nothing here has consumed a live sensor.
+  Together that is evidence the code does what it is meant to, and no evidence
+  at all that it should be allowed to decide anything about a person.
 
 ---
 

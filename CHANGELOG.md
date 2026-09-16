@@ -20,8 +20,12 @@ The first release that can be licensed, installed, consumed and audited.
   tag on every first-party file. The repository had claimed this licence in its
   README since the port began and had never carried the text.
 - [`THIRD-PARTY.md`](THIRD-PARTY.md) records vendored xsimd (BSD-3-Clause,
-  compatible, unmodified) and the separate non-commercial terms on the
-  MOTChallenge annotations, which are fetched rather than redistributed.
+  compatible, unmodified), optional Qt (LGPL-3.0-or-later or GPL-3.0-or-later,
+  linked only by `trace_console`, off by default) and the separate
+  non-commercial terms on the MOTChallenge annotations, which are fetched
+  rather than redistributed. Those terms require citation, which the file
+  described and did not give; the citations are now in it and in
+  [docs/VALIDATION.md](docs/VALIDATION.md), where the numbers are.
 
 ### Packaging
 
@@ -32,7 +36,14 @@ The first release that can be licensed, installed, consumed and audited.
 - `trace::abi::compatible()`, because `-march=native` is PUBLIC and the SIMD
   lane count decides `sizeof(simd::Batch)`. An archive built on one
   microarchitecture and consumed on another disagrees with its own headers,
-  silently. Build installed packages with `-DTRACE_NATIVE_ARCH=OFF`.
+  silently. Build installed packages with `-DTRACE_NATIVE_ARCH=OFF`. The guard
+  itself had to be hardened: it reported the mismatch at -O2 and missed it at
+  -O0, where the linker was free to resolve its inline helper to the
+  consumer's copy. CI now checks that it says no when it should, as well as
+  yes.
+- `-DTRACE_WITH_CUDA=ON` configures again. A bare source path in
+  `trace_cuda`'s include directories, added with the install rules above, made
+  CMake refuse to generate at all.
 
 ### Corrected results
 
@@ -49,6 +60,21 @@ Everything here was reproduced before it was fixed and measured after.
   component was heaviest overall.
 - `absorb()` dropped `age_`, `ever_confirmed_` and the hit records, putting
   `measurement_rate` back above 1 and letting a merge un-confirm an identity.
+- **Position was integrated trapezoidally over an exact OU velocity step.**
+  Right only while `theta dt` is small; the mean displacement per scan was 8%
+  too far at 1, 31% at 2 and a factor of five at 10, and ten regime/profile
+  pairs sit at 1 or above. Now the exact integral of the process the velocity
+  step already uses, noise and correlation included. MOT17 MOTA unchanged,
+  identity switches down 8%.
+- **Source credibility was multiplied into an observation's confidence before
+  it reached the possibility measure**, so `possibility_mismatch` — whose whole
+  purpose is to separate weak evidence from strong — fired on 476 of 496
+  real-entity scans and scored real entities as more suspicious than a
+  deliberately convincing phantom. Trust now travels beside the observation
+  rather than inside it. Now 0 of 496.
+- **`Engine`'s move operations were defaulted** while PmbmManager, every Track
+  and each Track's filter hold a pointer into the Engine's own config.
+  Use-after-free on the third scan after the moved-from engine was destroyed.
 - The engine's reported mean latency divided an all-time total by a bounded
   history, and excluded the per-scan retirement sweep.
 - `SDR_PATTERN` re-emitted on every scan and counted position noise as
@@ -63,11 +89,21 @@ Everything here was reproduced before it was fixed and measured after.
   `--min-score 0` operating point. Withdrawn, and every figure restated.
 - CLEAR-MOT continuity preserved the last-*ever* match rather than the previous
   frame's, concealing identity switches and inflating MOTP.
-- Published figures at this release: MOT17 train **53.0%** MOTA, 20.6 px MOTP,
-  59.0% recall, 2,656 identity switches, 108.5% of the detector ceiling; MOT20
-  train **62.5%** MOTA and 114.7% of ceiling. Both are lower than 0.1.0
-  reported, and the reason is that the scoring was wrong in the tracker's
-  favour.
+- Published figures at this release: MOT17 train **53.0%** MOTA, 21.3 px MOTP,
+  58.9% recall, 2,442 identity switches, 108.2% of the detector ceiling; MOT20
+  train **62.5%** MOTA, 6,101 identity switches and 114.7% of ceiling. Both
+  MOTA figures are lower than 0.1.0 reported, and the reason is that the
+  scoring was wrong in the tracker's favour.
+- Every scenario result in [docs/SIMULATIONS.md](docs/SIMULATIONS.md) is now a
+  median over twelve seeds taken at this head. Several had drifted — the
+  weather scenario's fog-phase recovery by 18 points, `anpr-corridor` carried
+  three different recovery figures across three files, and `metro`'s constraint
+  A/B claimed a dominance that no longer holds.
+- Two published measurements could not be produced by the commands printed
+  beside them: `trace_bench`'s sweep overshot its own `--max` and stopped short
+  of the 400-track row README publishes, and `run_anpr_corridor` ignored
+  `--no-constraint` while SIMULATIONS.md quoted an A/B that needs it. Both
+  tools fixed rather than both numbers deleted.
 
 ### Tests, proofs and CI
 
@@ -76,7 +112,9 @@ Everything here was reproduced before it was fixed and measured after.
   suite is clean under ASan and UBSan.
 - The proof runner counted a checker timeout as a proof failure and reported
   success for a run that checked nothing. Both fixed. Seventeen harnesses,
-  sixteen discharged, `v16_existence_continuity` new.
+  sixteen discharged, `v16_existence_continuity` new. The default per-harness
+  budget is now 1800 s: at 900 the suite could not discharge its own
+  `v13_clutter_rate`, which takes about 1200.
 - Six tests that could not fail were rewritten against what the code should
   produce, and each was run against the pre-fix source to confirm it fails
   there. `tests/test_detectors.cpp` is new: the detector layer had no direct
@@ -92,6 +130,10 @@ Everything here was reproduced before it was fixed and measured after.
   calls it and the kernels pass host pointers to kernel launches.
 - `simd::backend_name()` reported `xsimd/generic` on every build and now
   reports the architecture the batch type resolved to.
+- Three defect counts across two files disagreed with each other and with the
+  file being counted; `--help` for `trace_sim` listed four of its nine flags.
+  Both fixed, and `--junction-radius` is new, so the metro scenario's
+  constraint A/B can be run rather than only quoted.
 
 ## 0.1.0
 

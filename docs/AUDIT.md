@@ -133,9 +133,33 @@ runner's executable bit and the job went on passing.
 memory error, a leak, or undefined behaviour in the engine's own execution: the
 full suite passes under ASan and UBSan with leak detection enabled and
 `halt_on_error` set. It did not find a defect in the Hungarian solver's
-shortest-path search, the OU discretisation, the log-sum-exp, the Otsu
-threshold, or the Brandes accumulation — all of which carry proof harnesses
-that still discharge.
+shortest-path search, the OU *velocity* discretisation, the log-sum-exp, the
+Otsu threshold, or the Brandes accumulation — all of which carry proof
+harnesses that still discharge. It did find one in the OU *position*
+integration, which had no harness; see below.
+
+## The second wave
+
+This document was written while the audit's findings were still being worked
+through. Everything below was found by the audit and fixed after the first
+draft, and each one is recorded in full in
+[PORTING_NOTES.md](PORTING_NOTES.md), [CHANGELOG.md](../CHANGELOG.md) or the
+commit that made it.
+
+| | Effect |
+|---|---|
+| Position was integrated trapezoidally over an exact OU velocity step | The mean displacement per scan exceeded the correct one by 8% at `theta dt` of 1, 31% at 2, and a factor of five at 10. Ten regime/profile pairs sit at 1 or above, `OrganisedCrimeNetwork`'s stationary regime at 10. Fixed by integrating exactly, noise included; MOT17 MOTA unchanged at 53.0% and 214 fewer identity switches. |
+| Trust was folded into the evidence-quality measure | `possibility_mismatch` fired on 476 of 496 real-entity scans in the `spoofing` scenario and scored real entities as more suspicious than a phantom built to be convincing. The engine-level test could not see it: it fed one source, and credibility returns 1.0 when only one source has ever reported. Now 0 of 496. |
+| `Engine`'s move operations were defaulted | PmbmManager, every Track and each Track's filter hold a `const DomainProfile*` into the Engine's own config, which a defaulted move relocated. Use-after-free on the third scan after the source was destroyed, and a silently hollowed-out profile before that. |
+| The ABI guard reported a mismatch at -O2 and missed it at -O0 | `library_tag()` called an inline function whose out-of-line copy the linker was free to take from the consumer. Debug is where somebody chasing an ABI bug looks first. |
+| `-DTRACE_WITH_CUDA=ON` did not configure | A bare source path in `trace_cuda`'s include directories, added with the install rules; CMake refuses to generate an export containing one. |
+| Qt was absent from THIRD-PARTY.md | `trace_console` links LGPL/GPL Qt, and the file the README points at as the list of what is not this project's work did not mention it. |
+| The MOTChallenge citation was described, not given | The data terms require citation; the file said so and cited nothing. |
+| Two published measurements could not be reproduced | `trace_bench`'s sweep overshot its own `--max` and stopped at 270 while README published a 400-track row; `run_anpr_corridor` ignored `--no-constraint` while SIMULATIONS.md quoted an A/B that needs it. Both tools fixed, both measurements re-taken. |
+| Documented counts and results had drifted | Three different defect counts across two files; a "four of the seven inherited" that survived there stopping being seven; `anpr-corridor` at three different recovery figures; the weather scenario's fog-phase recovery 18 points out; `metro`'s constraint A/B claiming a dominance that no longer holds. Every scenario figure in SIMULATIONS.md is now a median over twelve seeds taken at this head. |
+| The proof suite's default budget could not discharge its own suite | `v13_clutter_rate` needs about 1200 s and the default was 900. |
+
+---
 
 ## What is still open
 
@@ -147,6 +171,11 @@ that still discharge.
   is the current uncertainty rather than the motion model's process noise. The
   shape is right; the scale is an indication, and now says so.
 - `v12b_segment_geometry` is not discharged by either checker.
+- The exact OU position integral costs `anpr-corridor` about three points of
+  recovery, because a sparse scenario was benefiting from over-prediction. The
+  integral is right and the scenario figure is now lower; whether the profile's
+  heading-hold times are the ones its author meant is a separate question
+  nobody has asked.
 - Three profiles have a `PARALLEL_ROUTE` window narrower than their own
   separation noise. `tests/test_detectors` prints them on every run rather than
   leaving it to be rediscovered.

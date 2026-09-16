@@ -1,9 +1,10 @@
 # Porting notes: defects found and fixed
 
-The C++23 port is not a transliteration. Thirty-seven substantive defects were
-found — eleven inherited from `reference/aria_intel.py`, twenty-six introduced
-or exposed by the port itself — while getting the simulations, then real
-MOTChallenge data, and finally the engine's own cost profile to behave. Each is
+The C++23 port is not a transliteration. Thirty-eight substantive defects were
+found — eleven inherited from `reference/aria_intel.py`, which are 1 to 11
+below, and twenty-seven introduced or exposed by the port itself, which are the
+rest — while getting the simulations, then real MOTChallenge data, then the
+engine's own cost profile, and finally a pre-release audit to behave. Each is
 recorded here with how it was found, why it was invisible before, and what
 changed — partly as a changelog, partly because several are easy traps to fall
 back into.
@@ -11,13 +12,16 @@ back into.
 Three recurring themes, all about measurement:
 
 **Choose metrics that can fail.** The reference reported peak track counts but
-never identity continuity or false-track rates. Four of the seven inherited
-defects are invisible in peak-track-count and position-error metrics, and
-glaring the moment you count identity switches.
+never identity continuity or false-track rates. Defects 3, 4, 6 and 8 below are
+invisible in peak-track-count and position-error metrics, and glaring the
+moment you count identity switches — 8 most of all, since it was in the
+measuring instrument itself. (This paragraph said "four of the seven inherited
+defects" for a long time after there stopped being seven of them. Naming which
+four is both checkable and more use.)
 
 **Measure the input's own ceiling.** Three scenarios were documented as
 tracking weaknesses until the sensors were asked what they had actually
-produced. `anpr-corridor` recovers 107% of the detections its readers emit; it
+produced. `anpr-corridor` recovers 104% of the detections its readers emit; it
 was never failing. See [VALIDATION.md](VALIDATION.md).
 
 **Distrust a tidy explanation for a bad number.** `dark-vessel`'s shortfall had
@@ -911,5 +915,11 @@ Stated plainly, because the simulations make them measurable:
 - **Regime identification needs the per-scan motion difference to exceed the
   measurement noise.** Where it does not, the regime posterior correctly falls
   back on the transition prior — correct, but not informative.
-- **Nothing here is validated against real sensor data.** Every number in this
-  repository comes from its own simulations.
+- **Nothing here has consumed a live sensor.** The MOTChallenge replay in
+  [VALIDATION.md](VALIDATION.md) is the one place a number in this repository
+  comes from outside its own simulator: real annotated video, and the
+  benchmark's own public detections. It is still an offline replay of a curated
+  dataset, chosen because everyone else reports against it, and it says nothing
+  about a live estate. Everything else here is synthetic. (This entry used to
+  say "every number in this repository comes from its own simulations", which
+  the whole of VALIDATION.md contradicts.)
