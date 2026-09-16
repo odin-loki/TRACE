@@ -49,9 +49,12 @@ jobs:
           - name: macos-arm64
             os: macos-latest
     steps:
+      # workflow_dispatch builds the commit that contains this workflow (so a
+      # tag that predated macOS support still gets an archive). Tag and
+      # release events build the tagged tree.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || env.TAG }}
           submodules: recursive
 
       - name: Install toolchain

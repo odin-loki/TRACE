@@ -13,6 +13,14 @@
 #include <string_view>
 #include <vector>
 
+// POSIX <csignal> defines SIGINT as 2. enum class does not protect the
+// enumerator token from the preprocessor, so Apple (and anyone who included
+// signal.h) would parse `SIGINT,` as `2,` and the modality table would be
+// one short. The string name stays "SIGINT"; this only keeps the identifier.
+#ifdef SIGINT
+#undef SIGINT
+#endif
+
 namespace trace {
 
 using Real = double;

@@ -20,6 +20,10 @@
 #include "trace/core/rng.hpp"
 #include "trace/sim/world.hpp"
 
+#ifdef SIGINT
+#undef SIGINT
+#endif
+
 namespace trace::sim {
 
 /// Which ground-truth entities actually produced a detection this scan.

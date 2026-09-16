@@ -20,6 +20,10 @@
 #include "trace/core/motion_constraint.hpp"
 #include "trace/sim/scenario.hpp"
 
+#ifdef SIGINT
+#undef SIGINT
+#endif
+
 using namespace trace;
 using namespace trace::sim;
 

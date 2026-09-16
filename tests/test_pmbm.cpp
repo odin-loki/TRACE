@@ -19,6 +19,10 @@
 
 #include "test_harness.hpp"
 
+#ifdef SIGINT
+#undef SIGINT
+#endif
+
 using namespace trace;
 
 namespace {
