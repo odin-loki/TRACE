@@ -1074,20 +1074,36 @@ Measured, on this machine, native against generic:
 
 | MOT17 train, 336,891 boxes | native | generic |
 |---|---|---|
-| MOTA | 54.3% | 54.3% |
-| Recall | 58.9% | 58.9% |
-| MOTP | 22.2 px | 22.7 px |
-| Identity switches | 2,362 | 2,383 |
-| Recovery of ceiling | 108.3% | 108.2% |
+| MOTA | 53.0% | 53.0% |
+| Recall | 59.0% | 59.0% |
+| Precision | 91.8% | 91.9% |
+| MOTP | 20.6 px | 20.7 px |
+| Identity switches | 2,656 | 2,577 |
+| Mostly tracked | 29.8% | 30.5% |
+| Recovery of ceiling | 108.5% | 108.4% |
 
 So the headline figures are stable to the precision printed, and the finer ones
-move by about a percent. **The synthetic scenarios are a different matter**: one
-scenario moved from 114.5% recovery to 119.9%, and from 789 ghost tracks to
-964, on the same seed. They carry five to seventeen entities over a few hundred
-scans, so a single run is a Monte Carlo sample and not a measurement. That is
-why every scenario comparison in this repository is a median over several
-seeds, and why a single-seed difference of a few points should be read as
-nothing at all.
+move by about a percent — MOTA and recall identical, MOTP by a tenth of a pixel,
+identity switches by 3%.
+
+**The synthetic scenarios are a different matter.** Same seed, same source, the
+two builds side by side:
+
+| | native | generic |
+|---|---|---|
+| `wildlife` recovery | 94.6% | 91.4% |
+| `warehouse` recovery | 120.0% | 117.0% |
+| `anpr-corridor` ghost tracks | 969 | 790 |
+| `mule-network` ghost tracks | 10 | 33 |
+| `coordinated-evasion` identity switches | 14 | 32 |
+| `warehouse` identity switches | 1,137 | 989 |
+
+Recovery moves by up to 3.2 points and the ghost and switch counts by more than
+a factor of two in either direction. These scenarios carry five to seventeen
+entities over a few hundred scans, so a single run is a Monte Carlo sample and
+not a measurement. That is why every scenario comparison in this repository is
+a median over several seeds, and why a single-seed difference of a few points
+should be read as nothing at all — including the ones in this table.
 
 The tool's defaults are what every table here reports; `--min-score` and
 `--radius` change the operating point, and the sweep of the first is in

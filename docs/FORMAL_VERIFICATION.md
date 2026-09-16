@@ -866,7 +866,13 @@ translation error that inspection had missed. Sizes are small — 3x2 and 3x3
 matchings, four-vertex graphs — and the larger cases are covered by exhaustive
 search in the test suite instead, which at those sizes is not a sample either.
 
-Fifteen of the sixteen harnesses are discharged. The one that is not compares
+Sixteen of the seventeen harnesses are discharged. `v16_existence_continuity`
+joined them after the audit described below: it proves that the hit and miss
+existence updates AGREE in the limit rather than merely being ordered, which is
+the property the second correction to that update restored, and it fails on the
+pre-fix expression.
+
+The one that is not discharged compares
 an IEEE product against a scaled tolerance, which is the shape bit-blasting
 handles worst; it is marked and reported rather than dropped, because a suite
 that hid it would read as more complete than it is. It reached a quarter of a
