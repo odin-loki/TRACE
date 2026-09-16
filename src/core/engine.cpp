@@ -285,7 +285,14 @@ ScanReport Engine::ingest(const std::vector<Observation>& observations,
     stats_.rendezvous += static_cast<long>(report.rendezvous.size());
     stats_.roles += static_cast<long>(report.network_roles.size());
     stats_.last_n_dormant = report.n_dormant;
-    stats_.latencies.push_back(report.latency_ms);
+    if (stats_.latency_hist.empty()) stats_.latency_hist.assign(kLatencyBuckets, 0u);
+    {
+        const Real ms = report.latency_ms > 0.0 ? report.latency_ms : 0.0;
+        const auto idx = static_cast<std::size_t>(ms / kLatencyBucketMs);
+        ++stats_.latency_hist[std::min(idx, kLatencyBuckets - 1)];
+        ++stats_.latency_samples;
+        stats_.max_latency_ms = std::max(stats_.max_latency_ms, report.latency_ms);
+    }
     for (const auto& t : report.targets) stats_.unique_ids.insert(t.track_id);
 
     history_.push_back(report);
@@ -364,6 +371,23 @@ std::string Engine::summary(const ScanReport& r) const {
     return os.str();
 }
 
+Real Engine::latency_quantile(Real frac) const {
+    if (stats_.latency_samples <= 0 || stats_.latency_hist.empty()) return 0.0;
+    const auto target = static_cast<long>(
+        std::max(0.0, std::min(1.0, frac)) * static_cast<Real>(stats_.latency_samples - 1));
+    long seen = 0;
+    for (std::size_t i = 0; i < stats_.latency_hist.size(); ++i) {
+        seen += static_cast<long>(stats_.latency_hist[i]);
+        if (seen > target) {
+            // Everything at or above 100 ms lands in the overflow bucket, and
+            // the only figure known exactly there is the maximum.
+            if (i + 1 == stats_.latency_hist.size()) return stats_.max_latency_ms;
+            return (static_cast<Real>(i) + 0.5) * kLatencyBucketMs;
+        }
+    }
+    return stats_.max_latency_ms;
+}
+
 std::string Engine::performance_report() const {
     if (history_.empty()) return "TRACE: no scans ingested.\n";
 
@@ -376,14 +400,16 @@ std::string Engine::performance_report() const {
     const long rvs = stats_.rendezvous;
     const long roles = stats_.roles;
     const std::set<std::string>& unique_ids = stats_.unique_ids;
-    std::vector<Real> latencies = stats_.latencies;
 
-    std::sort(latencies.begin(), latencies.end());
-    const Real median = latencies[latencies.size() / 2];
-    const Real p95 = latencies[static_cast<std::size_t>(
-        std::min(latencies.size() - 1,
-                 static_cast<std::size_t>(latencies.size() * 0.95)))];
-    const Real mean = total_latency_ms_ / static_cast<Real>(history_.size());
+    const Real median = latency_quantile(0.50);
+    const Real p95 = latency_quantile(0.95);
+    // Over every scan of the session, not over the retained ones. `history_`
+    // is capped at kHistoryScans, so dividing by its size turned the mean into
+    // total/256 the moment a session ran longer than that - a figure that then
+    // rises without bound. A 300-scan run reported 2.54 ms against a true
+    // 2.17, which is 300/256 of it exactly.
+    const Real mean =
+        scan_count_ > 0 ? total_latency_ms_ / static_cast<Real>(scan_count_) : 0.0;
 
     std::ostringstream os;
     os << fmt("TRACE session  domain=%s  scans=%d\n", config_.profile.name.c_str(),
@@ -392,7 +418,7 @@ std::string Engine::performance_report() const {
               unique_ids.size(), stats_.last_n_dormant);
     os << fmt("  findings events=%ld  convergence=%ld  roles=%ld\n", events, rvs, roles);
     os << fmt("  latency  median=%.2f ms  mean=%.2f ms  p95=%.2f ms  max=%.2f ms\n",
-              median, mean, p95, latencies.back());
+              median, mean, p95, stats_.max_latency_ms);
     return os.str();
 }
 

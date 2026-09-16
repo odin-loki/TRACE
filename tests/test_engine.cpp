@@ -356,10 +356,13 @@ void test_forecast_advances_a_scan_period_per_step() {
     for (const auto& t : last.targets) {
         if (!t.forecast.empty()) { target = &t; break; }
     }
-    if (target == nullptr) {
-        std::printf("  forecast: no track reached a forecastable priority, skipped\n");
-        return;
-    }
+    // Not a skip. Twenty-four clean detections of one walker at p=0.95 is the
+    // easiest thing this engine is ever asked to do, so no forecast here means
+    // forecasting has stopped working - and a test that returns quietly in
+    // that case is a test that passes with nothing asserted, which is the one
+    // outcome it must not have.
+    CHECK(target != nullptr);
+    if (target == nullptr) return;
 
     // Each step must move by one scan period of the reported velocity, and the
     // timestamps must agree with the distance.

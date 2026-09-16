@@ -26,22 +26,23 @@ supported but switched off here, for reasons measured below.
 
 | | |
 |---|---|
-| **MOTA** | **54.4%** |
-| MOTP | 21.8 px |
-| Recall | 59.0% |
+| **MOTA** | **54.3%** |
+| MOTP | 22.9 px |
+| Recall | 58.9% |
 | Precision | 93.7% |
-| Mostly tracked | 29.9% |
-| Mostly lost | 26.5% |
-| Identity switches | 2,326 |
-| Track-frames on not-to-be-considered regions, discarded | 8,827 |
+| Mostly tracked | 29.5% |
+| Mostly lost | 26.1% |
+| Identity switches | 2,415 |
+| Track-frames on not-to-be-considered regions, discarded | 8,626 |
 | Throughput | 5.8 ms/frame, one core |
 
 At the tool's defaults, which is what the command above runs. An earlier
 version of this table reported a different operating point (`--min-score 0`,
 `--radius 120`) than the command printed beside it; that configuration gives
-56.9% MOTA and 109.0% of ceiling — two and a half points of MOTA for half a
-point of ceiling recovery, since dropping the score filter buys recall (66.4%)
-at a smaller cost in precision (88.6%) than it used to appear to.
+57.0% MOTA and 109.1% of ceiling — two and a half points of MOTA for a
+point of ceiling recovery, since dropping the score filter buys recall (66.5%)
+at a smaller cost in precision (88.6%) than it used to appear to. It also costs
+3,292 identity switches against 2,415, which is the other half of that trade.
 
 ### These numbers moved, and it was the scorer
 
@@ -57,13 +58,19 @@ number of pairs and the wrong pairs.
 So the figures that depend on **how many** pairs were matched did not move, and
 the figures that depend on **which** pairs did:
 
-| MOT17 train, all 21 sequences | before | after |
-|---|---|---|
-| Recall | 60.0% | 59.0% |
-| Precision | 90.8% | 93.7% |
-| MOTA | 48.2% | **54.4%** |
-| MOTP | 27.4 px | 21.8 px |
-| Identity switches | 19,156 | **2,326** |
+| MOT17 train, all 21 sequences | broken scorer | scorer fixed | now |
+|---|---|---|---|
+| Recall | 60.0% | 59.0% | 58.9% |
+| Precision | 90.8% | 93.7% | 93.7% |
+| MOTA | 48.2% | **54.4%** | **54.3%** |
+| MOTP | 27.4 px | 21.8 px | 22.9 px |
+| Identity switches | 19,156 | **2,326** | 2,415 |
+
+The third column is the current head. The step from the second to the third is
+not a scorer change at all — the scorer has not moved since — but the second
+correction to the existence update, which is measured on its own further down
+under "What the clutter term costs and buys". It is separated out here so the
+scorer's effect is not credited with, or blamed for, something else.
 
 **Eight defects: five in the scorer, three in the engine.** Two
 in the matcher that decides which track corresponds to which ground-truth box —
@@ -90,12 +97,12 @@ cyclist, a crowd too dense to separate. Those rows were dropped from ground
 truth, correctly, but a track sitting on one was then charged as a false
 positive, which penalises the tracker for finding exactly what the annotator
 saw and chose not to label. MOT's own protocol discards such hypotheses before
-counting, and now so does this. 8,827 track-frames are discarded across the
+counting, and now so does this. 8,626 track-frames are discarded across the
 train split, and the count is printed beside the precision it raises rather
 than folded silently into it.
 
 The identity-switch count is the largest single correction, from 19,156 to
-2,326. CLEAR-MOT matches in two passes: a correspondence from the previous
+2,415. CLEAR-MOT matches in two passes: a correspondence from the previous
 frame that is still within the radius is **kept**, and only what is left over
 goes to the optimal matcher. Without that first pass a fresh optimum is
 computed every frame, so two hypotheses that fit two identities about equally
@@ -104,7 +111,7 @@ which nothing happened. The metric is meant to count the tracker changing its
 mind, not the scorer changing its mind.
 
 **MOTP rises when match continuity is restored — 13.7 px to 23.0 px at that
-step, 22.2 px once the existence fix lands — and that is the correct
+step, 22.9 px with both existence corrections in — and that is the correct
 direction.** Under CLEAR-MOT it averages over the correspondences actually
 maintained, not over the best pairing available each frame; keeping a
 correspondence that has drifted to 40 px rather than re-matching to a hypothesis
@@ -113,7 +120,7 @@ document used to report was neither — it was a per-frame optimum computed by a
 broken matcher. Recall falls slightly for the same reason.
 
 Mostly-tracked and mostly-lost moved further than anything else, from 10.0%
-and 3.5% to **29.9%** and **26.5%**, and that is a fourth defect rather than a
+and 3.5% to **29.5%** and **26.1%**, and that is a fourth defect rather than a
 consequence of the first three. Both figures are pooled over ground-truth
 identities, and MOTChallenge numbers its identities from 1 within each
 sequence — so person 1 of MOT17-02 and person 1 of MOT17-04 were being added
@@ -133,6 +140,76 @@ cost matrices are rarely tall by much; MOT frames carry tens to hundreds.
 The derivation, the exhaustive-search evidence and the fix are in
 [FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md).
 
+### What the clutter term costs and buys
+
+The existence update was corrected twice. The first correction restored the
+measurement likelihood `g(z)`, which had been dropped entirely; that is the
+sixth defect above. The second restored `(1 - p_D) lambda_c`, and it is worth
+separating because it is the one change in this document that made a headline
+figure slightly **worse**.
+
+A gated measurement admits two explanations if the entity is really there: the
+entity produced it, at density `p_D g(z)`; or the entity was missed and the
+measurement is clutter, at density `(1 - p_D) lambda_c`. Only the second is
+available if the entity is not there. The coded update carried the first and
+not the second, which made it discontinuous at the quantity it exists to
+measure — as `g(z)` fell, the posterior fell to zero, while `update_miss` (the
+same entity, seen by nobody at all) settles at `r(1-p_D) / (r(1-p_D) + (1-r))`.
+**A track offered a badly-fitting detection was punished harder than a track
+offered nothing**, with the crossover at `p_D g < (1 - p_D) lambda_c` — at
+`p_D = 0.9`, any detection less than a ninth as dense as the clutter around it.
+`verification/v16` proves the two updates now agree in the limit, and fails on
+the pre-fix expression.
+
+Restoring the term keeps tracks alive through evidence that does not fit, so it
+helps most where detections are sparse and costs most where clutter is dense:
+
+| MOT17 train | before | after |
+|---|---|---|
+| MOTA | 54.4% | 54.3% |
+| MOTP | 21.8 px | 22.9 px |
+| Recall | 59.0% | 58.9% |
+| Identity switches | 2,326 | 2,415 |
+| Mostly tracked / lost | 29.9% / 26.5% | 29.5% / 26.1% |
+| Ceiling recovered | 108.4% | 108.3% |
+
+| MOT20 train | before | after |
+|---|---|---|
+| MOTA | 63.7% | 63.7% |
+| Recall | 64.3% | 64.4% |
+| Mostly lost | 10.3% | 10.2% |
+| Ceiling recovered | 114.6% | 114.7% |
+
+MOT is flat to a tenth of a point either way, except for 89 more identity
+switches and a point of MOTP. The synthetic scenarios, which include two with
+genuinely sparse sensing, move a great deal more:
+
+| Scenario | detection rate | recovery | identity switches | ghosts |
+|---|---|---|---|---|
+| wildlife (4 h revisit) | 31.7% → **43.5%** | 68.8% → **94.6%** | 79 → 99 | 185 → 250 |
+| warehouse (BLE/RFID) | 52.9% → **57.9%** | 109.7% → **120.0%** | 1,046 → 1,137 | 432 → 426 |
+| metro | 21.4% → 20.2% | 77.1% → **72.7%** | 44 → 48 | 195 → 220 |
+| coordinated-evasion | 96.6% → 96.5% | 109.2% → 109.0% | 21 → **14** | 45 → **40** |
+| weather | 80.2% → 80.5% | 105.1% → 105.6% | 17 → **14** | 3 → 3 |
+| mule-network | 98.6% → 98.4% | 107.0% → 106.8% | 42 → **40** | 11 → **10** |
+| *mean of all 14* | 75.1% → **76.2%** | 106.7% → **109.0%** | 106 → 113 | 179 → 185 |
+
+The eight scenarios not listed do not move at all. With both sensor estimates
+switched on (`--adaptive-noise`) the mean recovery goes 106.6% → 107.0% and
+`coordinated-evasion` improves sharply — 167 → 101 identity switches and 428 →
+251 ghosts — because a learned `p_D` and the clutter term are the two halves of
+the same reading of a miss.
+
+The trade is real and it is not free: **+2.3 points of mean recovery and +1.1
+of mean detection rate, for 7 more identity switches and 6 more ghosts per
+scenario on average, and a tenth of a point of MOTA on MOT17.** It is kept
+because the previous behaviour was not a different trade, it was incoherent: a
+detection that does not fit is evidence that the entity was probably missed and
+the measurement is probably clutter, which is precisely the miss case, and an
+update that instead drove existence to zero was answering a question nobody
+asked. The scenarios where it costs are the ones with dense clutter, where the
+right remedy is the pruning threshold rather than a broken posterior.
+
 ### The number that matters more than MOTA
 
 MOT's public detections are deliberately weak. Matching them **directly**
@@ -142,8 +219,8 @@ detection it was handed — gives:
 | | |
 |---|---|
 | Detector ceiling, recall | **54.4%** |
-| TRACE, recall | **59.0%** |
-| **TRACE recovered** | **108.4% of the recall the detections allow** |
+| TRACE, recall | **58.9%** |
+| **TRACE recovered** | **108.3% of the recall the detections allow** |
 
 No tracker consuming these detections can exceed 54.4% recall by reporting
 them. TRACE exceeds it by *coasting through frames the detector missed*, and
@@ -162,20 +239,20 @@ a kinematics-only tracker.
 
 | Detector | MOTA range | Character |
 |---|---|---|
-| **SDP** (strongest) | 62.4 – **78.8%** | Best result: MOT17-10-SDP |
-| **FRCNN** | 43.2 – 71.0% | Precision routinely above 99% |
-| **DPM** (oldest) | 21.2 – 50.6% | Its false positives get promoted to tracks |
+| **SDP** (strongest) | 62.9 – **77.7%** | Best result: MOT17-10-SDP |
+| **FRCNN** | 43.1 – 70.6% | Precision routinely above 99% |
+| **DPM** (oldest) | 20.8 – 52.0% | Its false positives get promoted to tracks |
 
 DPM's range was 4–38% before the source-credibility work; discounting a source
 whose reports disagree with its peers is worth roughly ten MOTA points on the
 sequences where the detector is unreliable, and nothing at all where it is not.
 
 The detection threshold has a shallow optimum and falls away either side of it.
-On MOT17-02-DPM, sweeping it gives 25.7% MOTA at 0.0, 21.2% at the default
-0.15, and 16.7% at 0.30. **The default is no longer the best of the three.**
+On MOT17-02-DPM, sweeping it gives 25.5% MOTA at 0.0, 20.8% at the default
+0.15, and 16.9% at 0.30. **The default is no longer the best of the three.**
 Earlier versions of this document reported an optimum at 0.15, and that was
 measured through the broken matcher; with it corrected, filtering nothing beats
-filtering a little by 4.5 points, because recall dominates MOTA and the
+filtering a little by 4.7 points, because recall dominates MOTA and the
 precision the filter buys is not worth the recall it costs. The default has not
 been changed here — moving it is a tuning decision that should be taken across
 all 21 sequences rather than from one — but it is no longer defensible as
@@ -193,17 +270,17 @@ for them:
 
 | Sequence | People/frame | MOTA | Precision | Recall | Mostly lost | ms/frame |
 |---|---|---|---|---|---|---|
-| MOT20-01 | 62 | **66.0%** | 99.4% | 66.9% | 6.8% | 13 |
-| MOT20-02 | 72 | 58.6% | 99.2% | 59.4% | 7.4% | 20 |
-| MOT20-03 | 148 | 63.4% | 99.8% | 63.9% | 13.1% | 46 |
-| MOT20-05 | 226 | 64.9% | 99.7% | 65.6% | 9.6% | 79 |
-| **Overall** | **127** | **63.7%** | **99.6%** | **64.3%** | **10.3%** | **49** |
+| MOT20-01 | 62 | **66.2%** | 99.5% | 67.1% | 6.8% | 13 |
+| MOT20-02 | 72 | 58.5% | 99.2% | 59.4% | 7.8% | 20 |
+| MOT20-03 | 148 | 63.4% | 99.7% | 64.0% | 13.1% | 48 |
+| MOT20-05 | 226 | 65.1% | 99.7% | 65.7% | 9.2% | 81 |
+| **Overall** | **127** | **63.7%** | **99.6%** | **64.4%** | **10.2%** | **50** |
 
 | | |
 |---|---|
 | Detector ceiling, recall | 56.2% |
-| TRACE, recall | 64.3% |
-| **TRACE recovered** | **114.6% of the recall the detections allow** |
+| TRACE, recall | 64.4% |
+| **TRACE recovered** | **114.7% of the recall the detections allow** |
 
 The spread across these four is itself a measurement. MOT20-01 gained 9.3 MOTA
 from the matcher fix described below and MOT20-05 gained 0.1, because the exact
@@ -219,7 +296,7 @@ at far less. Density hurts association, but it is a smaller effect than
 detection quality, and the denser sequences also give the coasting mechanism
 more to work with — a crowd that thins for a few frames is still a crowd.
 
-The cost, though, is real: 79 ms/frame at 226 people. That is 12 frames per
+The cost, though, is real: 81 ms/frame at 226 people. That is 12 frames per
 second on one core, so a 25 fps camera at that density needs the area
 partitioned across workers. See the scaling measurements below.
 
@@ -708,7 +785,7 @@ was wrong for this benchmark, and the measurement above is what disproved it.
 ## How to read this against published work
 
 Published MOT17 results using public detections generally sit around 50–60%
-MOTA. TRACE at 54.4% sits inside that range, at the lower end, and the reason
+MOTA. TRACE at 54.3% sits inside that range, at the lower end, and the reason
 it is not higher is worth stating plainly rather than explaining away:
 
 **TRACE has no *learned* appearance model.** Methods at the top of the MOT

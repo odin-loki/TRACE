@@ -22,6 +22,8 @@
 #include "trace/core/observation.hpp"
 #include "trace/core/coverage.hpp"
 #include "trace/core/pmbm.hpp"
+#include <cstdint>
+
 #include "trace/core/profile.hpp"
 #include "trace/core/report.hpp"
 #include "trace/core/threat.hpp"
@@ -127,9 +129,22 @@ private:
         long rendezvous{0};
         long roles{0};
         int last_n_dormant{0};
-        /// One double per scan: 8 KB per thousand scans, against the kilobytes
-        /// per scan a retained ScanReport costs.
-        std::vector<Real> latencies;
+        /// Latency as a fixed histogram rather than one sample per scan.
+        ///
+        /// A vector of one double per scan is 8 KB per thousand scans and
+        /// never stops, which is the same shape of growth as the retained
+        /// ScanReports it replaced - slower by three orders of magnitude, and
+        /// still unbounded, so an engine meant to run for weeks still did not
+        /// plateau. 10,000 buckets of 0.01 ms up to 100 ms, plus one overflow
+        /// bucket, is 40 KB whatever the session length.
+        ///
+        /// 0.01 ms is exactly the resolution `performance_report` prints, so
+        /// the quantiles below lose nothing a reader could see. The mean and
+        /// the maximum are kept exactly, as scalars, rather than read off the
+        /// histogram.
+        std::vector<std::uint32_t> latency_hist;
+        long latency_samples{0};
+        Real max_latency_ms{0.0};
         /// Every track id ever reported. Unbounded in principle, but this IS
         /// the statistic - "how many distinct identities has this session
         /// seen" - and an id is a short string, so a thousand of them is tens
@@ -137,6 +152,11 @@ private:
         std::set<std::string> unique_ids;
     };
     Running stats_;
+
+    static constexpr std::size_t kLatencyBuckets = 10001;   // [0,100) ms + overflow
+    static constexpr Real kLatencyBucketMs = 0.01;
+    /// The count at or below which `frac` of the samples lie, in ms.
+    [[nodiscard]] Real latency_quantile(Real frac) const;
 
     Rng rng_;
     int scan_count_{0};

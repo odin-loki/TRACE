@@ -73,9 +73,17 @@ they disagree.
 ./trace_maze --swap 0.3 --pd 0.6      # make it hard
 ```
 
-**15×9 maze, 3×3 cameras, 1 blind, 3 travellers, 60 scans:** 80% detection —
-**117% of what the cameras actually produced** — 1.5 m mean error, **0 identity
-switches**, **0 ghost tracks**, 0.65 ms median scan latency on one core.
+**15×9 maze, 3×3 cameras, 1 blind, 3 travellers, 60 scans** — which is not the
+default, so here is the exact invocation:
+
+```bash
+./trace_maze --width 15 --height 9 --panels 3x3 --blind 1 --travellers 3 --scans 60
+```
+
+80% detection — **117% of what the cameras actually produced** — 1.5 m mean
+error, **0 identity switches**, **0 ghost tracks**, 0.56 ms median scan latency
+on one core. The defaults (21×11, 4×3 panels, 2 blind, 120 scans) are a harder
+problem and give 76% detection, 117% recovery, 1.6 m error and 1 switch.
 
 ---
 
@@ -86,17 +94,18 @@ video — are the only numbers here not produced by TRACE's own simulator.
 
 | Benchmark | Boxes | MOTA | Recovery of detector ceiling |
 |---|---|---|---|
-| MOT17 train, 21 sequences | 336,891 | **54.4%** | **108.4%** |
-| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **63.7%** | **114.6%** |
+| MOT17 train, 21 sequences | 336,891 | **54.3%** | **108.3%** |
+| MOT20 train, 4 sequences, 62–226 people/frame | 1,134,614 | **63.7%** | **114.7%** |
 
 The ceiling is what a perfect tracker would get by simply echoing every
 detection it was handed. TRACE beats it by coasting through frames the detector
-missed — which is the entire job. Best single sequence: **70.1% MOTA**
-(MOT17-04-SDP).
+missed — which is the entire job. Best single sequence: **77.7% MOTA**
+(MOT17-10-SDP), with MOT17-04-SDP a tenth behind it at 77.5% on far better
+precision.
 
 MOT20 scoring above MOT17 is not the expected direction, and it is the
 detections rather than the tracker: MOT20's are uniformly good where MOT17's
-include DPM. Density costs latency far more than accuracy — 79 ms/frame at 226
+include DPM. Density costs latency far more than accuracy — 81 ms/frame at 226
 people per frame, against 5.8 for MOT17.
 
 TRACE supports appearance descriptors but they are **switched off** on MOT, and
@@ -115,8 +124,8 @@ docs/VALIDATION.md](docs/VALIDATION.md).
 
 The same question asked of the simulations — how much of what the *sensors*
 produced did the engine recover? — reframed three of them. `anpr-corridor` had
-been the weakest scenario on a 20% detection rate; its readers only ever produce
-a detection in 19.9% of truth-scans, and TRACE recovers 107% of that.
+been the weakest scenario on a 24% detection rate; its readers only ever produce
+a detection in 20.1% of truth-scans, and TRACE recovers 120% of that.
 
 ```bash
 ./scripts/fetch_mot.sh ./data/mot        # ~30 MB, annotations only

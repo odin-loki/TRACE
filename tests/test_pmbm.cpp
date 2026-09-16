@@ -6,6 +6,8 @@
 #include "trace/core/pmbm.hpp"
 
 #include "trace/core/engine.hpp"
+#include "trace/core/track.hpp"
+#include "trace/core/particle_filter.hpp"
 #include <map>
 
 #include <cstdio>
@@ -530,6 +532,47 @@ void test_existence_responds_to_fit() {
     CHECK(tight > 0.9);
 }
 
+void test_absorb_keeps_measurement_rate_a_rate() {
+    // `absorb()` takes the LARGER hit-scan count of the two tracks, on the
+    // reasoning that the merged track existed for the union of the two spans.
+    // It did not take the larger age, so a young survivor absorbing an older
+    // track inherited the older track's numerator over its own denominator.
+    // `merge_duplicates` absorbs j into i in index order, which has nothing to
+    // do with age, so the survivor is younger about half the time.
+    //
+    // That put `measurement_rate()` back above 1 - the exact defect the rate
+    // was rewritten to remove - and with it the merge guard at 0.55 and the
+    // group-spawn guard at 0.85, both of which read it as a fraction.
+    const DomainProfile profile = UrbanHUMINT();
+    const MouConstants mou = MouConstants::from(profile);
+
+    Track young("young", profile.r_birth, profile, mou, 0.0, 11);
+    Track old_t("old", profile.r_birth, profile, mou, 0.0, 12);
+
+    // The survivor is four scans old and was seen in two of them.
+    for (int s = 0; s < 4; ++s) {
+        if (s > 0) young.predict();
+        if (s % 2 == 0) young.note_hit_scan(s, "CAM0");
+    }
+    // The absorbed track is twenty-one scans old and was seen in every one.
+    for (int s = 0; s < 21; ++s) {
+        if (s > 0) old_t.predict();
+        old_t.note_hit_scan(s, "CAM1");
+    }
+    CHECK(young.measurement_rate() <= 1.0 + 1e-9);
+    CHECK(old_t.measurement_rate() <= 1.0 + 1e-9);
+    CHECK(old_t.hit_scans() > young.age() + 1);   // the setup actually bites
+
+    young.absorb(old_t);
+    std::printf("  after absorb: age %d, hit-scans %d, rate %.3f\n",
+                young.age(), young.hit_scans(), young.measurement_rate());
+    CHECK(young.measurement_rate() <= 1.0 + 1e-9);
+    CHECK(young.detection_density() <= 1.0 + 1e-9);
+    // And the merged age is the union of the two spans, matching born_at_,
+    // which absorb() already takes as the earlier of the two.
+    CHECK(young.age() >= old_t.age());
+}
+
 void test_measurement_rate_is_a_rate() {
     // `measurement_rate()` is the fraction of scans a track has existed for in
     // which it was detected, so it cannot exceed 1. Two things used to let it.
@@ -586,5 +629,6 @@ int main() {
     test_vague_tracks_do_not_win_reacquisition();
     test_existence_responds_to_fit();
     test_measurement_rate_is_a_rate();
+    test_absorb_keeps_measurement_rate_a_rate();
     return trace::test::summary("test_pmbm");
 }

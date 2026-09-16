@@ -839,16 +839,25 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         // independent scans. Counting each one separately would let a track
         // watched by four cameras become four times as certain as the same
         // track watched by one.
-        // The Bernoulli/JIPDA update for a track that WAS detected is
+        // The Bernoulli posterior for a track with something in its gate is
         //
-        //     r' = r p_D g(z) / ( r p_D g(z) + (1-r) lambda_c )
+        //     r' = r [ p_D g(z) + (1-p_D) lambda_c ]
+        //          ------------------------------------------------
+        //          r [ p_D g(z) + (1-p_D) lambda_c ] + (1-r) lambda_c
         //
-        // and the factor that is easy to drop is g(z), the likelihood DENSITY
-        // of the detection under this track's own innovation covariance.
-        // Without it the numerator carried a bare probability while the
-        // denominator carried a density per square metre, so the ratio was not
-        // a quantity at all - its value moved with the units the area of
-        // regard happened to be written in.
+        // because a gated measurement admits TWO explanations if the entity is
+        // there: the entity produced it, at density p_D g(z); or the entity was
+        // missed and the measurement is clutter, at density (1-p_D) lambda_c.
+        // Only the second explanation is available if the entity is not there,
+        // which is the denominator's right-hand term.
+        //
+        // Both factors have been dropped here at different times.
+        //
+        // g(z) - the likelihood DENSITY of the detection under this track's own
+        // innovation covariance - went first. Without it the numerator carried
+        // a bare probability while the denominator carried a density per square
+        // metre, so the ratio was not a quantity at all: its value moved with
+        // the units the area of regard happened to be written in.
         //
         // It also made the update blind to fit. Two detections, one on top of
         // the prediction and one at the very edge of the gate, produced
@@ -858,7 +867,21 @@ void PmbmManager::update(const std::vector<Observation>& observations,
         // to above 0.999 on its first detection whatever that detection looked
         // like, which left r_confirm = 0.55 clearing on every track that got
         // one and no track that did not.
-        const Real L = profile_->p_detection;
+        //
+        // (1-p_D) lambda_c went with the first attempt at restoring g(z), and
+        // its absence is worse than a scale error: it made the update
+        // DISCONTINUOUS at the thing it is supposed to measure. As g(z) falls
+        // the coded ratio fell to zero, while `update_miss` - the same entity,
+        // seen by nobody at all - settles at r(1-p_D) / (r(1-p_D) + (1-r)).
+        // So a track offered a badly-fitting detection was punished harder than
+        // a track offered nothing, which is backwards: the correct reading of a
+        // detection that does not fit is that the entity was probably missed
+        // and the detection is probably clutter, and that is exactly the miss
+        // case. Crossover at Pg < (1-P)lambda_c - with p_D = 0.9, any detection
+        // less than a ninth as dense as the clutter around it. With the term
+        // restored the two updates agree in the limit by construction.
+        const Real pd_eff = effective_pd(tid);
+        const Real L = pd_eff >= 0.0 ? pd_eff : profile_->p_detection;
         const Real r = tracks_[i]->existence();
         Real best_nis = std::numeric_limits<Real>::infinity();
         for (const Observation* o : it->second) {
@@ -875,9 +898,10 @@ void PmbmManager::update(const std::vector<Observation>& observations,
             const Real det_s = std::max(S.det(), 1e-12);
             const Real g = std::exp(-0.5 * best_nis) /
                            (2.0 * std::numbers::pi * std::sqrt(det_s));
-            const Real lik = r * L * g;
+            const Real present = r * (L * g + (1.0 - L) * cd);
+            const Real absent = (1.0 - r) * cd;
             tracks_[i]->set_existence(
-                std::clamp(lik / (lik + (1.0 - r) * cd + 1e-300), 0.0, 0.9999));
+                std::clamp(present / (present + absent + 1e-300), 0.0, 0.9999));
         }
 
         // Where several sensors reported this entity in this scan, each can be

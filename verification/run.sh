@@ -64,6 +64,7 @@ MANIFEST=(
   "v13_clutter_rate:PASS:cbmc:--unwind 16"
   "v14_existence_miss:PASS:cbmc:"
   "v15_hungarian_optimal:PASS:cbmc:--unwind 10"
+  "v16_existence_continuity:PASS:cbmc:"
 )
 
 pass=0; fail=0; slow=0

@@ -68,18 +68,29 @@ jobs:
   proofs:
     name: bounded model checking
     runs-on: ubuntu-latest
-    # CBMC discharges thirteen of the sixteen harnesses on its own; ESBMC is
-    # not packaged, so the suite runs CBMC-only here and the ESBMC-preferred
-    # harnesses are reported rather than counted.
-    continue-on-error: true
+    # No `continue-on-error` here. It used to sit on this whole job, on the
+    # reasoning that ESBMC is not packaged so the suite cannot be complete -
+    # but `run.sh` already reports an absent checker as SKIP and does not count
+    # it, and exits non-zero ONLY on a harness that came back other than as its
+    # manifest says. So the flag was not tolerating an expected gap, it was
+    # discarding the job's entire verdict. It hid a real break within the hour:
+    # the licensing pass rewrote run.sh through a temporary file and dropped its
+    # executable bit, and this job went on reporting success against a script
+    # that could not start.
     steps:
       - uses: actions/checkout@v4
       - name: Install CBMC
         run: |
           sudo apt-get update
           sudo apt-get install -y cbmc
+      # Checked separately so that "cannot start" is never mistaken for
+      # "started and found nothing wrong".
+      - name: The suite is runnable
+        run: test -x verification/run.sh
       # Plain invocation: harnesses whose preferred checker is absent are
       # reported as SKIP and not counted, so the job checks what CBMC can
-      # check without pretending to cover the rest.
+      # check without pretending to cover the rest. A harness the manifest
+      # marks SLOW is not counted either, so a hosted runner being slower than
+      # this one cannot turn the job red on its own.
       - name: Run the proof suite
         run: TIMEOUT=1500 ./verification/run.sh

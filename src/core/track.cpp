@@ -185,6 +185,15 @@ void Track::absorb(const Track& other) {
     // was seen in is at most the sum and at least the larger. Taking the max is
     // the conservative reading: it never claims a detection rate the evidence
     // does not support.
+    //
+    // The AGE has to come along for the same reason, and it did not. `age_` is
+    // the denominator of `measurement_rate`, and `merge_duplicates` absorbs in
+    // index order, which has nothing to do with age - so about half the time a
+    // young survivor inherited an old track's numerator over its own
+    // denominator. A four-scan track absorbing a twenty-one-scan one came back
+    // at 5.250, which is the defect the rate was rewritten to remove, arriving
+    // by a different door. It is the same union `born_at_` below already takes.
+    age_ = std::max(age_, other.age_);
     n_hit_scans_ = std::max(n_hit_scans_, other.n_hit_scans_);
     last_hit_scan_ = std::max(last_hit_scan_, other.last_hit_scan_);
     born_at_ = std::min(born_at_, other.born_at_);
