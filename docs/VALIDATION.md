@@ -934,30 +934,39 @@ document ends up describing its luckiest seed. `wildlife` alone spans 88–107%.
 
 | Scenario | Sensors produced | TRACE reported | Recovery | Spread over 12 seeds |
 |---|---|---|---|---|
-| evader | 70.1% | 94.8% | **134%** | 131 – 138% |
-| blackout | 66.6% | 80.2% | **120%** | 119 – 122% |
-| transit-hub | 81.5% | 97.7% | **120%** | 118 – 121% |
+| evader | 70.1% | 94.8% | **134%** | 130 – 138% |
+| blackout | 66.6% | 80.2% | **120%** | 118 – 122% |
+| transit-hub | 81.5% | 97.5% | **120%** | 118 – 120% |
 | spoofing | 84.8% | 98.0% | **116%** | 112 – 118% |
-| warehouse | 48.0% | 55.4% | **115%** | 101 – 127% |
-| mule-network | 91.8% | 98.8% | **107%** | 106 – 108% |
+| warehouse | 48.0% | 53.8% | **113%** | 102 – 131% |
+| coordinated-evasion | 88.1% | 96.3% | **109%** | 108 – 113% |
+| anpr-corridor | 19.9% | 21.4% | **108%** | 94 – 123% |
 | decoy-split | 92.0% | 98.8% | **107%** | 106 – 109% |
-| coordinated-evasion | 88.1% | 96.8% | **110%** | 109 – 113% |
-| weather | 77.2% | 83.7% | **109%** | 106 – 111% |
-| anpr-corridor | 19.9% | 21.3% | **107%** | 95 – 124% |
-| dark-vessel | 76.0% | 77.2% | **102%** | 98 – 105% |
-| sensor-drift | 98.5% | 97.5% | 99% | 98 – 100% |
-| wildlife | 46.0% | 44.3% | 97% | 89 – 107% |
-| metro | 27.9% | 23.8% | **84%** | 80 – 90% |
+| mule-network | 91.8% | 98.3% | **107%** | 106 – 108% |
+| weather | 77.2% | 80.9% | **105%** | 103 – 107% |
+| dark-vessel | 76.0% | 77.2% | **102%** | 96 – 105% |
+| sensor-drift | 98.5% | 97.4% | 99% | 98 – 100% |
+| wildlife | 46.0% | 41.7% | 90% | 71 – 100% |
+| metro | 28.0% | 21.2% | 75% | 71 – 79% |
 
 Above 100% means the engine reported a usable track in scans where no sensor
 detected the entity at all, by coasting through the gap.
 
 Eleven of the fourteen recover more than their sensors produced, which is what a
-tracker is for. The two that do not are the two with the least to work with in
-opposite directions: `sensor-drift`'s sensors detect 98% of everything, so
-there are almost no gaps left to coast through, and `wildlife` has four animals
-reporting every four hours — its spread crosses 100% and the median sits just
-below it.
+tracker is for. The three that do not are the ones with the least to work with,
+in opposite directions. `sensor-drift`'s sensors detect 98% of everything, so
+there are almost no gaps left to coast through and 99% is close to the ceiling
+of what is available. `wildlife` has four animals reporting every four hours,
+and `metro` sees an entity in roughly one scan in four: below about a third of
+scans there is not enough of a track to coast from, and both sit under 100%
+with a wide spread — `wildlife` spans 71–100% over these twelve seeds, which is
+a reminder of how little a single run of it is worth.
+
+These numbers are re-measured at the current head and several moved from the
+figures this table used to carry, `metro` and `wildlife` most of all — the
+existence update's clutter term and the pattern-of-life correction both change
+how long a sparsely-sensed track survives. Nothing here is a single run: all
+fourteen are medians over the same twelve seeds, `--seed 1` through `--seed 12`.
 
 **`metro` at 84% is the one real shortfall in the suite**, and unlike
 `dark-vessel`'s former 70% it is not an artefact. Position is observed only at

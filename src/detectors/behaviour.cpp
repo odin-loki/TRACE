@@ -6,12 +6,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <numeric>
 #include <optional>
 
 namespace trace {
 namespace {
+
+/// How many distinct cells a track's chokepoint history remembers.
+constexpr std::size_t kMaxCellVisits = 256;
 
 std::pair<std::string, std::string> pair_key(const std::string& a,
                                              const std::string& b) {
@@ -323,21 +327,28 @@ std::vector<DetectionEvent> ChokepointDetector::detect(
                                    return v.cx == cx && v.cy == cy;
                                });
 
+        // Every remembered cell the track is now genuinely away from - more
+        // than one cell in either axis, so crossing a boundary and coming
+        // straight back is not a departure - becomes eligible to be counted
+        // again when the track returns to it.
+        for (CellVisit& v : visits) {
+            if (std::labs(v.cx - cx) > 1 || std::labs(v.cy - cy) > 1) v.away = true;
+        }
+
         if (it == visits.end()) {
-            visits.push_back(CellVisit{cx, cy, ctx.timestamp, 1, false});
-            if (visits.size() > 256) visits.erase(visits.begin());
+            visits.push_back(CellVisit{cx, cy, ctx.timestamp, 1, false, false});
+            if (visits.size() > kMaxCellVisits) visits.erase(visits.begin());
             continue;
         }
 
-        // Only count a genuine re-entry: consecutive scans in one cell are one
-        // visit, not many, or standing still would trip the counter instantly.
-        const Real gap = ctx.timestamp - it->last_time;
-        if (gap < p.scan_dt_s * 2.0) {
-            it->last_time = ctx.timestamp;
-            continue;
-        }
-
+        // Only count a genuine re-entry. The test used to be "more than two
+        // scans since I was last here", which a track that never moves passes
+        // as soon as estimate jitter carries it across a cell boundary and
+        // back: out on one scan, in on the next, counted. A chokepoint is
+        // repeated PASSAGE, so the track has to have gone somewhere.
         it->last_time = ctx.timestamp;
+        if (!it->away) continue;
+        it->away = false;
         ++it->count;
 
         if (it->count >= p.chokepoint_n && !it->reported) {

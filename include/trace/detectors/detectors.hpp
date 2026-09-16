@@ -204,6 +204,11 @@ private:
         Real last_time{0.0};
         int count{0};
         bool reported{false};
+        /// Has the track genuinely left this cell since it was last counted?
+        /// Without it, "repeated passage" was only "here again more than two
+        /// scans later", which a track standing on a cell boundary satisfies
+        /// by jittering across it.
+        bool away{false};
     };
     void forget(const std::set<std::string>& live) override {
         forget_by_id(cells_, live);
