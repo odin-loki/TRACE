@@ -264,6 +264,13 @@ PatternOfLife::Prediction PatternOfLife::predict_location(Real timestamp,
 
     // Reweight components by how well this hour matches each one, so the
     // prediction is "where is he at 09:00" not "where is he on average".
+    //
+    // The component's mixing weight enters ONCE. It used to enter twice: added
+    // as `log(weight)` when building the log-weights, and multiplied in again
+    // when exponentiating them - so a component's influence went as the square
+    // of its weight, and the hour-conditioned prediction collapsed towards
+    // whichever component was heaviest overall rather than whichever one
+    // explains this hour.
     const std::size_t k = components_.size();
     std::vector<Real> lw(k);
     for (std::size_t c = 0; c < k; ++c) {
@@ -274,7 +281,7 @@ PatternOfLife::Prediction PatternOfLife::predict_location(Real timestamp,
     std::vector<Real> w(k);
     Real wsum = 0.0;
     for (std::size_t c = 0; c < k; ++c) {
-        w[c] = std::exp(lw[c] - norm) * components_[c].weight;
+        w[c] = std::exp(lw[c] - norm);
         wsum += w[c];
     }
     if (wsum <= 0.0) return out;

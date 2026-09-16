@@ -10,10 +10,10 @@ Two questions, asked of the engine's numerical core:
    harnesses are in [`verification/`](../verification), which also documents
    what the proofs do **not** cover.
 
-Ten derivations came back sound. Thirteen did not, and are set out below with
-the evidence. All thirteen are now fixed.
+Ten derivations came back sound. Fourteen did not, and are set out below with
+the evidence. All fourteen are now fixed.
 
-**Five of the thirteen are in the scorer, not the engine** — the code that
+**Five of the fourteen are in the scorer, not the engine** — the code that
 decides which track corresponds to which real entity, what counts as the
 tracker changing its mind, which ground-truth identity is which, and what to do
 about the places the benchmark declined to annotate. Not one of them changes
@@ -22,7 +22,7 @@ about it, and together they move MOT17 MOTA from 48.2% to 54.3% without a
 single line of the engine being touched.
 
 That ratio is the most useful thing here: close to half the defects were in the
-instrument rather than in the thing being measured. Of the eight that were in
+instrument rather than in the thing being measured. Of the nine that were in
 the engine, five were errors of dimension — a probability compared against a
 density, metres per second integrated as metres per scan, a walking pace used
 as an aircraft's speed, a count of detections divided by a count of scans, a slope per sample
@@ -721,6 +721,33 @@ detector was tried first and rejected: the geometric intercept is one of three
 methods and the others masked the difference, so the test passed against the
 defect.
 
+### 14. A mixing weight that entered twice — **fixed**
+
+`src/core/pattern_of_life.cpp`. `predict_location` answers "where is this
+entity at 09:00" by reweighting the fitted mixture's components according to
+how well the query hour matches each. A component's mixing weight belongs in
+that reweighting exactly once. It entered twice — added as `log(weight)` when
+the log-weights were built, and multiplied in again when they were
+exponentiated — so a component's influence went as the **square** of its
+weight.
+
+With a mildly lopsided routine it makes no visible difference, which is why it
+survived: a 3:1 home-to-work split predicts the right place at both hours
+either way, to within a couple of metres. Make one component dominant enough
+and the squared weight swamps the hour term completely. At forty sightings at
+home for every one at work, asking where the entity is at the hour it is
+*always* at work returned **x = 0.9** — home, with the query hour making no
+difference whatever. With the weight entering once the same query returns 57:
+still pulled hard toward home by 40:1 prior odds, which is right, but no longer
+deaf to the evidence.
+
+Worth noting what was not changed. The reweighting evaluates the **whole
+mixture** density at a probe built from the query hour and each component's own
+mean, rather than that component's own density at the query hour. Those are
+different quantities and the second is the textbook conditional; the first is
+defensible but unusual. Only the double-counted weight is unambiguously wrong,
+so only that was fixed — a modelling change is the engine owner's to make.
+
 ---
 
 ## Not a formula error, and fixed anyway
@@ -805,7 +832,7 @@ them. Quantifying over a superset of the reachable values is both the cheaper
 encoding and the stronger statement, which is the one generalisable technique
 to come out of this exercise.
 
-Of the thirteen findings, exactly one — the existence update — was found by a
+Of the fourteen findings, exactly one — the existence update — was found by a
 checker rather than by reading. The rest came from derivation: writing down what
 the formula is supposed to compute and comparing. Model checking earned its
 place by settling things reading could not, in both directions. It proved the

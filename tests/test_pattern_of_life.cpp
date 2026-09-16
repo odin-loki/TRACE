@@ -1,6 +1,7 @@
 // Pattern of life drives reacquisition, the loiter threshold, cover stops and
 // one of the three convergence predictors, so its failure modes are subtle.
 #include "trace/core/pattern_of_life.hpp"
+#include "trace/core/rng.hpp"
 
 #include <cstdio>
 
@@ -125,11 +126,49 @@ void test_active_windows_and_spread() {
 
 }  // namespace
 
+void test_hour_survives_a_dominant_component() {
+    // The hour-conditioned prediction reweights components by how well the
+    // query hour matches each one. The component's mixing weight belongs in
+    // that reweighting exactly once; it used to enter twice - added as
+    // log(weight) when the log-weights were built and multiplied in again when
+    // they were exponentiated - so a component's influence went as the SQUARE
+    // of its weight.
+    //
+    // With a mildly lopsided routine that makes no visible difference, which is
+    // why it survived. Make one component dominant enough and the squared
+    // weight swamps the hour term entirely: at forty sightings at home for
+    // every one at work, asking where the entity is at the hour it is always at
+    // work returned home, x = 0.9 - the hour had no influence whatever. The
+    // same query with the weight entering once returns 57, still pulled hard
+    // toward home by 40:1 prior odds but no longer deaf to the evidence.
+    PatternOfLife pol;
+    Rng rng(4);
+    for (int day = 0; day < 40; ++day) {
+        const Real base = day * 86400.0;
+        for (int k = 0; k < 40; ++k) {
+            pol.add(base + 8.0 * kHour + k * 300.0,
+                    Vec2{rng.normal(0.0, 20.0), rng.normal(0.0, 20.0)});
+        }
+        pol.add(base + 11.0 * kHour, Vec2{1000.0 + rng.normal(0.0, 20.0),
+                                          rng.normal(0.0, 20.0)});
+    }
+    CHECK(pol.fitted());
+    if (!pol.fitted()) return;
+
+    const auto pred = pol.predict_location(40 * 86400.0 + 11.0 * kHour, rng, 6000);
+    std::printf("  dominant-component hour query: predicted x = %.1f "
+                "(work 1000, home 0)\n", pred.position.x);
+    // The hour has to count for something. Against the squared weight this was
+    // 0.9 - indistinguishable from ignoring the query hour altogether.
+    CHECK(pred.position.x > 10.0);
+}
+
 int main() {
     test_unfitted_is_neutral();
     test_learns_a_daily_routine();
     test_predicts_the_right_place_for_the_hour();
     test_clone_transfers_a_baseline();
     test_active_windows_and_spread();
+    test_hour_survives_a_dominant_component();
     return trace::test::summary("test_pattern_of_life");
 }
