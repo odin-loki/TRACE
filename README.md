@@ -37,7 +37,7 @@ cmake --build build && cmake --install build --prefix /usr/local
 ```
 
 ```cmake
-find_package(TRACE 0.1 REQUIRED)
+find_package(TRACE 0.2 REQUIRED)
 target_link_libraries(your_target PRIVATE TRACE::core)
 ```
 
@@ -338,6 +338,7 @@ third_party/xsimd/                            vendored
 | [docs/PORTING_NOTES.md](docs/PORTING_NOTES.md) | Twelve defects found and fixed, why each was invisible, and what changed |
 | [docs/FORMAL_VERIFICATION.md](docs/FORMAL_VERIFICATION.md) | Every formula checked against the model it implements, and what a bounded model checker could prove about the code |
 | [docs/AUDIT.md](docs/AUDIT.md) | The pre-release adversarial audit: method, what it found, what it refuted, and what is still open |
+| [CHANGELOG.md](CHANGELOG.md) | What changed between releases, and where the working for each change is |
 | [verification/README.md](verification/README.md) | The proof harnesses themselves, how to run them, and what they do not establish |
 | [THIRD-PARTY.md](THIRD-PARTY.md) | Vendored components and the separate terms on the evaluation data |
 
