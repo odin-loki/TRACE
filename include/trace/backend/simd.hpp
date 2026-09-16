@@ -3,10 +3,16 @@
 
 // TRACE — SIMD backend selection.
 //
-// The engine's hot loops (particle propagation, likelihood evaluation, GMM
-// responsibilities) are written once against these aliases. With xsimd present
-// they compile to AVX2/AVX-512; without it `Batch` degrades to a one-lane type
-// and the same source runs scalar.
+// Particle propagation - `src/core/particle_filter.cpp`, and the RNG it draws
+// from - is written once against these aliases. With xsimd present it compiles
+// to AVX2/AVX-512; without it `Batch` degrades to a one-lane type and the same
+// source runs scalar.
+//
+// That is the whole of it. This used to claim "likelihood evaluation" and "GMM
+// responsibilities" too; `grep -rl 'simd::' src include` finds particle_filter,
+// rng.hpp and one line of bench_main, and nothing else. The GMM E step in
+// pattern_of_life.cpp is scalar. Vectorising it is a reasonable thing to do and
+// a different thing from saying it has been done.
 #pragma once
 
 #include <cmath>

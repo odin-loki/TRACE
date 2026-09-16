@@ -14,18 +14,24 @@ void World::step(Real dt) {
     for (auto& e : entities_) {
         if (!e.active) continue;
 
+        // Latch the cruise speed once, BEFORE anything can zero the velocity it
+        // is latched from. The 1.4 m/s default is a walking pace for entities a
+        // scenario never gave a velocity; it is meaningless in any other unit
+        // system, so it must not become reachable by accident - and it was.
+        // The dwell branch below sets velocity to zero and `continue`s past
+        // this, so an entity that STARTED the run dwelling reached the latch
+        // one step later with its configured speed already erased, fell to the
+        // walking-pace default, and walked at 1.4 m/s for the rest of the run
+        // whatever the scenario had asked for.
+        if (e.cruise_mps <= 0.0) {
+            e.cruise_mps = e.velocity.norm() > 1e-6 ? e.velocity.norm() : 1.4;
+        }
+
         if (e.dwell_remaining_s > 0.0) {
             e.dwell_remaining_s -= dt;
             e.velocity = Vec2{0.0, 0.0};
             e.mode = "standing";
             continue;
-        }
-
-        // Latch the cruise speed once. The 1.4 m/s default is a walking pace
-        // for entities a scenario never gave a velocity; it is meaningless in
-        // any other unit system, so it must not become reachable by accident.
-        if (e.cruise_mps <= 0.0) {
-            e.cruise_mps = e.velocity.norm() > 1e-6 ? e.velocity.norm() : 1.4;
         }
 
         if (e.waypoint_index >= e.waypoints.size()) {

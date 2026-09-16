@@ -38,10 +38,19 @@ struct Metrics {
     std::map<std::string, std::string> current_assignment;
     std::map<std::string, int> assignment_changes;
 
-    /// Truth-scans in which at least one sensor actually covered the entity.
-    /// No tracker can report an entity nothing can see, so this is the honest
-    /// denominator: detection_rate alone conflates tracker failure with sensor
-    /// coverage, and in sparse-sensor domains the second dominates entirely.
+    /// Truth-scans in which at least one sensor actually DETECTED the entity.
+    ///
+    /// The name says covered and the comment used to as well, but the ledger
+    /// each sensor writes is filled after its detection draw succeeds, not when
+    /// the entity falls inside its footprint - so this counts detections, not
+    /// coverage. The prose in docs/VALIDATION.md has always described it
+    /// correctly ("how much of what the sensors actually PRODUCED did TRACE
+    /// recover"); it was this comment that disagreed with the code.
+    ///
+    /// It is still the honest denominator, and for the same reason: no tracker
+    /// can report an entity nothing detected, so `detection_rate` alone
+    /// conflates tracker failure with sensor failure, and in sparse-sensor
+    /// domains the second dominates entirely.
     int covered_truth{0};
 
     std::vector<Real> latencies_ms;
