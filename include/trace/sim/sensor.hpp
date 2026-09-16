@@ -203,7 +203,23 @@ public:
     explicit SpoofInjector(Config cfg) : cfg_(std::move(cfg)) {}
 
     [[nodiscard]] const std::string& id() const override { return cfg_.id; }
-    [[nodiscard]] bool covers(Vec2) const override { return cfg_.enabled; }
+
+    /// A spoofer covers NOTHING, and this used to return `enabled` - true at
+    /// every point in the world.
+    ///
+    /// `covers` answers "could this source have seen something here", and the
+    /// engine asks it two questions with that answer. `anyone_covers` decides
+    /// whether a miss is evidence of absence or just nobody looking; with a
+    /// spoofer in the estate it was true everywhere, so the coverage map that
+    /// the `spoofing` scenario supplies told the engine the whole world was
+    /// under observation and stopped doing its job. And the detection-rate
+    /// estimator charged the spoofer with a miss every time any entity it had
+    /// never fed walked anywhere, driving its estimated rate to the floor for
+    /// a reason that has nothing to do with spoofing.
+    ///
+    /// A spoofer does not observe. It fabricates, at a place of its own
+    /// choosing, and there is no location at which its silence means anything.
+    [[nodiscard]] bool covers(Vec2) const override { return false; }
     [[nodiscard]] const Config& config() const { return cfg_; }
 
     /// Where the phantom would appear at `t`, whether or not it is reported.
