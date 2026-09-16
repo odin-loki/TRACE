@@ -265,8 +265,15 @@ void run_anpr_corridor(std::uint64_t seed, bool verbose) {
     // vehicle cannot leave the road, so between readers 400 m apart it coasts
     // the estimate sideways into the verge - which was most of this scenario's
     // apparent error, and the reason it was the weakest of the seven.
-    s.engine_config.motion_constraint = std::make_shared<RoadNetwork>(
-        RoadNetwork::from_polyline({{0, 400}, {6000, 400}}, /*tolerance*/ 60.0));
+    //
+    // Behind --no-constraint, like the metro scenario's, so the A/B that
+    // SIMULATIONS.md quotes for this scenario can actually be run. It could
+    // not: the flag existed, the documentation cited a measurement it would
+    // produce, and this scenario ignored it.
+    if (!g_no_constraint) {
+        s.engine_config.motion_constraint = std::make_shared<RoadNetwork>(
+            RoadNetwork::from_polyline({{0, 400}, {6000, 400}}, /*tolerance*/ 60.0));
+    }
 
     // Readers every 400 m along the corridor: coverage is a string of dots.
     for (int i = 0; i < 15; ++i) {

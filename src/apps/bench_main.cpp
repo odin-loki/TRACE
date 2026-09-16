@@ -153,8 +153,20 @@ int main(int argc, char** argv) {
                 "p95 ms", "us per track", "detectors");
     std::printf("  %s\n", std::string(74, '-').c_str());
 
-    std::vector<Result> full;
+    // The sweep points, ending exactly on --max.
+    //
+    // The geometric walk alone overshoots and then stops early: from 270 the
+    // next point is 405, so `--max 400` - the default - measured 270 and
+    // called it done, while the README published a 400-track row nobody could
+    // reproduce. `--max N` now means the sweep ends at N.
+    std::vector<int> sizes;
     for (int n = 10; n <= max_entities; n = (n < 50 ? n * 2 : n * 3 / 2)) {
+        sizes.push_back(n);
+    }
+    if (sizes.empty() || sizes.back() != max_entities) sizes.push_back(max_entities);
+
+    std::vector<Result> full;
+    for (int n : sizes) {
         const Result on = measure(n, scans, true);
         const Result off = measure(n, scans, false);
         full.push_back(on);
