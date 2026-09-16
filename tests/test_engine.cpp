@@ -135,8 +135,17 @@ void test_determinism() {
 }
 
 void test_every_profile_runs() {
-    // A profile that crashes or produces nonsense is worse than no profile;
-    // this is the cheapest possible guard on all thirteen.
+    // A profile that crashes or produces nonsense is worse than no profile.
+    //
+    // This used to assert only finiteness, inside a loop over the reported
+    // targets - so a profile that formed no track at all passed it without
+    // executing a single check. That is not hypothetical: defect 7 in
+    // PORTING_NOTES is a birth gate derived from a walking pace that left
+    // Airspace, Maritime and VehicleConvoy unable to form a track, and this
+    // test, which runs all thirteen profiles, was green throughout.
+    //
+    // So it now asserts the three things a profile exists to do: form a track,
+    // localise it, and keep it through a scan in which nothing reported.
     for (const auto& name : profile_names()) {
         EngineConfig cfg;
         cfg.profile = profile_by_name(name);
@@ -146,22 +155,45 @@ void test_every_profile_runs() {
 
         const Real dt = cfg.profile.scan_dt_s;
         const Real speed = cfg.profile.courier_speed_thresh;
+        ScanReport last;
+        Vec2 truth{};
         for (int i = 0; i < 30; ++i) {
             const Real t = i * dt;
-            eng.ingest(one("o" + std::to_string(i), t,
-                           Vec2{i * speed * dt, i * speed * dt * 0.3}),
-                       t);
+            truth = Vec2{i * speed * dt, i * speed * dt * 0.3};
+            last = eng.ingest(one("o" + std::to_string(i), t, truth), t);
         }
-        const ScanReport r = eng.ingest({}, 30 * dt);
-        CHECK(r.domain == name);
-        CHECK(r.clutter_rate >= 0.0);
-        for (const auto& t : r.targets) {
+
+        CHECK(last.domain == name);
+        CHECK(last.clutter_rate >= 0.0);
+        CHECK(!last.targets.empty());
+        if (!last.targets.empty()) {
+            const auto& tg = last.targets.front();
+            // Six sigma of the sensor, or half a scan's travel, whichever is
+            // the larger - the second is what a long-scan profile is actually
+            // limited by. Maritime samples hourly and its subject covers 7.2 km
+            // between scans; holding that to the 200 m sensor noise would be a
+            // claim about the sensor, not about the tracker.
+            const Real bound = std::max(6.0 * cfg.profile.pos_noise_m,
+                                        0.5 * speed * dt);
+            const Real err = std::hypot(tg.position.x - truth.x,
+                                        tg.position.y - truth.y);
+            CHECK(err <= bound);
+            if (err > bound) {
+                std::printf("  %s: %.2f m from truth against a bound of %.2f\n",
+                            name.c_str(), err, bound);
+            }
+        }
+
+        const ScanReport quiet = eng.ingest({}, 30 * dt);
+        // One silent scan is not evidence the entity left.
+        CHECK(!quiet.targets.empty());
+        for (const auto& t : quiet.targets) {
             CHECK(std::isfinite(t.position.x) && std::isfinite(t.position.y));
             CHECK(std::isfinite(t.threat.mean));
             CHECK(t.existence >= 0.0 && t.existence <= 1.0);
         }
     }
-    std::printf("  all %zu profiles ran 30 scans without producing a NaN\n",
+    std::printf("  all %zu profiles formed, localised and held a track\n",
                 profile_names().size());
 }
 

@@ -146,24 +146,55 @@ void test_position_step_is_the_exact_ou_integral() {
 }
 
 void test_predict_moves_at_modelled_speed() {
-    // A cloud initialised at rest, propagated with no measurements, should
-    // spread at roughly the mixture's steady-state speed times elapsed time.
-    DomainProfile p = UrbanHUMINT();
-    const MouConstants c = MouConstants::from(p);
-    ParticleFilter pf(p, c, 7);
-    pf.init(Vec2{0, 0}, 1.0);
+    // A cloud propagated with no measurements must spread the way the motion
+    // model says it should.
+    //
+    // This used to bracket the spread between 0.05 and 3.0 times "the mixture's
+    // mean steady-state speed times elapsed time" - a sixtyfold band around a
+    // quantity that is not what an integrated OU process does. Anything that
+    // moved at all passed it. The prediction below is the real one: for each
+    // regime, the standard deviation of the integral of a *stationary* OU
+    // velocity over the elapsed time, which is
+    //
+    //     Var[X] = Var[X | v0] + ss_vvar * ((1 - alpha)/theta)^2
+    //
+    // and the cloud, which redraws its regime every step, should sit near the
+    // root-mean-square of those. Measured across six profiles spanning scan
+    // periods from 0.04 s to an hour it lands at 0.72 to 0.92 of it - below
+    // rather than at, because switching regimes between steps averages the
+    // extremes out - and 1.44 for SportsPitch, whose 0.2 s horizon is short
+    // enough that the one-metre initial scatter dominates.
+    for (const auto& make : {&UrbanHUMINT, &Maritime, &Airspace,
+                             &CityCameraSurveillance}) {
+        DomainProfile p = make();
+        const MouConstants c = MouConstants::from(p);
+        ParticleFilter pf(p, c, 7);
+        pf.init(Vec2{0, 0}, 1.0);
 
-    for (int i = 0; i < 5; ++i) pf.predict();
+        const int steps = 5;
+        for (int i = 0; i < steps; ++i) pf.predict();
 
-    const Real spread = pf.position_uncertainty();
-    const Real elapsed = 5.0 * p.scan_dt_s;
-    Real mix_speed = 0.0;
-    for (int k = 0; k < kNumModels; ++k) mix_speed += 0.25 * std::sqrt(c.ss_vvar[k]);
+        const Real spread = pf.position_uncertainty();
+        const Real elapsed = steps * p.scan_dt_s;
 
-    std::printf("  spread after 5x%.0fs = %.1f m, mixture speed %.2f m/s -> %.0f m\n",
-                p.scan_dt_s, spread, mix_speed, mix_speed * elapsed);
-    CHECK(spread > 0.05 * mix_speed * elapsed);
-    CHECK(spread < 3.0 * mix_speed * elapsed);
+        Real mean_var = 0.0;
+        for (int k = 0; k < kNumModels; ++k) {
+            const Real theta = p.mou_models[k].theta;
+            const Real sigma = p.mou_models[k].sigma;
+            const OuMoments m = ou_moments(theta, sigma, elapsed, 1.0);
+            const Real ss = sigma * sigma / (2.0 * theta);
+            mean_var += (m.var_x + ss * m.mean_x * m.mean_x) / kNumModels;
+        }
+        // position_uncertainty is sqrt(trace(P_xy)), i.e. sqrt(2) per-axis sd.
+        const Real predicted = std::sqrt(2.0 * mean_var);
+
+        std::printf("  %-24s spread after %dx%.2fs = %.2f m, integrated-OU "
+                    "prediction %.2f m (ratio %.2f)\n",
+                    p.name.c_str(), steps, p.scan_dt_s, spread, predicted,
+                    spread / predicted);
+        CHECK(spread > 0.5 * predicted);
+        CHECK(spread < 2.0 * predicted);
+    }
 }
 
 void test_update_pulls_to_measurement() {

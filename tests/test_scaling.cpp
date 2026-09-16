@@ -93,33 +93,68 @@ void test_cost_is_not_quadratic() {
     CHECK(k < 1.55);
 }
 
-void test_track_cap_is_honoured_and_configurable() {
-    // The cap was a hardcoded 80 with nothing to say so, which silently
-    // discarded tracks in any genuinely crowded scene.
+/// Peak track count when `n` entities walk about for `scans` scans, with the
+/// cap set to `cap`.
+///
+/// The entities have to be real. An earlier version of the test below scattered
+/// 120 independent uniform points per scan and asserted the peak was at or
+/// below a cap of 25. Points with no continuity between scans are clutter, the
+/// engine confirmed almost none of them, and the peak was **3** - so the
+/// assertion held for a reason that had nothing to do with the cap, and would
+/// have held just as well with the cap removed.
+int peak_tracks_under_cap(int n, int cap, int scans) {
     EngineConfig cfg;
     cfg.profile = CityCameraSurveillance();
     cfg.profile.scan_dt_s = 1.0;
-    cfg.profile.max_tracks = 25;
+    cfg.profile.pos_noise_m = 1.5;
+    cfg.profile.meas_noise_var = 9.0;
+    cfg.profile.max_tracks = cap;
     cfg.area = Area{0, 2000, 0, 2000};
     cfg.seed = 7;
     Engine engine(cfg);
 
     Rng rng(5);
+    std::vector<Vec2> pos(static_cast<std::size_t>(n));
+    std::vector<Vec2> vel(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        pos[static_cast<std::size_t>(i)] = Vec2{rng.uniform(0, 2000), rng.uniform(0, 2000)};
+        vel[static_cast<std::size_t>(i)] = Vec2{rng.uniform(-1.4, 1.4), rng.uniform(-1.4, 1.4)};
+    }
+
     int peak = 0;
-    for (int s = 0; s < 25; ++s) {
+    for (int s = 0; s < scans; ++s) {
         const Real t = s * 1.0;
         std::vector<Observation> obs;
-        for (int i = 0; i < 120; ++i) {
+        for (int i = 0; i < n; ++i) {
+            auto& p = pos[static_cast<std::size_t>(i)];
+            auto& v = vel[static_cast<std::size_t>(i)];
+            p += v;
+            if (p.x < 0 || p.x > 2000) v.x = -v.x;
+            if (p.y < 0 || p.y > 2000) v.y = -v.y;
             obs.emplace_back("o" + std::to_string(s) + "_" + std::to_string(i), t,
-                             Vec2{rng.uniform(0, 2000), rng.uniform(0, 2000)},
+                             Vec2{p.x + rng.normal(0, 1.5), p.y + rng.normal(0, 1.5)},
                              Modality::GEOINT, 0.9, "CAM");
         }
         peak = std::max(peak, engine.ingest(obs, t).n_tracks);
     }
-    std::printf("  cap 25, 120 entities offered: peak tracks %d\n", peak);
-    CHECK(peak <= 25);
+    return peak;
+}
 
-    // And the default must not be so low that a crowd is silently truncated.
+void test_track_cap_is_honoured_and_configurable() {
+    // The cap was a hardcoded 80 with nothing to say so, which silently
+    // discarded tracks in any genuinely crowded scene.
+    const int uncapped = peak_tracks_under_cap(120, 1000, 25);
+    const int capped = peak_tracks_under_cap(120, 25, 25);
+    std::printf("  120 entities: %d tracks uncapped, %d with the cap at 25\n",
+                uncapped, capped);
+
+    // The setup has to bite, or the assertion below means nothing.
+    CHECK(uncapped > 25);
+    CHECK(capped <= 25);
+    // And the cap has to be the reason, not a coincidence of the scene.
+    CHECK(capped < uncapped);
+
+    // The default must not be so low that a crowd is silently truncated.
     CHECK(CityCameraSurveillance().max_tracks >= 200);
 }
 

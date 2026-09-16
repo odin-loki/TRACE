@@ -96,10 +96,17 @@ void test_sound_estate_flags_nobody() {
     for (const auto& b : r.biases) {
         if (b.minority_direction) ++suspects;
     }
-    std::printf("  sound estate: %zu biases reported, %d flagged as suspect\n",
-                r.biases.size(), suspects);
+    std::printf("  sound estate: %zu biases reported, %d flagged as suspect, "
+                "credibility %.3f vs %.3f\n",
+                r.biases.size(), suspects, r.credibility_biased,
+                r.credibility_sound);
     CHECK(suspects == 0);
-    CHECK_NEAR(r.credibility_biased, r.credibility_sound, 0.35);
+    // 0.08, not the 0.35 this carried. On a [0,1] trust score 0.35 permits
+    // 0.35 against 0.70 - a false accusation as large as the true one this
+    // suite measures elsewhere, which is 0.434 against 0.726. The sound estate
+    // actually comes out within 0.01, on the vectorised and scalar builds
+    // alike, so the tolerance now has to be crossed by something real.
+    CHECK_NEAR(r.credibility_biased, r.credibility_sound, 0.08);
 }
 
 void test_two_sensors_record_a_conflict_but_blame_nobody() {

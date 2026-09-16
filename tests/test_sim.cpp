@@ -150,6 +150,54 @@ void test_wide_area_silencing() {
     CHECK(rep.observe(truth, rng).size() == 2);
 }
 
+/// Defect 8: the scorer matched each truth entity to its own nearest track,
+/// independently, so one track could "cover" several entities at once and the
+/// numbers judging every other fix were themselves unreliable.
+///
+/// The geometry below is the smallest case that separates the two rules. Truth
+/// A sits at the origin and truth B ten metres away; track T1 is one metre from
+/// A and nine from B, track T2 is ten metres beyond B. Independent
+/// nearest-neighbour gives T1 to both entities and leaves T2 unused, reporting
+/// two entities detected by one track and a ghost. A one-to-one matching pairs
+/// A with T1 and B with T2, which is the only reading in which each track is
+/// one thing.
+void test_scoring_is_one_to_one() {
+    std::vector<Entity> truth(2);
+    truth[0].id = "A";
+    truth[0].position = Vec2{0.0, 0.0};
+    truth[1].id = "B";
+    truth[1].position = Vec2{10.0, 0.0};
+
+    std::vector<TargetReport> tracks(2);
+    tracks[0].track_id = "T1";
+    tracks[0].position = Vec2{1.0, 0.0};
+    tracks[1].track_id = "T2";
+    tracks[1].position = Vec2{20.0, 0.0};
+
+    sim::Metrics m;
+    sim::score_scan(m, truth, tracks, /*match_radius_m=*/25.0);
+
+    std::printf("  one-to-one scoring: %d of %d entities matched, %d ghost(s), "
+                "A->%s B->%s\n",
+                m.total_detected, m.total_truth, m.ghost_tracks,
+                m.current_assignment["A"].c_str(),
+                m.current_assignment["B"].c_str());
+
+    CHECK(m.total_truth == 2);
+    CHECK(m.total_detected == 2);
+    CHECK(m.ghost_tracks == 0);
+    // The pairing itself, not just the counts: under the old rule both
+    // entities came back claiming T1.
+    CHECK(m.current_assignment["A"] == "T1");
+    CHECK(m.current_assignment["B"] == "T2");
+    CHECK(m.current_assignment["A"] != m.current_assignment["B"]);
+
+    // And the matching is a minimum-cost one, not merely any one-to-one
+    // pairing: A-T1 plus B-T2 costs 1 + 10 where A-T2 plus B-T1 costs 20 + 9.
+    CHECK_NEAR(m.position_error_sum, 11.0, 1e-9);
+    CHECK(m.position_error_n == 2);
+}
+
 void test_world_follows_waypoints_without_overshoot() {
     World world(1);
     Entity e;
@@ -160,14 +208,37 @@ void test_world_follows_waypoints_without_overshoot() {
     e.waypoint_index = 1;
     world.add(std::move(e));
 
-    for (int i = 0; i < 20; ++i) world.step(1.0);
-    const auto& w = world.entities()[0];
     // It must turn the corner rather than cutting through: the corner is the
-    // whole point of walking a maze.
-    CHECK(w.position.x <= 10.0 + 1e-6);
-    CHECK(w.position.y >= 0.0);
-    std::printf("  waypoint walker ended at (%.1f, %.1f) after 20 s\n",
-                w.position.x, w.position.y);
+    // whole point of walking a maze. That is a claim about the whole path, so
+    // the path is what gets checked. The two conditions this used to assert -
+    // x at or below 10, y at or above 0 - are both satisfied by a straight
+    // diagonal from (0,0) to (10,10), which is precisely the behaviour the
+    // comment says must not happen; the second is satisfied by any path at all.
+    Vec2 previous = world.entities()[0].position;
+    Real worst_off_route = 0.0;
+    Real longest_step = 0.0;
+    for (int i = 0; i < 20; ++i) {
+        world.step(1.0);
+        const Vec2 now = world.entities()[0].position;
+        longest_step = std::max(longest_step, distance(previous, now));
+        // Distance from the L, which is |y| on the first leg and |x - 10| on
+        // the second. A point on the diagonal is sqrt(2)/2 of its own
+        // coordinate away from both.
+        const Real off = std::min(std::abs(now.y), std::abs(now.x - 10.0));
+        worst_off_route = std::max(worst_off_route, off);
+        previous = now;
+    }
+    const auto& w = world.entities()[0];
+    std::printf("  waypoint walker ended at (%.1f, %.1f) after 20 s, never more "
+                "than %.3f m off the route, longest step %.3f m\n",
+                w.position.x, w.position.y, worst_off_route, longest_step);
+
+    CHECK(worst_off_route <= 1e-6);          // on the L at every sample
+    CHECK(longest_step <= 2.0 + 1e-6);       // never faster than it is allowed
+    // 40 m of travel on a 20 m route: it is at the end, not short of it and
+    // not past it.
+    CHECK_NEAR(w.position.x, 10.0, 1e-6);
+    CHECK_NEAR(w.position.y, 10.0, 1e-6);
 }
 
 void test_world_survives_repeated_waypoints() {
@@ -366,6 +437,7 @@ int main() {
     test_camera_only_sees_its_footprint();
     test_disabled_sensor_is_silent();
     test_wide_area_silencing();
+    test_scoring_is_one_to_one();
     test_world_follows_waypoints_without_overshoot();
     test_world_survives_repeated_waypoints();
     test_world_travels_at_its_configured_speed();

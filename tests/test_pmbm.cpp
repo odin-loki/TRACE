@@ -639,6 +639,128 @@ void test_absorb_keeps_measurement_rate_a_rate() {
     CHECK(young.shares_source_with(old_t));
 }
 
+/// Defects 7 and 9: a track that stops being seen must be retired on the
+/// clock, and a track that was once reportable must survive that retirement as
+/// an identity rather than being discarded.
+///
+/// Both were invisible for the same reason. Retirement depended solely on
+/// existence decay, and where `p_detection` is low a miss is almost
+/// uninformative - at p_d = 0.15 existence falls from 0.9990 to 0.9988 per
+/// missed scan - so a track nobody had seen for an hour sat in the live set
+/// with its existence intact, which is correct Bayesian behaviour and a
+/// useless operational outcome. Dormancy, meanwhile, required existence to land
+/// inside a band between `r_dormant` and `r_prune`, typically 0.01 wide, which
+/// a decaying existence falls straight through - and two shipped profiles had
+/// the two values inverted, making the band empty.
+///
+/// So the test has to check both halves at once: the track leaves the live set
+/// on time, its existence is still high when it does (which is what makes the
+/// old rule unable to retire it), and it turns up in the dormant pool rather
+/// than being dropped.
+void test_unseen_tracks_time_out_and_stay_recognisable() {
+    DomainProfile profile = CityCameraSurveillance();
+    profile.scan_dt_s = 1.0;
+    profile.p_detection = 0.15;    // a miss is nearly uninformative
+    profile.max_coast_s = 20.0;
+    PmbmManager pmbm(profile, Area{0, 500, 0, 500}, 11);
+
+    // Twelve scans of a walker, enough to confirm it.
+    Vec2 truth{50.0, 250.0};
+    Real t = 0.0;
+    for (int s = 0; s < 12; ++s, t += profile.scan_dt_s) {
+        pmbm.predict();
+        pmbm.update({Observation{"o" + std::to_string(s), t, truth,
+                                 Modality::GEOINT, 0.95, "CAM"}}, t);
+        truth.x += 1.2;
+    }
+    CHECK(pmbm.all_tracks().size() == 1);
+    if (pmbm.all_tracks().empty()) return;
+    const std::string id = pmbm.all_tracks().front()->id();
+    CHECK(pmbm.all_tracks().front()->ever_confirmed());
+
+    // Now nobody reports it again. Step until it leaves the live set, watching
+    // what its existence is doing while that happens.
+    Real existence_at_retirement = -1.0;
+    Real coasted_at_retirement = -1.0;
+    const Real last_seen = t - profile.scan_dt_s;
+    for (int s = 0; s < 60 && !pmbm.all_tracks().empty(); ++s, t += profile.scan_dt_s) {
+        pmbm.predict();
+        // Read it before the update, because the update is what prunes: after
+        // the scan that retires the track there is nothing left to ask.
+        const Real before = pmbm.all_tracks().front()->existence();
+        pmbm.update({}, t);
+        if (pmbm.all_tracks().empty()) {
+            existence_at_retirement = before;
+            coasted_at_retirement = t - last_seen;
+        }
+    }
+
+    std::printf("  unseen track left the live set after %.0f s of coasting "
+                "(limit %.0f), existence still %.4f against r_prune %.2f; "
+                "dormant pool holds %zu\n",
+                coasted_at_retirement, profile.max_coast_s,
+                existence_at_retirement, profile.r_prune, pmbm.dormant_count());
+
+    // Retired, and on the clock rather than on the evidence.
+    CHECK(pmbm.all_tracks().empty());
+    CHECK(coasted_at_retirement > 0.0);
+    CHECK(coasted_at_retirement <= profile.max_coast_s + 2.0 * profile.scan_dt_s);
+    // The half that makes the timeout necessary: existence had barely moved,
+    // so an existence-only rule would still be holding this track.
+    CHECK(existence_at_retirement > profile.r_prune);
+    CHECK(existence_at_retirement > 0.5);
+    // And it is remembered rather than discarded.
+    CHECK(pmbm.dormant_count() == 1);
+    CHECK(pmbm.known_ids().count(id) == 1);
+}
+
+/// Defect 9, the other half: dormancy must be reachable in every shipped
+/// profile. It was unreachable in two of them, and the consequence is quiet -
+/// reacquisition never fires, every reappearance becomes a new track, and the
+/// cost shows up as identity switches a long way from the cause.
+void test_every_profile_can_go_dormant() {
+    for (const auto& name : profile_names()) {
+        DomainProfile profile = profile_by_name(name);
+        const Real dt = profile.scan_dt_s;
+        PmbmManager pmbm(profile, Area{-50000, 50000, -50000, 50000}, 3);
+
+        Vec2 truth{0.0, 0.0};
+        const Real step = profile.courier_speed_thresh * dt;
+        Real t = 0.0;
+        for (int s = 0; s < 14; ++s, t += dt) {
+            pmbm.predict();
+            pmbm.update({Observation{"o" + std::to_string(s), t, truth,
+                                     Modality::GEOINT, 0.95, "CAM"}}, t);
+            // update() prunes
+            truth.x += step;
+        }
+        const bool confirmed = !pmbm.all_tracks().empty() &&
+                               pmbm.all_tracks().front()->ever_confirmed();
+        CHECK(confirmed);
+
+        // Then silence, for long enough that no profile can still be coasting.
+        const Real limit = profile.max_coast_s > 0.0
+                               ? profile.max_coast_s
+                               : profile.dormant_timeout * dt;
+        const int quiet_scans =
+            static_cast<int>(limit / std::max(dt, 1e-9)) + 40;
+        for (int s = 0; s < quiet_scans && !pmbm.all_tracks().empty(); ++s, t += dt) {
+            pmbm.predict();
+            pmbm.update({}, t);
+            // update() prunes
+        }
+
+        CHECK(pmbm.all_tracks().empty());
+        CHECK(pmbm.dormant_count() >= 1);
+        if (pmbm.dormant_count() == 0) {
+            std::printf("  %s: confirmed track vanished instead of going dormant\n",
+                        name.c_str());
+        }
+    }
+    std::printf("  all %zu profiles retire a confirmed track into the dormant "
+                "pool rather than discarding it\n", profile_names().size());
+}
+
 void test_source_trust_does_not_move_evidence_quality() {
     // Two axes that look alike and are not: how good a detection is, and how
     // much the sensor that produced it has earned. `possibility()` is the
@@ -776,6 +898,8 @@ int main() {
     test_reacquisition_is_one_to_one();
     test_vague_tracks_do_not_win_reacquisition();
     test_existence_responds_to_fit();
+    test_unseen_tracks_time_out_and_stay_recognisable();
+    test_every_profile_can_go_dormant();
     test_source_trust_does_not_move_evidence_quality();
     test_measurement_rate_is_a_rate();
     test_absorb_keeps_measurement_rate_a_rate();
